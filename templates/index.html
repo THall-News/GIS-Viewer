@@ -9,7 +9,6 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      // Tie dark mode to the class on the HTML tag, not the OS preference
       darkMode: 'class',
     }
   </script>
@@ -153,7 +152,7 @@
           <div id="attribute-table-container" class="hidden flex-col max-h-[60%] h-72 border-t border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-3 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200"></div>
 
           <!-- Middle: Edit Panel -->
-          <div id="edit-panel-container" class="hidden flex-col max-h-[60%] border-t border-gray-300 dark:border-gray-600 bg-purple-50 dark:bg-gray-800 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200"></div>
+          <div id="edit-panel-container" class="hidden flex-col max-h-[70%] border-t border-gray-300 dark:border-gray-600 bg-purple-50 dark:bg-gray-800 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200"></div>
 
           <!-- Middle: Split Panel -->
           <div id="split-panel-container" class="hidden flex-col max-h-[60%] border-t border-gray-300 dark:border-gray-600 bg-amber-50 dark:bg-gray-800 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200"></div>
@@ -286,6 +285,16 @@
       setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 5000);
     };
 
+    // --- Dynamic Z-Index Syncing ---
+    const updateMapLayerOrder = () => {
+        for (let i = activeLayers.length - 1; i >= 0; i--) {
+            const layer = activeLayers[i];
+            if (!layer.isVisible) continue;
+            if (typeof layer.mapLayer.setZIndex === 'function') layer.mapLayer.setZIndex(1000 - i); 
+            if (typeof layer.mapLayer.bringToFront === 'function') layer.mapLayer.bringToFront();
+        }
+    };
+
     // --- Server Database Logic ---
     const loadSavedServers = async () => {
         try {
@@ -402,7 +411,6 @@
     };
     window.closeAllPanels = closeAllPanels;
 
-    // --- Search Logic: Available Layers ---
     const triggerSearch = () => {
       const term = layerSearch.value.toLowerCase();
       if (term === '') {
@@ -410,7 +418,6 @@
       } else {
         btnClearSearch.classList.remove('hidden');
       }
-      
       let visibleCount = 0;
       document.querySelectorAll('.available-layer-item').forEach(item => {
         if (item.getAttribute('data-search').includes(term)) {
@@ -420,7 +427,6 @@
           item.classList.add('hidden');
         }
       });
-
       let emptyMsg = document.getElementById('search-empty-msg');
       if (visibleCount === 0 && fetchedLayers.length > 0) {
         if (!emptyMsg) {
@@ -443,7 +449,6 @@
       layerSearch.focus();
     });
 
-    // --- Search Logic: Added Layers ---
     const triggerAddedSearch = () => {
       const term = addedLayerSearch.value.toLowerCase();
       if (term === '') {
@@ -451,7 +456,6 @@
       } else {
         btnClearAddedSearch.classList.remove('hidden');
       }
-      
       let visibleCount = 0;
       document.querySelectorAll('.added-layer-item').forEach(item => {
         if (item.getAttribute('data-search').includes(term)) {
@@ -461,7 +465,6 @@
           item.classList.add('hidden');
         }
       });
-
       let emptyMsg = document.getElementById('added-search-empty-msg');
       if (visibleCount === 0 && activeLayers.length > 0) {
         if (!emptyMsg) {
@@ -484,7 +487,6 @@
       addedLayerSearch.focus();
     });
 
-    // --- Core Action: Add single layer ---
     const addLayerToMap = (layerId, switchTabAfter = true) => {
         const meta = fetchedLayers.find(l => l.id === layerId);
         if(!meta) return;
@@ -508,7 +510,7 @@
         
         mapLayer.addTo(map);
         
-        activeLayers.push({ 
+        activeLayers.unshift({ 
           uniqueKey: Math.random().toString(36).substr(2,9), 
           id: meta.id, 
           displayName: meta.title, 
@@ -517,6 +519,8 @@
           isLocalGeoJSON: false,
           isVisible: true 
         });
+        
+        updateMapLayerOrder();
         
         if (switchTabAfter) {
             renderAddedLayers();
@@ -557,27 +561,21 @@
         availableLayerList.appendChild(div);
       });
       
-      // Bind Add buttons
       document.querySelectorAll('.btn-add-single').forEach(btn => {
           btn.addEventListener('click', (e) => {
-              const layerId = e.currentTarget.getAttribute('data-id');
-              addLayerToMap(layerId, true);
+              addLayerToMap(e.currentTarget.getAttribute('data-id'), true);
           });
       });
-
       triggerSearch(); 
     };
 
-    // --- Bulk Add Handler ---
     btnAddBulk.addEventListener('click', () => {
       const cbs = document.querySelectorAll('.layer-checkbox:checked');
       if (cbs.length === 0) return showToast("Select at least one layer to add.", true);
-      
       cbs.forEach(cb => {
         addLayerToMap(cb.value, false);
-        cb.checked = false; // Reset checkbox after adding
+        cb.checked = false;
       });
-      
       renderAddedLayers();
       switchTab('added');
       showToast(`Bulk added ${cbs.length} layers to map!`);
@@ -622,38 +620,55 @@
             </div>
           </div>
           
-          <!-- Icon Actions Row -->
-          <div class="mt-2 flex space-x-3 border-t border-gray-200 dark:border-gray-700 pt-2 justify-end text-gray-500 dark:text-gray-400 text-sm">
-            <button class="transition-colors btn-table ${isTableActive ? 'text-indigo-600 dark:text-indigo-400' : 'hover:text-indigo-600 dark:hover:text-indigo-400'}" data-key="${layer.uniqueKey}" title="View Data Table">
-               <i class="fa-solid fa-table"></i>
-            </button>
-            <button class="transition-colors btn-edit ${isEditActive ? 'text-purple-600 dark:text-purple-400' : 'hover:text-purple-600 dark:hover:text-purple-400'}" data-key="${layer.uniqueKey}" title="Edit Appearance">
-               <i class="fa-solid fa-palette"></i>
-            </button>
-            <button class="transition-colors btn-crop ${isCropActive ? 'text-teal-600 dark:text-teal-400' : 'hover:text-teal-600 dark:hover:text-teal-400'}" data-key="${layer.uniqueKey}" title="Filter / Crop Layer">
-               <i class="fa-solid fa-crop"></i>
-            </button>
-            <button class="transition-colors btn-split ${isSplitActive ? 'text-amber-600 dark:text-amber-400' : 'hover:text-amber-600 dark:hover:text-amber-400'}" data-key="${layer.uniqueKey}" title="Split Layer by Attribute">
-               <i class="fa-solid fa-object-ungroup"></i>
-            </button>
-            <button class="hover:text-blue-500 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${layer.uniqueKey}" title="Duplicate Layer">
-               <i class="fa-solid fa-clone"></i>
-            </button>
-            <button class="hover:text-orange-500 dark:hover:text-orange-400 transition-colors btn-rename" data-key="${layer.uniqueKey}" title="Rename Layer">
-               <i class="fa-solid fa-pen"></i>
-            </button>
-            <button class="hover:text-green-600 dark:hover:text-green-400 transition-colors btn-export" data-key="${layer.uniqueKey}" title="Export to GeoJSON">
-               <i class="fa-solid fa-download"></i>
-            </button>
-            <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${layer.uniqueKey}" title="Remove Layer">
-               <i class="fa-solid fa-trash"></i>
-            </button>
+          <div class="mt-2 flex justify-between border-t border-gray-200 dark:border-gray-700 pt-2 text-gray-500 dark:text-gray-400 text-sm">
+            <!-- Left Side: Z-Index Reorder Controls -->
+            <div class="flex space-x-1.5">
+               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="top" title="Bring to Front">
+                  <i class="fa-solid fa-angles-up"></i>
+               </button>
+               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="up" title="Move Up">
+                  <i class="fa-solid fa-angle-up"></i>
+               </button>
+               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="down" title="Move Down">
+                  <i class="fa-solid fa-angle-down"></i>
+               </button>
+               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="bottom" title="Send to Back">
+                  <i class="fa-solid fa-angles-down"></i>
+               </button>
+            </div>
+
+            <!-- Right Side: Existing Tools -->
+            <div class="flex space-x-2.5 justify-end">
+                <button class="transition-colors btn-table ${isTableActive ? 'text-indigo-600 dark:text-indigo-400' : 'hover:text-indigo-600 dark:hover:text-indigo-400'}" data-key="${layer.uniqueKey}" title="View Data Table">
+                   <i class="fa-solid fa-table"></i>
+                </button>
+                <button class="transition-colors btn-edit ${isEditActive ? 'text-purple-600 dark:text-purple-400' : 'hover:text-purple-600 dark:hover:text-purple-400'}" data-key="${layer.uniqueKey}" title="Edit Appearance">
+                   <i class="fa-solid fa-palette"></i>
+                </button>
+                <button class="transition-colors btn-crop ${isCropActive ? 'text-teal-600 dark:text-teal-400' : 'hover:text-teal-600 dark:hover:text-teal-400'}" data-key="${layer.uniqueKey}" title="Filter / Crop Layer">
+                   <i class="fa-solid fa-crop"></i>
+                </button>
+                <button class="transition-colors btn-split ${isSplitActive ? 'text-amber-600 dark:text-amber-400' : 'hover:text-amber-600 dark:hover:text-amber-400'}" data-key="${layer.uniqueKey}" title="Split Layer by Attribute">
+                   <i class="fa-solid fa-object-ungroup"></i>
+                </button>
+                <button class="hover:text-blue-500 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${layer.uniqueKey}" title="Duplicate Layer">
+                   <i class="fa-solid fa-clone"></i>
+                </button>
+                <button class="hover:text-orange-500 dark:hover:text-orange-400 transition-colors btn-rename" data-key="${layer.uniqueKey}" title="Rename Layer">
+                   <i class="fa-solid fa-pen"></i>
+                </button>
+                <button class="hover:text-green-600 dark:hover:text-green-400 transition-colors btn-export" data-key="${layer.uniqueKey}" title="Export to GeoJSON">
+                   <i class="fa-solid fa-download"></i>
+                </button>
+                <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${layer.uniqueKey}" title="Remove Layer">
+                   <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
           </div>
         `;
         addedLayerList.appendChild(div);
       });
 
-      // Bind Listeners
       document.querySelectorAll('.btn-table').forEach(btn => btn.addEventListener('click', handleToggleTable));
       document.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', handleToggleEdit));
       document.querySelectorAll('.btn-split').forEach(btn => btn.addEventListener('click', handleToggleSplit));
@@ -663,16 +678,47 @@
       document.querySelectorAll('.btn-export').forEach(btn => btn.addEventListener('click', handleExport));
       document.querySelectorAll('.btn-remove').forEach(btn => btn.addEventListener('click', handleRemove));
       document.querySelectorAll('.btn-toggle-vis').forEach(btn => btn.addEventListener('change', handleToggleVisibility));
+      document.querySelectorAll('.btn-reorder').forEach(btn => btn.addEventListener('click', handleReorder));
     };
 
     // --- Action Handlers ---
+    const handleReorder = (e) => {
+        const btn = e.currentTarget;
+        const key = btn.getAttribute('data-key');
+        const action = btn.getAttribute('data-action');
+        
+        const idx = activeLayers.findIndex(l => l.uniqueKey === key);
+        if (idx === -1) return;
+
+        const layer = activeLayers.splice(idx, 1)[0];
+
+        if (action === 'top') {
+            activeLayers.unshift(layer);
+        } else if (action === 'up') {
+            const newIdx = Math.max(0, idx - 1);
+            activeLayers.splice(newIdx, 0, layer);
+        } else if (action === 'down') {
+            const newIdx = Math.min(activeLayers.length, idx + 1);
+            activeLayers.splice(newIdx, 0, layer);
+        } else if (action === 'bottom') {
+            activeLayers.push(layer);
+        }
+
+        renderAddedLayers();
+        updateMapLayerOrder();
+    };
+
     const handleToggleVisibility = (e) => {
       const key = e.target.getAttribute('data-key');
       const layer = activeLayers.find(l => l.uniqueKey === key);
       if (!layer) return;
       layer.isVisible = e.target.checked;
-      if (layer.isVisible) map.addLayer(layer.mapLayer);
-      else map.removeLayer(layer.mapLayer);
+      if (layer.isVisible) {
+          map.addLayer(layer.mapLayer);
+          updateMapLayerOrder(); 
+      } else {
+          map.removeLayer(layer.mapLayer);
+      }
     };
 
     const handleRename = (e) => {
@@ -694,43 +740,7 @@
       }
     };
 
-    const ensureGeoJSON = async (layer) => {
-        if (layer.isLocalGeoJSON) return true;
-        if (!layer.exportUrl) {
-            showToast("Cannot extract vector data for this specific layer.", true);
-            return false;
-        }
-        try {
-            let queryUrl = layer.exportUrl;
-            if (queryUrl.includes('WFS')) queryUrl += '&maxFeatures=5000'; 
-            
-            const res = await fetch(`/proxy?url=${encodeURIComponent(queryUrl)}`);
-            if (!res.ok) throw new Error("Server error");
-            const geoJson = await res.json();
-            if (!geoJson.features || geoJson.features.length === 0) throw new Error("Empty or Invalid GeoJSON");
-
-            map.removeLayer(layer.mapLayer);
-            
-            const newMapLayer = L.geoJSON(geoJson, {
-                style: { color: '#4f46e5', opacity: 1.0, fillColor: '#4f46e5', fillOpacity: 0.5, weight: 2 },
-                onEachFeature: attachPopupsToFeatures
-            });
-            
-            if (layer.isVisible) newMapLayer.addTo(map);
-
-            layer.mapLayer = newMapLayer;
-            layer.geoJsonData = geoJson;
-            layer.isLocalGeoJSON = true;
-            layer.exportUrl = null; 
-            layer.customStyle = { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0 }; 
-            return true;
-        } catch (err) {
-            console.error(err);
-            showToast("Failed to fetch vector data. Layer may be too large.", true);
-            return false;
-        }
-    };
-
+    // --- Path Styling (Polygons / Lines) ---
     const createGeoJsonStyleFunction = (styleState) => {
         return function(feature) {
             if (styleState && styleState.type === 'categorical') {
@@ -755,6 +765,47 @@
         };
     };
 
+    // --- Point Styling (Markers) ---
+    const createGeoJsonPointToLayer = (styleState) => {
+        return function(feature, latlng) {
+            let fColor = '#4f46e5', sColor = '#4f46e5', fOp = 0.5, sOp = 1.0;
+            if (styleState && styleState.type === 'categorical') {
+                const val = feature.properties[styleState.property];
+                const cat = styleState.categories[val];
+                fColor = cat ? cat.fillColor : (styleState.defaultFill || '#cccccc');
+                sColor = cat ? cat.color : (styleState.defaultColor || '#999999');
+                fOp = cat ? cat.fillOpacity : (styleState.defaultFillOpacity ?? 0.5);
+                sOp = cat ? cat.opacity : (styleState.defaultOpacity ?? 1.0);
+            } else if (styleState) {
+                fColor = styleState.fillColor || '#4f46e5';
+                sColor = styleState.color || '#4f46e5';
+                fOp = styleState.fillOpacity ?? 0.5;
+                sOp = styleState.opacity ?? 1.0;
+            }
+            
+            const shape = styleState ? (styleState.pointShape || 'circle') : 'circle';
+            const size = styleState ? (styleState.pointSize || 8) : 8;
+            
+            if (shape === 'circle') {
+                return L.circleMarker(latlng, { radius: size, fillColor: fColor, color: sColor, weight: 2, opacity: sOp, fillOpacity: fOp });
+            } else {
+                const w = size * 2 + 4; // Add padding for stroke
+                const c = w / 2;
+                
+                let svgHtml = '';
+                if (shape === 'square') {
+                    svgHtml = `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="${w-4}" height="${w-4}" fill="${fColor}" fill-opacity="${fOp}" stroke="${sColor}" stroke-opacity="${sOp}" stroke-width="2"/></svg>`;
+                } else if (shape === 'triangle') {
+                    svgHtml = `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" xmlns="http://www.w3.org/2000/svg"><polygon points="2,${w-2} ${c},2 ${w-2},${w-2}" fill="${fColor}" fill-opacity="${fOp}" stroke="${sColor}" stroke-opacity="${sOp}" stroke-width="2" stroke-linejoin="round"/></svg>`;
+                }
+                
+                return L.marker(latlng, {
+                    icon: L.divIcon({ className: '', html: svgHtml, iconSize: [w, w], iconAnchor: [c, c] }) // className: '' prevents Leaflet's default white box
+                });
+            }
+        };
+    };
+
     const attachPopupsToFeatures = function(feature, l) {
         if (feature.properties) {
             let popupContent = '<div class="max-h-48 overflow-y-auto custom-scroll"><table class="text-xs text-left w-full text-gray-800 dark:text-gray-200">';
@@ -763,6 +814,45 @@
             }
             popupContent += '</table></div>';
             l.bindPopup(popupContent);
+        }
+    };
+
+    const ensureGeoJSON = async (layer) => {
+        if (layer.isLocalGeoJSON) return true;
+        if (!layer.exportUrl) {
+            showToast("Cannot extract vector data for this specific layer.", true);
+            return false;
+        }
+        try {
+            let queryUrl = layer.exportUrl;
+            if (queryUrl.includes('WFS')) queryUrl += '&maxFeatures=5000'; 
+            
+            const res = await fetch(`/proxy?url=${encodeURIComponent(queryUrl)}`);
+            if (!res.ok) throw new Error("Server error");
+            const geoJson = await res.json();
+            if (!geoJson.features || geoJson.features.length === 0) throw new Error("Empty or Invalid GeoJSON");
+
+            map.removeLayer(layer.mapLayer);
+            
+            const defaultStyle = { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+            const newMapLayer = L.geoJSON(geoJson, {
+                style: createGeoJsonStyleFunction(defaultStyle),
+                pointToLayer: createGeoJsonPointToLayer(defaultStyle),
+                onEachFeature: attachPopupsToFeatures
+            });
+            
+            if (layer.isVisible) newMapLayer.addTo(map);
+
+            layer.mapLayer = newMapLayer;
+            layer.geoJsonData = geoJson;
+            layer.isLocalGeoJSON = true;
+            layer.exportUrl = null; 
+            layer.customStyle = defaultStyle; 
+            return true;
+        } catch (err) {
+            console.error(err);
+            showToast("Failed to fetch vector data. Layer may be too large.", true);
+            return false;
         }
     };
 
@@ -776,14 +866,15 @@
         if(!success) return;
 
         const newGeoJson = JSON.parse(JSON.stringify(layer.geoJsonData));
-        const newStyleState = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0 };
+        const newStyleState = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
 
         const newMapLayer = L.geoJSON(newGeoJson, {
             style: createGeoJsonStyleFunction(newStyleState),
+            pointToLayer: createGeoJsonPointToLayer(newStyleState),
             onEachFeature: attachPopupsToFeatures
         }).addTo(map);
 
-        activeLayers.push({
+        activeLayers.unshift({
             uniqueKey: Math.random().toString(36).substr(2,9),
             id: `${layer.id}_copy`,
             displayName: `${layer.displayName} (Copy)`,
@@ -796,6 +887,7 @@
         });
 
         renderAddedLayers();
+        updateMapLayerOrder();
         showToast("Layer duplicated successfully!");
     };
 
@@ -924,8 +1016,10 @@
         if (features.length > 0 && features[0].properties) {
             cols = Object.keys(features[0].properties);
         }
+        
+        const hasPoints = features.some(f => f.geometry && (f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint'));
 
-        const cs = layer.customStyle || { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0 };
+        const cs = layer.customStyle || { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
         const isCat = (cs.type === 'categorical');
         
         const pasteDisabled = copiedStyle ? '' : 'disabled';
@@ -943,9 +1037,29 @@
                 </div>
                 
                 <div class="flex-1 overflow-y-auto custom-scroll pr-1 flex flex-col min-h-0">
+                    
+                    ${hasPoints ? `
+                    <div id="point-style-container" class="flex flex-col space-y-3 mb-3 shrink-0 bg-white dark:bg-gray-800 p-3 rounded border border-purple-100 dark:border-purple-800">
+                        <h5 class="text-[10px] font-bold text-purple-500 dark:text-purple-400 uppercase tracking-wider mb-1">Point Markers</h5>
+                        <div class="flex items-center space-x-3 w-full">
+                            <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Shape:</label>
+                            <select id="edit-point-shape" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:outline-none">
+                                <option value="circle" ${cs.pointShape === 'circle' ? 'selected' : ''}>Circle</option>
+                                <option value="square" ${cs.pointShape === 'square' ? 'selected' : ''}>Square</option>
+                                <option value="triangle" ${cs.pointShape === 'triangle' ? 'selected' : ''}>Triangle</option>
+                            </select>
+                        </div>
+                        <div class="flex items-center space-x-3 w-full">
+                            <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Scale:</label>
+                            <input type="range" id="edit-point-size" min="2" max="30" step="1" value="${cs.pointSize || 8}" class="flex-1 w-full cursor-pointer accent-purple-600 dark:accent-purple-500" title="Point Size">
+                            <span id="point-size-display" class="text-xs text-gray-500 font-mono w-4 text-right">${cs.pointSize || 8}</span>
+                        </div>
+                    </div>
+                    ` : ''}
+
                     <div class="flex items-center space-x-2 mb-3 bg-white dark:bg-gray-800 p-2 border border-purple-100 dark:border-purple-800 rounded shadow-sm shrink-0">
                         <input type="checkbox" id="use-data-style" class="w-4 h-4 text-purple-600 dark:text-purple-500 rounded cursor-pointer accent-purple-600 dark:accent-purple-500" ${isCat ? 'checked' : ''}>
-                        <label for="use-data-style" class="text-xs font-semibold text-gray-700 dark:text-gray-300 whitespace-nowrap">Use Data</label>
+                        <label for="use-data-style" class="text-xs font-semibold text-gray-700 dark:text-gray-300 whitespace-nowrap">Use Data Colors</label>
                         <select id="style-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs" ${isCat ? '' : 'disabled'}>
                             <option value="" disabled ${!isCat ? 'selected' : ''}>Select attribute...</option>
                             ${cols.map(c => `<option value="${c}" ${(isCat && cs.property === c) ? 'selected' : ''}>${c}</option>`).join('')}
@@ -980,6 +1094,12 @@
                 </div>
             </div>
         `;
+
+        if (hasPoints) {
+            document.getElementById('edit-point-size').addEventListener('input', (e) => {
+                document.getElementById('point-size-display').textContent = e.target.value;
+            });
+        }
 
         const chkUseData = document.getElementById('use-data-style');
         const selCol = document.getElementById('style-col-select');
@@ -1053,7 +1173,7 @@
         // Copy Style Logic
         document.getElementById('btn-copy-style').addEventListener('click', () => {
             if(!layer.customStyle) {
-               copiedStyle = { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0 };
+               copiedStyle = { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
             } else {
                copiedStyle = JSON.parse(JSON.stringify(layer.customStyle));
             }
@@ -1080,7 +1200,17 @@
                 }
             }
             
-            layer.mapLayer.setStyle(createGeoJsonStyleFunction(layer.customStyle));
+            // To ensure point markers update shapes/sizes, we fully recreate the layer
+            map.removeLayer(layer.mapLayer);
+            const newMapLayer = L.geoJSON(layer.geoJsonData, {
+                style: createGeoJsonStyleFunction(layer.customStyle),
+                pointToLayer: createGeoJsonPointToLayer(layer.customStyle),
+                onEachFeature: attachPopupsToFeatures
+            });
+            if (layer.isVisible) newMapLayer.addTo(map);
+            layer.mapLayer = newMapLayer;
+            updateMapLayerOrder();
+            
             showToast("Style pasted and applied!");
             
             // Re-render UI to show new sliders
@@ -1089,6 +1219,11 @@
         });
 
         document.getElementById('btn-apply-edit').addEventListener('click', () => {
+            const shapeEl = document.getElementById('edit-point-shape');
+            const sizeEl = document.getElementById('edit-point-size');
+            const pShape = shapeEl ? shapeEl.value : (layer.customStyle.pointShape || 'circle');
+            const pSize = sizeEl ? parseInt(sizeEl.value, 10) : (layer.customStyle.pointSize || 8);
+
             if (chkUseData.checked) {
                 const prop = selCol.value;
                 if(!prop) return showToast("Select an attribute column for data styling.", true);
@@ -1105,17 +1240,32 @@
                 
                 layer.customStyle = {
                     type: 'categorical', property: prop, categories: newCategories,
-                    defaultFill: '#cccccc', defaultFillOpacity: 0.5, defaultColor: '#999999', defaultOpacity: 1.0
+                    defaultFill: '#cccccc', defaultFillOpacity: 0.5, defaultColor: '#999999', defaultOpacity: 1.0,
+                    pointShape: pShape, pointSize: pSize
                 };
             } else {
                 const fColor = document.getElementById('edit-fill-color').value;
                 const fOp = parseFloat(document.getElementById('edit-fill-opacity').value);
                 const sColor = document.getElementById('edit-stroke-color').value;
                 const sOp = parseFloat(document.getElementById('edit-stroke-opacity').value);
-                layer.customStyle = { type: 'single', fillColor: fColor, fillOpacity: fOp, color: sColor, opacity: sOp }; 
+                layer.customStyle = { 
+                    type: 'single', 
+                    fillColor: fColor, fillOpacity: fOp, color: sColor, opacity: sOp, 
+                    pointShape: pShape, pointSize: pSize 
+                }; 
             }
             
-            layer.mapLayer.setStyle(createGeoJsonStyleFunction(layer.customStyle));
+            // To ensure point markers dynamically swap SVG shapes, we fully rebuild the layer
+            map.removeLayer(layer.mapLayer);
+            const newMapLayer = L.geoJSON(layer.geoJsonData, {
+                style: createGeoJsonStyleFunction(layer.customStyle),
+                pointToLayer: createGeoJsonPointToLayer(layer.customStyle),
+                onEachFeature: attachPopupsToFeatures
+            });
+            if (layer.isVisible) newMapLayer.addTo(map);
+            layer.mapLayer = newMapLayer;
+            updateMapLayerOrder();
+
             showToast("Layer style updated!");
         });
 
@@ -1150,10 +1300,12 @@
             map.removeLayer(layer.mapLayer);
             const newMapLayer = L.geoJSON(layer.geoJsonData, {
                 style: createGeoJsonStyleFunction(layer.customStyle),
+                pointToLayer: createGeoJsonPointToLayer(layer.customStyle),
                 onEachFeature: attachPopupsToFeatures
             });
             if (layer.isVisible) newMapLayer.addTo(map);
             layer.mapLayer = newMapLayer;
+            updateMapLayerOrder();
             showToast(`Baked RGBA hex values to ${count} features!`);
         });
     };
@@ -1210,20 +1362,23 @@
             if (uniqueVals.length > 50 && !confirm(`Create ${uniqueVals.length} layers?`)) return;
 
             let createdCount = 0;
+            const newLayers = [];
+
             uniqueVals.forEach(val => {
                 const filteredFeats = layer.geoJsonData.features.filter(f => f.properties[splitCol] === val);
                 if(filteredFeats.length === 0) return;
 
                 const newGeoJson = { type: "FeatureCollection", features: filteredFeats };
                 const rColor = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
-                const splitStyleState = { type: 'single', fillColor: rColor, fillOpacity: 0.6, color: rColor, opacity: 1.0 };
+                const splitStyleState = { type: 'single', fillColor: rColor, fillOpacity: 0.6, color: rColor, opacity: 1.0, pointShape: 'circle', pointSize: 8 };
 
                 const newMapLayer = L.geoJSON(newGeoJson, {
                     style: createGeoJsonStyleFunction(splitStyleState),
+                    pointToLayer: createGeoJsonPointToLayer(splitStyleState),
                     onEachFeature: attachPopupsToFeatures
                 }).addTo(map);
 
-                activeLayers.push({
+                newLayers.push({
                     uniqueKey: Math.random().toString(36).substr(2,9),
                     id: `${layer.id}_${val}`,
                     displayName: `${layer.displayName} [${val}]`,
@@ -1237,10 +1392,14 @@
                 createdCount++;
             });
             
+            activeLayers = [...newLayers, ...activeLayers];
+            
             layer.isVisible = false;
             map.removeLayer(layer.mapLayer);
+            
             closeAllPanels();
             renderAddedLayers();
+            updateMapLayerOrder();
             showToast(`Split into ${createdCount} new layers!`);
         });
     };
@@ -1319,7 +1478,6 @@
       showToast(`Exported ${name}!`);
     };
 
-    // --- Main Fetch ---
     document.getElementById('btn-fetch').addEventListener('click', async () => {
       const rawUrl = document.getElementById('server-url').value.trim();
       currentServerType = document.getElementById('server-type').value;
@@ -1367,7 +1525,6 @@
       }
     });
 
-    // --- Spatial/Data Filter Map Drawing ---
     filterType.addEventListener('change', (e) => {
       const type = e.target.value;
       const layer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
@@ -1526,9 +1683,7 @@
                 return selectedVals.includes(String(f.properties[col]));
             });
         } else {
-            // SPATIAL FILTERING
             if (targetLayer.isLocalGeoJSON) {
-                // Perform locally via Turf
                 let b; 
                 if (filterType.value === 'box') {
                    b = filterGeometryData;
@@ -1540,7 +1695,6 @@
                    finalFeatures = targetLayer.geoJsonData.features.filter(f => turf.booleanIntersects(f, turfCircle));
                 }
             } else {
-                // Fetch from Server
                 let queryUrl = targetLayer.exportUrl;
                 let b; 
                 if (filterType.value === 'box') { b = filterGeometryData; } 
@@ -1572,10 +1726,11 @@
         }
 
         const newGeoJsonData = { type: "FeatureCollection", features: finalFeatures };
-        const newStyleState = targetLayer.customStyle ? JSON.parse(JSON.stringify(targetLayer.customStyle)) : { type: 'single', fillColor: '#0d9488', fillOpacity: 0.5, color: '#0d9488', opacity: 1.0 };
+        const newStyleState = targetLayer.customStyle ? JSON.parse(JSON.stringify(targetLayer.customStyle)) : { type: 'single', fillColor: '#0d9488', fillOpacity: 0.5, color: '#0d9488', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
 
         const newMapLayer = L.geoJSON(newGeoJsonData, {
           style: createGeoJsonStyleFunction(newStyleState),
+          pointToLayer: createGeoJsonPointToLayer(newStyleState),
           onEachFeature: attachPopupsToFeatures
         }).addTo(map);
         
@@ -1583,7 +1738,7 @@
 
         const namePrefix = filterType.value === 'data' ? '[Filtered]' : '[Cropped]';
 
-        activeLayers.push({
+        activeLayers.unshift({
           uniqueKey: Math.random().toString(36).substr(2,9),
           id: `${targetLayer.id}_filtered`,
           displayName: `${namePrefix} ${targetLayer.displayName}`,
@@ -1595,7 +1750,6 @@
           isVisible: true 
         });
 
-        // 🌟 Turn off original layer visibility 🌟
         if (targetLayer.isVisible) {
             targetLayer.isVisible = false;
             map.removeLayer(targetLayer.mapLayer);
@@ -1603,6 +1757,7 @@
 
         closeAllPanels();
         renderAddedLayers();
+        updateMapLayerOrder();
         showToast(`Created new filtered layer with ${finalFeatures.length} features.`);
 
       } catch(err) {
