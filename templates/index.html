@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<html lang="en">
+<!-- Force dark mode globally on the HTML tag -->
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,7 +9,8 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      darkMode: 'media',
+      // Tie dark mode to the class on the HTML tag, not the OS preference
+      darkMode: 'class',
     }
   </script>
   <!-- Leaflet -->
@@ -22,49 +24,48 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 
   <style>
-    /* Custom Scrollbars */
+    /* Custom Scrollbars - Base */
     .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
     .custom-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
     .custom-scroll::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
     .custom-scroll::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
     
-    @media (prefers-color-scheme: dark) {
-      .custom-scroll::-webkit-scrollbar-track { background: #374151; }
-      .custom-scroll::-webkit-scrollbar-thumb { background: #4B5563; border-radius: 4px; }
-      .custom-scroll::-webkit-scrollbar-thumb:hover { background: #6B7280; }
-      
-      /* Leaflet Popups */
-      .leaflet-popup-content-wrapper, .leaflet-popup-tip {
-        background-color: #1f2937 !important;
-        color: #f3f4f6 !important;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5) !important;
-      }
-      .leaflet-container a.leaflet-popup-close-button {
-        color: #9ca3af !important;
-      }
-      .leaflet-container a.leaflet-popup-close-button:hover {
-        color: #f3f4f6 !important;
-      }
-      
-      /* Leaflet Zoom Controls */
-      .leaflet-control-zoom a {
-        background-color: #374151 !important;
-        color: #d1d5db !important;
-        border-color: #4b5563 !important;
-      }
-      .leaflet-control-zoom a:hover {
-        background-color: #4b5563 !important;
-        color: #ffffff !important;
-      }
-      
-      /* Leaflet Attribution */
-      .leaflet-control-attribution {
-        background: rgba(31, 41, 55, 0.7) !important;
-        color: #9ca3af !important;
-      }
-      .leaflet-control-attribution a {
-        color: #60a5fa !important;
-      }
+    /* Custom Scrollbars - Dark */
+    .dark .custom-scroll::-webkit-scrollbar-track { background: #374151; }
+    .dark .custom-scroll::-webkit-scrollbar-thumb { background: #4B5563; border-radius: 4px; }
+    .dark .custom-scroll::-webkit-scrollbar-thumb:hover { background: #6B7280; }
+    
+    /* Leaflet Popups - Dark */
+    .dark .leaflet-popup-content-wrapper, .dark .leaflet-popup-tip {
+      background-color: #1f2937 !important;
+      color: #f3f4f6 !important;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5) !important;
+    }
+    .dark .leaflet-container a.leaflet-popup-close-button {
+      color: #9ca3af !important;
+    }
+    .dark .leaflet-container a.leaflet-popup-close-button:hover {
+      color: #f3f4f6 !important;
+    }
+    
+    /* Leaflet Zoom Controls - Dark */
+    .dark .leaflet-control-zoom a {
+      background-color: #374151 !important;
+      color: #d1d5db !important;
+      border-color: #4b5563 !important;
+    }
+    .dark .leaflet-control-zoom a:hover {
+      background-color: #4b5563 !important;
+      color: #ffffff !important;
+    }
+    
+    /* Leaflet Attribution - Dark */
+    .dark .leaflet-control-attribution {
+      background: rgba(31, 41, 55, 0.7) !important;
+      color: #9ca3af !important;
+    }
+    .dark .leaflet-control-attribution a {
+      color: #60a5fa !important;
     }
   </style>
 </head>
@@ -125,7 +126,7 @@
               </button>
             </div>
           </div>
-          <div id="available-layer-list" class="flex-1 overflow-y-auto custom-scroll p-2 min-h-0">
+          <div id="available-layer-list" class="flex-1 overflow-y-auto custom-scroll p-2 min-h-0 space-y-1">
             <p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers fetched yet.</p>
           </div>
         </div>
@@ -201,10 +202,12 @@
           </div>
         </div>
       </div>
-
+      
+      <!-- Bulk Add Button (Visible only on Available tab) -->
       <button id="btn-add" disabled class="w-full bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-md transition-colors shadow-sm shrink-0">
         Add Selected Layers to Map
       </button>
+
     </div>
 
     <!-- Right Map Panel -->
@@ -231,12 +234,16 @@
     let activeEditLayerKey = null;
     let activeSplitLayerKey = null;
     let activeCropLayerKey = null;
+    
+    // Edit Copy/Paste State
+    let copiedStyle = null;
 
     // DOM Elements
     const tabBtnAvailable = document.getElementById('tab-btn-available');
     const tabBtnAdded = document.getElementById('tab-btn-added');
     const tabAvailable = document.getElementById('tab-available');
     const tabAdded = document.getElementById('tab-added');
+    const btnAddBulk = document.getElementById('btn-add');
     
     const savedServersSelect = document.getElementById('saved-servers-select');
     const btnSaveServer = document.getElementById('btn-save-server');
@@ -282,7 +289,7 @@
     // --- Server Database Logic ---
     const loadSavedServers = async () => {
         try {
-            const res = await fetch('./api/servers');
+            const res = await fetch('/api/servers');
             const servers = await res.json();
             
             savedServersSelect.innerHTML = '<option value="" disabled selected>-- Load saved server --</option>';
@@ -315,7 +322,7 @@
         if (!name) return;
 
         try {
-            const res = await fetch('./api/servers', {
+            const res = await fetch('/api/servers', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name, url, type })
@@ -344,7 +351,7 @@
         
         tabAvailable.classList.replace('hidden', 'flex');
         tabAdded.classList.replace('flex', 'hidden');
-        document.getElementById('btn-add').classList.remove('hidden');
+        btnAddBulk.classList.remove('hidden');
       } else {
         tabBtnAdded.classList.replace('text-gray-500', 'text-blue-600');
         tabBtnAdded.classList.replace('dark:text-gray-400', 'dark:text-blue-400');
@@ -358,7 +365,7 @@
         
         tabAdded.classList.replace('hidden', 'flex');
         tabAvailable.classList.replace('flex', 'hidden');
-        document.getElementById('btn-add').classList.add('hidden');
+        btnAddBulk.classList.add('hidden');
       }
     };
 
@@ -477,33 +484,104 @@
       addedLayerSearch.focus();
     });
 
+    // --- Core Action: Add single layer ---
+    const addLayerToMap = (layerId, switchTabAfter = true) => {
+        const meta = fetchedLayers.find(l => l.id === layerId);
+        if(!meta) return;
+
+        const baseUrl = currentServerUrl.split('?')[0];
+        let mapLayer, exportUrl = '';
+
+        if (currentServerType === 'WFS') {
+          mapLayer = L.tileLayer.wms(baseUrl, { layers: meta.id, format: 'image/png', transparent: true });
+          exportUrl = `${baseUrl}?service=WFS&version=1.1.0&request=GetFeature&typeName=${encodeURIComponent(meta.id)}&outputFormat=application%2Fjson&srsName=EPSG:4326`;
+        } else {
+          if (!baseUrl.toLowerCase().includes('featureserver')) {
+            mapLayer = L.esri.dynamicMapLayer({ url: baseUrl, layers: [meta.id], opacity: 0.8 });
+            exportUrl = `${baseUrl}/${meta.id}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
+          } else {
+            const fUrl = baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`;
+            mapLayer = L.esri.featureLayer({ url: fUrl });
+            exportUrl = `${fUrl}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
+          }
+        }
+        
+        mapLayer.addTo(map);
+        
+        activeLayers.push({ 
+          uniqueKey: Math.random().toString(36).substr(2,9), 
+          id: meta.id, 
+          displayName: meta.title, 
+          mapLayer, 
+          exportUrl, 
+          isLocalGeoJSON: false,
+          isVisible: true 
+        });
+        
+        if (switchTabAfter) {
+            renderAddedLayers();
+            switchTab('added');
+            showToast(`Added ${meta.title} to map!`);
+        }
+    };
+
     const renderAvailableLayers = () => {
       availableLayerList.innerHTML = '';
       if (fetchedLayers.length === 0) {
         availableLayerList.innerHTML = `<p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers fetched yet.</p>`;
         searchContainer.classList.add('hidden');
-        document.getElementById('btn-add').disabled = true;
+        btnAddBulk.disabled = true;
         return;
       }
       
       searchContainer.classList.remove('hidden');
+      btnAddBulk.disabled = false;
 
-      fetchedLayers.forEach((layer, i) => {
+      fetchedLayers.forEach((layer) => {
         const div = document.createElement('div');
-        div.className = 'available-layer-item flex items-start p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded border border-transparent dark:border-transparent hover:border-gray-200 dark:hover:border-gray-600 mb-1 transition-colors';
+        div.className = 'available-layer-item flex items-center p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded border border-transparent dark:border-transparent hover:border-gray-200 dark:hover:border-gray-600 mb-1 transition-colors';
         div.setAttribute('data-search', `${layer.title} ${layer.id}`.toLowerCase());
+        
         div.innerHTML = `
-          <div class="flex items-center h-5"><input id="cb-${i}" type="checkbox" value="${layer.id}" class="w-4 h-4 layer-checkbox cursor-pointer accent-blue-600 dark:accent-blue-500"></div>
-          <div class="ml-3 text-sm flex-1 overflow-hidden">
-            <label for="cb-${i}" class="font-medium text-gray-700 dark:text-gray-200 block cursor-pointer truncate" title="${layer.title}">${layer.title}</label>
+          <div class="flex items-center h-5 mr-2 shrink-0">
+             <input id="cb-${layer.id}" type="checkbox" value="${layer.id}" class="w-4 h-4 layer-checkbox cursor-pointer accent-blue-600 dark:accent-blue-500">
+          </div>
+          <div class="ml-1 text-sm flex-1 overflow-hidden pr-2 cursor-pointer">
+            <label for="cb-${layer.id}" class="font-medium text-gray-700 dark:text-gray-200 block truncate cursor-pointer" title="${layer.title}">${layer.title}</label>
             <p class="text-gray-400 dark:text-gray-500 text-[10px] truncate" title="${layer.id}">ID: ${layer.id}</p>
-          </div>`;
+          </div>
+          <button class="btn-add-single shrink-0 bg-blue-100 dark:bg-blue-900/40 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 w-8 h-8 rounded-full flex items-center justify-center transition-colors shadow-sm" data-id="${layer.id}" title="Add Single Layer">
+            <i class="fa-solid fa-plus"></i>
+          </button>
+        `;
         availableLayerList.appendChild(div);
       });
       
-      document.getElementById('btn-add').disabled = false;
+      // Bind Add buttons
+      document.querySelectorAll('.btn-add-single').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+              const layerId = e.currentTarget.getAttribute('data-id');
+              addLayerToMap(layerId, true);
+          });
+      });
+
       triggerSearch(); 
     };
+
+    // --- Bulk Add Handler ---
+    btnAddBulk.addEventListener('click', () => {
+      const cbs = document.querySelectorAll('.layer-checkbox:checked');
+      if (cbs.length === 0) return showToast("Select at least one layer to add.", true);
+      
+      cbs.forEach(cb => {
+        addLayerToMap(cb.value, false);
+        cb.checked = false; // Reset checkbox after adding
+      });
+      
+      renderAddedLayers();
+      switchTab('added');
+      showToast(`Bulk added ${cbs.length} layers to map!`);
+    });
 
     const renderAddedLayers = () => {
       tabBtnAdded.textContent = `Added (${activeLayers.length})`;
@@ -523,7 +601,7 @@
         const isSplitActive = (activeSplitLayerKey === layer.uniqueKey);
         const isCropActive = (activeCropLayerKey === layer.uniqueKey);
         
-        let bgClass = 'bg-white border-gray-100 hover:bg-gray-50 shadow-sm dark:bg-gray-800 dark:border-gray-700 dark:hover:bg-gray-750';
+        let bgClass = 'bg-white border-gray-100 hover:bg-gray-50 shadow-sm dark:bg-gray-800 dark:border-gray-700 dark:hover:bg-gray-700';
         if (isTableActive) bgClass = 'bg-indigo-50 border-indigo-300 shadow-md dark:bg-indigo-900/30 dark:border-indigo-600';
         if (isEditActive) bgClass = 'bg-purple-50 border-purple-300 shadow-md dark:bg-purple-900/30 dark:border-purple-600';
         if (isSplitActive) bgClass = 'bg-amber-50 border-amber-300 shadow-md dark:bg-amber-900/30 dark:border-amber-600';
@@ -626,7 +704,7 @@
             let queryUrl = layer.exportUrl;
             if (queryUrl.includes('WFS')) queryUrl += '&maxFeatures=5000'; 
             
-            const res = await fetch(`./proxy?url=${encodeURIComponent(queryUrl)}`);
+            const res = await fetch(`/proxy?url=${encodeURIComponent(queryUrl)}`);
             if (!res.ok) throw new Error("Server error");
             const geoJson = await res.json();
             if (!geoJson.features || geoJson.features.length === 0) throw new Error("Empty or Invalid GeoJSON");
@@ -748,7 +826,7 @@
           if (queryUrl.includes('WFS')) queryUrl += '&maxFeatures=100';
           else if (queryUrl.includes('f=geojson')) queryUrl += '&resultRecordCount=100';
 
-          const res = await fetch(`./proxy?url=${encodeURIComponent(queryUrl)}`);
+          const res = await fetch(`/proxy?url=${encodeURIComponent(queryUrl)}`);
           if (!res.ok) throw new Error("Failed to fetch attributes.");
           const data = await res.json();
           features = data.features || [];
@@ -820,7 +898,7 @@
     };
 
     const handleToggleEdit = async (e) => {
-        const key = e.currentTarget.getAttribute('data-key');
+        const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
         const layer = activeLayers.find(l => l.uniqueKey === key);
 
         if (activeEditLayerKey === key) {
@@ -849,12 +927,19 @@
 
         const cs = layer.customStyle || { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0 };
         const isCat = (cs.type === 'categorical');
+        
+        const pasteDisabled = copiedStyle ? '' : 'disabled';
+        const pasteOpacity = copiedStyle ? '' : 'opacity-50 cursor-not-allowed';
 
         editPanelContainer.innerHTML = `
             <div class="p-3 text-sm flex flex-col h-full min-h-0 bg-purple-50 dark:bg-transparent">
                 <div class="flex justify-between items-center mb-3 border-b border-purple-200 dark:border-purple-800 pb-2 shrink-0">
                     <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-xs tracking-wider">Appearance & Alpha</h4>
-                    <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"><i class="fa-solid fa-times"></i></button>
+                    <div class="flex space-x-2 items-center">
+                        <button id="btn-copy-style" class="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-2 py-1 rounded transition-colors shadow-sm" title="Copy Style"><i class="fa-solid fa-copy"></i></button>
+                        <button id="btn-paste-style" class="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-2 py-1 rounded transition-colors shadow-sm ${pasteOpacity}" title="Paste Style" ${pasteDisabled}><i class="fa-solid fa-paste"></i></button>
+                        <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 ml-2"><i class="fa-solid fa-times"></i></button>
+                    </div>
                 </div>
                 
                 <div class="flex-1 overflow-y-auto custom-scroll pr-1 flex flex-col min-h-0">
@@ -964,6 +1049,44 @@
 
         selCol.addEventListener('change', renderCategoryPickers);
         if (isCat && cs.property) renderCategoryPickers();
+
+        // Copy Style Logic
+        document.getElementById('btn-copy-style').addEventListener('click', () => {
+            if(!layer.customStyle) {
+               copiedStyle = { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0 };
+            } else {
+               copiedStyle = JSON.parse(JSON.stringify(layer.customStyle));
+            }
+            showToast("Style copied to clipboard!");
+            const pasteBtn = document.getElementById('btn-paste-style');
+            pasteBtn.disabled = false;
+            pasteBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        });
+
+        // Paste Style Logic
+        document.getElementById('btn-paste-style').addEventListener('click', () => {
+            if (!copiedStyle) return;
+            layer.customStyle = JSON.parse(JSON.stringify(copiedStyle));
+            
+            if (layer.customStyle.type === 'categorical') {
+                const layerFeatures = layer.geoJsonData.features || [];
+                if (layerFeatures.length > 0 && layerFeatures[0].properties && !(layer.customStyle.property in layerFeatures[0].properties)) {
+                     showToast("Target layer missing attribute column. Applied fallback colors.", true);
+                     layer.customStyle.type = 'single';
+                     layer.customStyle.fillColor = layer.customStyle.defaultFill || '#cccccc';
+                     layer.customStyle.color = layer.customStyle.defaultColor || '#999999';
+                     layer.customStyle.fillOpacity = layer.customStyle.defaultFillOpacity || 0.5;
+                     layer.customStyle.opacity = layer.customStyle.defaultOpacity || 1.0;
+                }
+            }
+            
+            layer.mapLayer.setStyle(createGeoJsonStyleFunction(layer.customStyle));
+            showToast("Style pasted and applied!");
+            
+            // Re-render UI to show new sliders
+            activeEditLayerKey = null; 
+            handleToggleEdit(key); 
+        });
 
         document.getElementById('btn-apply-edit').addEventListener('click', () => {
             if (chkUseData.checked) {
@@ -1176,7 +1299,7 @@
       if (!layer.exportUrl) return showToast("Export not available.", true);
       showToast(`Fetching export for ${layer.displayName}...`);
       try {
-        const res = await fetch(`./proxy?url=${encodeURIComponent(layer.exportUrl)}`);
+        const res = await fetch(`/proxy?url=${encodeURIComponent(layer.exportUrl)}`);
         if (!res.ok) throw new Error("Server error");
         downloadBlob(await res.blob(), layer.displayName);
       } catch(err) {
@@ -1218,7 +1341,7 @@
           targetUrl.searchParams.set('f', 'json');
         }
 
-        const res = await fetch(`./proxy?url=${encodeURIComponent(targetUrl.toString())}`);
+        const res = await fetch(`/proxy?url=${encodeURIComponent(targetUrl.toString())}`);
         if (!res.ok) throw new Error("Proxy error");
 
         if (currentServerType === 'WFS') {
@@ -1242,47 +1365,6 @@
       } finally {
         document.getElementById('btn-fetch-spinner').classList.add('hidden');
       }
-    });
-
-    document.getElementById('btn-add').addEventListener('click', () => {
-      const cbs = document.querySelectorAll('.layer-checkbox:checked');
-      if (cbs.length === 0) return;
-      
-      cbs.forEach(cb => {
-        const meta = fetchedLayers.find(l => l.id === cb.value);
-        const baseUrl = currentServerUrl.split('?')[0];
-        let mapLayer, exportUrl = '';
-
-        if (currentServerType === 'WFS') {
-          mapLayer = L.tileLayer.wms(baseUrl, { layers: meta.id, format: 'image/png', transparent: true });
-          exportUrl = `${baseUrl}?service=WFS&version=1.1.0&request=GetFeature&typeName=${encodeURIComponent(meta.id)}&outputFormat=application%2Fjson&srsName=EPSG:4326`;
-        } else {
-          if (!baseUrl.toLowerCase().includes('featureserver')) {
-            mapLayer = L.esri.dynamicMapLayer({ url: baseUrl, layers: [meta.id], opacity: 0.8 });
-            exportUrl = `${baseUrl}/${meta.id}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
-          } else {
-            const fUrl = baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`;
-            mapLayer = L.esri.featureLayer({ url: fUrl });
-            exportUrl = `${fUrl}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
-          }
-        }
-        
-        mapLayer.addTo(map);
-        
-        activeLayers.push({ 
-          uniqueKey: Math.random().toString(36).substr(2,9), 
-          id: meta.id, 
-          displayName: meta.title, 
-          mapLayer, 
-          exportUrl, 
-          isLocalGeoJSON: false,
-          isVisible: true 
-        });
-        
-        cb.checked = false;
-      });
-      renderAddedLayers();
-      switchTab('added');
     });
 
     // --- Spatial/Data Filter Map Drawing ---
@@ -1470,7 +1552,7 @@
                    queryUrl += `&geometry=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&geometryType=esriGeometryEnvelope&inSR=4326`;
                 }
 
-                const res = await fetch(`./proxy?url=${encodeURIComponent(queryUrl)}`);
+                const res = await fetch(`/proxy?url=${encodeURIComponent(queryUrl)}`);
                 const rawGeojson = await res.json();
                 finalFeatures = rawGeojson.features || [];
 
@@ -1512,6 +1594,12 @@
           customStyle: newStyleState,
           isVisible: true 
         });
+
+        // 🌟 Turn off original layer visibility 🌟
+        if (targetLayer.isVisible) {
+            targetLayer.isVisible = false;
+            map.removeLayer(targetLayer.mapLayer);
+        }
 
         closeAllPanels();
         renderAddedLayers();
