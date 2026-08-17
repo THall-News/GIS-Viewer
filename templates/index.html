@@ -19,6 +19,8 @@
   <script src="https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js" crossorigin=""></script>
   <!-- Turf.js -->
   <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+  <!-- OSM to GeoJSON Converter -->
+  <script src="https://unpkg.com/osmtogeojson@2.2.12/osmtogeojson.js"></script>
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
 
@@ -88,18 +90,72 @@
         </select>
       </div>
 
+      <!-- Server / Source Selection -->
       <div class="mb-3 shrink-0">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Source Type</label>
+        <select id="server-type" class="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-colors duration-200">
+          <option value="WFS">WFS (OGC)</option>
+          <option value="ESRI">ESRI (MapServer / FeatureServer)</option>
+          <option value="OVERPASS">OpenStreetMap (Overpass API)</option>
+        </select>
+      </div>
+
+      <!-- URL Input for WFS / ESRI -->
+      <div id="server-url-container" class="mb-4 shrink-0">
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Server URL</label>
         <input type="url" id="server-url" placeholder="https://example.com/geoserver/wfs" 
                class="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-colors duration-200">
       </div>
 
-      <div class="mb-4 shrink-0">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Server Type</label>
-        <select id="server-type" class="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-colors duration-200">
-          <option value="WFS">WFS (OGC)</option>
-          <option value="ESRI">ESRI (MapServer / FeatureServer)</option>
-        </select>
+      <!-- Query Builder for OpenStreetMap -->
+      <div id="overpass-builder" class="hidden shrink-0 mb-4 bg-indigo-50 dark:bg-gray-800/80 p-3 rounded-md border border-indigo-200 dark:border-indigo-800/50 shadow-inner">
+        <div class="text-[11px] font-bold text-indigo-700 dark:text-indigo-400 mb-3 uppercase tracking-wider"><i class="fa-solid fa-map-location-dot mr-1"></i> OSM Data Query</div>
+        
+        <div class="flex space-x-2 mb-3">
+          <div class="flex-1 relative">
+            <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+              Tag Key
+              <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="The broad category. Examples: boundary, amenity, building, natural, highway."><i class="fa-solid fa-circle-question"></i></span>
+            </label>
+            <input type="text" id="osm-key" placeholder="e.g. boundary" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+          </div>
+          <div class="flex-1 relative">
+            <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+              Tag Value
+              <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="The specific type. Examples: administrative, restaurant, school. (Leave blank to get ALL values)"><i class="fa-solid fa-circle-question"></i></span>
+            </label>
+            <input type="text" id="osm-value" placeholder="e.g. administrative" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+          </div>
+        </div>
+
+        <div class="flex space-x-2 mb-3">
+          <div class="flex-1 relative">
+            <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+              Feature Name
+              <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Optional: Only return shapes specifically named this. e.g. Toronto"><i class="fa-solid fa-circle-question"></i></span>
+            </label>
+            <input type="text" id="osm-name" placeholder="e.g. Toronto" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+          </div>
+          <div class="flex-1 relative">
+            <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+              Geometry
+              <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Filter the types of shapes you want returned."><i class="fa-solid fa-circle-question"></i></span>
+            </label>
+            <select id="osm-geom" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+              <option value="lines_polygons">Lines & Polygons</option>
+              <option value="points">Points Only</option>
+              <option value="all">All Geometries</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="relative">
+          <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+            Search Area limit
+            <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Optional: Restrict search to inside a broader region (e.g. Ontario). Leave blank to search your current Map View."><i class="fa-solid fa-circle-question"></i></span>
+          </label>
+          <input type="text" id="osm-location" placeholder="e.g. Ontario (or leave blank for map view)" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+        </div>
       </div>
 
       <button id="btn-fetch" class="w-full bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-medium py-2 px-4 rounded-md transition-colors flex items-center justify-center mb-4 shadow-sm shrink-0">
@@ -286,7 +342,6 @@
       setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 5000);
     };
 
-    // Darkens a hex color by a given percentage
     const darkenHex = (hex, percent = 0.3) => {
         hex = hex.replace('#', '');
         if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
@@ -299,7 +354,6 @@
         return '#' + r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0');
     };
 
-    // --- Dynamic Z-Index Syncing ---
     const updateMapLayerOrder = () => {
         for (let i = activeLayers.length - 1; i >= 0; i--) {
             const layer = activeLayers[i];
@@ -309,7 +363,24 @@
         }
     };
 
-    // --- Server Database Logic ---
+    // --- UI Toggles ---
+    document.getElementById('server-type').addEventListener('change', (e) => {
+        const type = e.target.value;
+        if (type === 'OVERPASS') {
+            document.getElementById('server-url-container').classList.add('hidden');
+            document.getElementById('overpass-builder').classList.remove('hidden');
+            document.getElementById('btn-fetch-text').textContent = 'Fetch OSM Data';
+            document.getElementById('btn-save-server').disabled = true;
+            document.getElementById('btn-save-server').classList.add('opacity-50');
+        } else {
+            document.getElementById('server-url-container').classList.remove('hidden');
+            document.getElementById('overpass-builder').classList.add('hidden');
+            document.getElementById('btn-fetch-text').textContent = 'Fetch Layers';
+            document.getElementById('btn-save-server').disabled = false;
+            document.getElementById('btn-save-server').classList.remove('opacity-50');
+        }
+    });
+
     const loadSavedServers = async () => {
         try {
             const res = await fetch('/api/servers');
@@ -332,7 +403,9 @@
         const opt = e.target.options[e.target.selectedIndex];
         if (opt.value) {
             document.getElementById('server-url').value = opt.value;
-            document.getElementById('server-type').value = opt.dataset.type;
+            const sType = document.getElementById('server-type');
+            sType.value = opt.dataset.type;
+            sType.dispatchEvent(new Event('change')); // Trigger the UI toggle
         }
     });
 
@@ -1142,7 +1215,7 @@
             let html = '';
             uniqueVals.forEach(val => {
                 let fCol = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
-                let sCol = darkenHex(fCol, 0.3); // Automatically darken outline by 30%
+                let sCol = darkenHex(fCol, 0.3); 
                 let fOp = 0.5, sOp = 1.0;
 
                 if (isCat && cs.property === propName && cs.categories && cs.categories[val]) {
@@ -1192,17 +1265,15 @@
         selCol.addEventListener('change', renderCategoryPickers);
         if (isCat && cs.property) renderCategoryPickers();
 
-        // Refresh Colors Logic
         btnRefreshColors.addEventListener('click', () => {
             document.querySelectorAll('.cat-row').forEach(row => {
                 const newFill = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
-                const newStroke = darkenHex(newFill, 0.3); // Outline is 30% darker than fill
+                const newStroke = darkenHex(newFill, 0.3); 
                 row.querySelector('.cat-fill').value = newFill;
                 row.querySelector('.cat-stroke').value = newStroke;
             });
         });
 
-        // Copy Style Logic
         document.getElementById('btn-copy-style').addEventListener('click', () => {
             if(!layer.customStyle) {
                copiedStyle = { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
@@ -1215,7 +1286,6 @@
             pasteBtn.classList.remove('opacity-50', 'cursor-not-allowed');
         });
 
-        // Paste Style Logic
         document.getElementById('btn-paste-style').addEventListener('click', () => {
             if (!copiedStyle) return;
             layer.customStyle = JSON.parse(JSON.stringify(copiedStyle));
@@ -1232,7 +1302,6 @@
                 }
             }
             
-            // To ensure point markers update shapes/sizes, we fully recreate the layer
             map.removeLayer(layer.mapLayer);
             const newMapLayer = L.geoJSON(layer.geoJsonData, {
                 style: createGeoJsonStyleFunction(layer.customStyle),
@@ -1245,7 +1314,6 @@
             
             showToast("Style pasted and applied!");
             
-            // Re-render UI to show new sliders
             activeEditLayerKey = null; 
             handleToggleEdit(key); 
         });
@@ -1287,7 +1355,6 @@
                 }; 
             }
             
-            // To ensure point markers dynamically swap SVG shapes, we fully rebuild the layer
             map.removeLayer(layer.mapLayer);
             const newMapLayer = L.geoJSON(layer.geoJsonData, {
                 style: createGeoJsonStyleFunction(layer.customStyle),
@@ -1402,7 +1469,6 @@
 
                 const newGeoJson = { type: "FeatureCollection", features: filteredFeats };
                 
-                // --- INHERIT PARENT STYLE ---
                 const splitStyleState = layer.customStyle 
                     ? JSON.parse(JSON.stringify(layer.customStyle)) 
                     : { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
@@ -1514,18 +1580,121 @@
     };
 
     document.getElementById('btn-fetch').addEventListener('click', async () => {
-      const rawUrl = document.getElementById('server-url').value.trim();
       currentServerType = document.getElementById('server-type').value;
-      if (!rawUrl) return showToast("Enter URL.", true);
       
-      currentServerUrl = rawUrl;
-      fetchedLayers = [];
       document.getElementById('btn-fetch-spinner').classList.remove('hidden');
-
-      layerSearch.value = '';
-      btnClearSearch.classList.add('hidden');
+      document.getElementById('btn-fetch-text').textContent = 'Fetching...';
 
       try {
+        // --- OPENSTREETMAP LOGIC ---
+        if (currentServerType === 'OVERPASS') {
+            const key = document.getElementById('osm-key').value.trim();
+            const val = document.getElementById('osm-value').value.trim();
+            const featName = document.getElementById('osm-name').value.trim();
+            const loc = document.getElementById('osm-location').value.trim();
+            const geomType = document.getElementById('osm-geom').value;
+
+            if (!key) throw new Error("Please enter a Tag Key.");
+
+            let query = `[out:json][timeout:50];\n`;
+            let tagFilter = val ? `["${key}"="${val}"]` : `["${key}"]`;
+            
+            // If user provides a feature name, look specifically for that name
+            if (featName) tagFilter += `["name"~"${featName}",i]`;
+
+            if (loc) {
+                query += `area["name"="${loc}"]->.searchArea;\n`;
+                query += `(\n`;
+                if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(area.searchArea);\n`;
+                if (geomType === 'all' || geomType === 'lines_polygons') {
+                    query += `  way${tagFilter}(area.searchArea);\n`;
+                    query += `  relation${tagFilter}(area.searchArea);\n`;
+                }
+                query += `);\n`;
+            } else {
+                const b = map.getBounds();
+                const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+                query += `(\n`;
+                if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(${bbox});\n`;
+                if (geomType === 'all' || geomType === 'lines_polygons') {
+                    query += `  way${tagFilter}(${bbox});\n`;
+                    query += `  relation${tagFilter}(${bbox});\n`;
+                }
+                query += `);\n`;
+            }
+            
+            query += `out body;\n>;\nout skel qt;`;
+
+            const res = await fetch(`https://overpass-api.de/api/interpreter`, {
+                method: 'POST',
+                body: "data=" + encodeURIComponent(query),
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            });
+            
+            if (!res.ok) throw new Error("Overpass API failed. Query may be too large.");
+            const data = await res.json();
+            
+            if (!data.elements || data.elements.length === 0) {
+                 throw new Error("No data found for this query.");
+            }
+
+            const geoJson = osmtogeojson(data);
+            
+            // Filter strictly by requested geometry type without stripping un-named boundary lines
+            if (geomType === 'lines_polygons') {
+                geoJson.features = geoJson.features.filter(f => !['Point', 'MultiPoint'].includes(f.geometry?.type));
+            } else if (geomType === 'points') {
+                geoJson.features = geoJson.features.filter(f => ['Point', 'MultiPoint'].includes(f.geometry?.type));
+            }
+
+            if (!geoJson.features || geoJson.features.length === 0) {
+                 throw new Error("No renderable geometry found.");
+            }
+
+            const defaultStyle = { type: 'single', fillColor: '#10b981', fillOpacity: 0.5, color: '#059669', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+            
+            const newMapLayer = L.geoJSON(geoJson, {
+                style: createGeoJsonStyleFunction(defaultStyle),
+                pointToLayer: createGeoJsonPointToLayer(defaultStyle),
+                onEachFeature: attachPopupsToFeatures
+            });
+            
+            newMapLayer.addTo(map);
+            if (loc || featName) {
+                map.fitBounds(newMapLayer.getBounds()); 
+            }
+
+            let layerName = `OSM: ${key}${val ? '='+val : ''}`;
+            if (featName) layerName = `OSM: ${featName} (${key})`;
+
+            activeLayers.unshift({
+                uniqueKey: Math.random().toString(36).substr(2,9),
+                id: `osm_${Date.now()}`,
+                displayName: layerName,
+                mapLayer: newMapLayer,
+                exportUrl: null,
+                isLocalGeoJSON: true,
+                geoJsonData: geoJson,
+                customStyle: defaultStyle,
+                isVisible: true 
+            });
+
+            renderAddedLayers();
+            updateMapLayerOrder();
+            switchTab('added');
+            showToast(`Loaded ${geoJson.features.length} raw OSM features!`);
+            return;
+        }
+
+        // --- WFS & ESRI LOGIC ---
+        const rawUrl = document.getElementById('server-url').value.trim();
+        if (!rawUrl) throw new Error("Enter URL.");
+        
+        currentServerUrl = rawUrl;
+        fetchedLayers = [];
+        layerSearch.value = '';
+        btnClearSearch.classList.add('hidden');
+
         let targetUrl = new URL(rawUrl);
         if (currentServerType === 'WFS') {
           targetUrl.searchParams.set('service', 'WFS');
@@ -1534,29 +1703,35 @@
           targetUrl.searchParams.set('f', 'json');
         }
 
-        const res = await fetch(`/proxy?url=${encodeURIComponent(targetUrl.toString())}`);
-        if (!res.ok) throw new Error("Proxy error");
+        const proxyRes = await fetch(`/proxy?url=${encodeURIComponent(targetUrl.toString())}`);
+        if (!proxyRes.ok) throw new Error("Proxy error");
 
         if (currentServerType === 'WFS') {
-          const xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
+          const xml = new DOMParser().parseFromString(await proxyRes.text(), 'text/xml');
           Array.from(xml.getElementsByTagNameNS('*', 'FeatureType')).forEach(node => {
             let name='', title='';
             Array.from(node.children).forEach(c => { if(c.localName==='Name') name=c.textContent; if(c.localName==='Title') title=c.textContent; });
             if(name) fetchedLayers.push({ id: name, title: title || name });
           });
         } else {
-          const json = await res.json();
+          const json = await proxyRes.json();
           if(json.layers) fetchedLayers = json.layers.map(l => ({ id: l.id.toString(), title: l.name }));
           else fetchedLayers.push({ id: targetUrl.pathname.split('/').pop(), title: json.name || "Layer" });
         }
         renderAvailableLayers();
         switchTab('available');
+
       } catch(e) {
-        showToast("Fetch failed. Check console.", true);
-        availableLayerList.innerHTML = `<p class="text-sm text-red-500 dark:text-red-400 italic text-center mt-4">Failed to fetch. Check server URL.</p>`;
-        searchContainer.classList.add('hidden');
+        console.error(e);
+        const msg = e.message || "Fetch failed. Check console.";
+        showToast(msg, true);
+        if (currentServerType !== 'OVERPASS') {
+            availableLayerList.innerHTML = `<p class="text-sm text-red-500 dark:text-red-400 italic text-center mt-4">Failed to fetch. Check server URL.</p>`;
+            searchContainer.classList.add('hidden');
+        }
       } finally {
         document.getElementById('btn-fetch-spinner').classList.add('hidden');
+        document.getElementById('btn-fetch-text').textContent = currentServerType === 'OVERPASS' ? 'Fetch OSM Data' : 'Fetch Layers';
       }
     });
 
