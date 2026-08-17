@@ -278,11 +278,25 @@
     let filterGeometryData = null; 
     const drawLayerGroup = L.featureGroup().addTo(map);
 
+    // --- Helper Functions ---
     const showToast = (msg, isError=false) => {
       toast.className = `fixed bottom-6 right-6 px-4 py-3 rounded shadow-xl transform transition-all duration-300 z-50 max-w-sm ${isError ? 'bg-red-600 text-white' : 'bg-gray-800 dark:bg-gray-700 text-white'}`;
       document.getElementById('toast-message').textContent = msg;
       toast.classList.remove('translate-y-20', 'opacity-0');
       setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 5000);
+    };
+
+    // Darkens a hex color by a given percentage
+    const darkenHex = (hex, percent = 0.3) => {
+        hex = hex.replace('#', '');
+        if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+        let r = parseInt(hex.substring(0, 2), 16);
+        let g = parseInt(hex.substring(2, 4), 16);
+        let b = parseInt(hex.substring(4, 6), 16);
+        r = Math.max(0, Math.floor(r * (1 - percent)));
+        g = Math.max(0, Math.floor(g * (1 - percent)));
+        b = Math.max(0, Math.floor(b * (1 - percent)));
+        return '#' + r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0');
     };
 
     // --- Dynamic Z-Index Syncing ---
@@ -800,7 +814,7 @@
                 }
                 
                 return L.marker(latlng, {
-                    icon: L.divIcon({ className: '', html: svgHtml, iconSize: [w, w], iconAnchor: [c, c] }) // className: '' prevents Leaflet's default white box
+                    icon: L.divIcon({ className: '', html: svgHtml, iconSize: [w, w], iconAnchor: [c, c] }) 
                 });
             }
         };
@@ -1090,7 +1104,12 @@
                     <button id="btn-bake-colors" class="bg-indigo-100 dark:bg-indigo-900/50 hover:bg-indigo-200 dark:hover:bg-indigo-800 text-indigo-800 dark:text-indigo-300 text-xs px-3 py-1.5 rounded transition-colors shadow-sm font-medium border border-indigo-200 dark:border-indigo-700" title="Write RGBA hex values to the attribute table">
                         <i class="fa-solid fa-database mr-1"></i>Bake to Table
                     </button>
-                    <button id="btn-apply-edit" class="bg-purple-600 hover:bg-purple-700 dark:bg-purple-600 dark:hover:bg-purple-500 text-white text-xs px-4 py-1.5 rounded transition-colors shadow-sm font-medium">Apply Style</button>
+                    <div class="flex space-x-2">
+                        <button id="btn-refresh-colors" class="${isCat ? '' : 'hidden'} bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 text-xs px-3 py-1.5 rounded transition-colors shadow-sm font-medium border border-gray-300 dark:border-gray-600" title="Randomize category colors">
+                            <i class="fa-solid fa-arrows-rotate mr-1"></i> Refresh
+                        </button>
+                        <button id="btn-apply-edit" class="bg-purple-600 hover:bg-purple-700 dark:bg-purple-600 dark:hover:bg-purple-500 text-white text-xs px-4 py-1.5 rounded transition-colors shadow-sm font-medium">Apply Style</button>
+                    </div>
                 </div>
             </div>
         `;
@@ -1106,6 +1125,7 @@
         const singleContainer = document.getElementById('single-style-container');
         const catListWrapper = document.getElementById('categorical-style-list');
         const catInnerList = document.getElementById('cat-inner-list');
+        const btnRefreshColors = document.getElementById('btn-refresh-colors');
 
         const renderCategoryPickers = () => {
             const propName = selCol.value;
@@ -1122,7 +1142,7 @@
             let html = '';
             uniqueVals.forEach(val => {
                 let fCol = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
-                let sCol = fCol;
+                let sCol = darkenHex(fCol, 0.3); // Automatically darken outline by 30%
                 let fOp = 0.5, sOp = 1.0;
 
                 if (isCat && cs.property === propName && cs.categories && cs.categories[val]) {
@@ -1157,6 +1177,7 @@
                 singleContainer.classList.remove('flex');
                 catListWrapper.classList.remove('hidden');
                 catListWrapper.classList.add('flex');
+                btnRefreshColors.classList.remove('hidden');
                 if(selCol.value) renderCategoryPickers();
             } else {
                 selCol.disabled = true;
@@ -1164,11 +1185,22 @@
                 singleContainer.classList.add('flex');
                 catListWrapper.classList.add('hidden');
                 catListWrapper.classList.remove('flex');
+                btnRefreshColors.classList.add('hidden');
             }
         });
 
         selCol.addEventListener('change', renderCategoryPickers);
         if (isCat && cs.property) renderCategoryPickers();
+
+        // Refresh Colors Logic
+        btnRefreshColors.addEventListener('click', () => {
+            document.querySelectorAll('.cat-row').forEach(row => {
+                const newFill = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
+                const newStroke = darkenHex(newFill, 0.3); // Outline is 30% darker than fill
+                row.querySelector('.cat-fill').value = newFill;
+                row.querySelector('.cat-stroke').value = newStroke;
+            });
+        });
 
         // Copy Style Logic
         document.getElementById('btn-copy-style').addEventListener('click', () => {
@@ -1369,8 +1401,11 @@
                 if(filteredFeats.length === 0) return;
 
                 const newGeoJson = { type: "FeatureCollection", features: filteredFeats };
-                const rColor = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
-                const splitStyleState = { type: 'single', fillColor: rColor, fillOpacity: 0.6, color: rColor, opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+                
+                // --- INHERIT PARENT STYLE ---
+                const splitStyleState = layer.customStyle 
+                    ? JSON.parse(JSON.stringify(layer.customStyle)) 
+                    : { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
 
                 const newMapLayer = L.geoJSON(newGeoJson, {
                     style: createGeoJsonStyleFunction(splitStyleState),
