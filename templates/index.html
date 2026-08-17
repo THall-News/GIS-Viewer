@@ -1,0 +1,1535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GIS Layer Previewer</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'media',
+    }
+  </script>
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <!-- Esri Leaflet -->
+  <script src="https://unpkg.com/esri-leaflet@3.0.12/dist/esri-leaflet.js" crossorigin=""></script>
+  <!-- Turf.js -->
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
+  <style>
+    /* Custom Scrollbars */
+    .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scroll::-webkit-scrollbar-track { background: #f1f1f1; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+    .custom-scroll::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+    
+    @media (prefers-color-scheme: dark) {
+      .custom-scroll::-webkit-scrollbar-track { background: #374151; }
+      .custom-scroll::-webkit-scrollbar-thumb { background: #4B5563; border-radius: 4px; }
+      .custom-scroll::-webkit-scrollbar-thumb:hover { background: #6B7280; }
+      
+      /* Leaflet Popups */
+      .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+        background-color: #1f2937 !important;
+        color: #f3f4f6 !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5) !important;
+      }
+      .leaflet-container a.leaflet-popup-close-button {
+        color: #9ca3af !important;
+      }
+      .leaflet-container a.leaflet-popup-close-button:hover {
+        color: #f3f4f6 !important;
+      }
+      
+      /* Leaflet Zoom Controls */
+      .leaflet-control-zoom a {
+        background-color: #374151 !important;
+        color: #d1d5db !important;
+        border-color: #4b5563 !important;
+      }
+      .leaflet-control-zoom a:hover {
+        background-color: #4b5563 !important;
+        color: #ffffff !important;
+      }
+      
+      /* Leaflet Attribution */
+      .leaflet-control-attribution {
+        background: rgba(31, 41, 55, 0.7) !important;
+        color: #9ca3af !important;
+      }
+      .leaflet-control-attribution a {
+        color: #60a5fa !important;
+      }
+    }
+  </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans overflow-hidden transition-colors duration-200">
+
+  <div class="flex flex-col md:flex-row h-screen w-full">
+    <!-- Left Control Panel -->
+    <div class="w-full md:w-[38%] lg:w-[35%] xl:w-[30%] h-full bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col p-4 shadow-sm z-10 min-w-[380px] transition-colors duration-200">
+      <h1 class="text-xl font-bold mb-4 text-slate-700 dark:text-slate-200 border-b border-gray-200 dark:border-gray-700 pb-2 shrink-0">GIS Layer Previewer</h1>
+      
+      <!-- Server Database UI -->
+      <div class="mb-4 shrink-0 bg-gray-50 dark:bg-gray-800/80 p-2 rounded-md border border-gray-200 dark:border-gray-700 transition-colors duration-200">
+        <div class="flex justify-between items-center mb-2">
+            <span class="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider"><i class="fa-solid fa-database mr-1"></i>Server Database</span>
+            <button id="btn-save-server" class="text-[10px] bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/40 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 font-bold py-1 px-2 rounded transition-colors shadow-sm flex items-center" title="Save URL below to database">
+                <i class="fa-solid fa-plus mr-1"></i> Save Current
+            </button>
+        </div>
+        <select id="saved-servers-select" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors duration-200">
+            <option value="" disabled selected>-- Load saved server --</option>
+        </select>
+      </div>
+
+      <div class="mb-3 shrink-0">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Server URL</label>
+        <input type="url" id="server-url" placeholder="https://example.com/geoserver/wfs" 
+               class="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-colors duration-200">
+      </div>
+
+      <div class="mb-4 shrink-0">
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Server Type</label>
+        <select id="server-type" class="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-colors duration-200">
+          <option value="WFS">WFS (OGC)</option>
+          <option value="ESRI">ESRI (MapServer / FeatureServer)</option>
+        </select>
+      </div>
+
+      <button id="btn-fetch" class="w-full bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-medium py-2 px-4 rounded-md transition-colors flex items-center justify-center mb-4 shadow-sm shrink-0">
+        <span id="btn-fetch-text">Fetch Layers</span>
+        <svg id="btn-fetch-spinner" class="animate-spin ml-2 h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+      </button>
+
+      <!-- Main Layer Management UI -->
+      <div class="flex-1 overflow-hidden flex flex-col min-h-0 border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-900/50 mb-4 shadow-inner transition-colors duration-200">
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0 transition-colors duration-200">
+          <button id="tab-btn-available" class="flex-1 py-2 text-xs font-semibold text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400 uppercase tracking-wider transition-colors">Available</button>
+          <button id="tab-btn-added" class="flex-1 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-200 uppercase tracking-wider transition-colors">Added (0)</button>
+        </div>
+        
+        <!-- Tab: Available -->
+        <div id="tab-available" class="flex-1 flex flex-col overflow-hidden bg-white dark:bg-gray-800 min-h-0 transition-colors duration-200">
+          <div id="search-container" class="hidden p-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 shrink-0 shadow-sm">
+            <div class="relative">
+              <input type="text" id="layer-search" placeholder="Search available layers..." class="w-full pl-3 pr-8 py-1.5 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 transition-shadow">
+              <button id="btn-clear-search" class="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hidden transition-colors" title="Clear Search">
+                <i class="fa-solid fa-times"></i>
+              </button>
+            </div>
+          </div>
+          <div id="available-layer-list" class="flex-1 overflow-y-auto custom-scroll p-2 min-h-0">
+            <p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers fetched yet.</p>
+          </div>
+        </div>
+
+        <!-- Tab: Added -->
+        <div id="tab-added" class="flex-1 flex flex-col overflow-hidden hidden bg-white dark:bg-gray-800 relative min-h-0 transition-colors duration-200">
+          
+          <!-- Sticky Search Bar for Added Layers -->
+          <div id="added-search-container" class="hidden p-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 shrink-0 shadow-sm">
+            <div class="relative">
+              <input type="text" id="added-layer-search" placeholder="Search added layers..." class="w-full pl-3 pr-8 py-1.5 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 transition-shadow">
+              <button id="btn-clear-added-search" class="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hidden transition-colors" title="Clear Search">
+                <i class="fa-solid fa-times"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Top: Layer List -->
+          <div id="added-layer-list" class="flex-1 overflow-y-auto custom-scroll p-2 min-h-0">
+            <p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers currently added to map.</p>
+          </div>
+
+          <!-- Middle: Attribute Table Panel -->
+          <div id="attribute-table-container" class="hidden flex-col max-h-[60%] h-72 border-t border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-3 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200"></div>
+
+          <!-- Middle: Edit Panel -->
+          <div id="edit-panel-container" class="hidden flex-col max-h-[60%] border-t border-gray-300 dark:border-gray-600 bg-purple-50 dark:bg-gray-800 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200"></div>
+
+          <!-- Middle: Split Panel -->
+          <div id="split-panel-container" class="hidden flex-col max-h-[60%] border-t border-gray-300 dark:border-gray-600 bg-amber-50 dark:bg-gray-800 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200"></div>
+
+          <!-- Middle: Crop Filter Panel -->
+          <div id="crop-panel-container" class="hidden flex-col max-h-[60%] border-t border-gray-300 dark:border-gray-600 bg-teal-50 dark:bg-gray-800 p-3 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200">
+            <div class="flex justify-between items-center mb-3 border-b border-teal-200 dark:border-teal-900/50 pb-2 shrink-0">
+                <h3 class="text-xs font-bold text-gray-700 dark:text-gray-200 uppercase tracking-wider">Filter / Crop Layer</h3>
+                <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"><i class="fa-solid fa-times"></i></button>
+            </div>
+            
+            <div class="overflow-y-auto custom-scroll flex-1 pr-1 flex flex-col">
+                <div class="flex space-x-2 mb-2 items-center shrink-0">
+                  <select id="filter-type" class="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded">
+                    <option value="box">Crop Box</option>
+                    <option value="radius">Radius from Point</option>
+                    <option value="data">Filter by Data</option>
+                  </select>
+                  <input type="number" id="filter-radius" value="5" placeholder="Km" class="w-20 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded hidden">
+                </div>
+
+                <div id="filter-data-container" class="hidden flex-col mb-2 space-y-2 flex-1 min-h-0">
+                    <select id="filter-data-col" class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs shrink-0">
+                        <option value="" disabled selected>Select attribute column...</option>
+                    </select>
+                    <div class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-1 flex-1 flex flex-col min-h-0">
+                        <div class="flex justify-between items-center mb-1 px-1 border-b border-gray-200 dark:border-gray-600 pb-1 shrink-0">
+                            <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase">Select Values</span>
+                            <button id="btn-filter-select-all" class="text-[10px] text-teal-600 dark:text-teal-400 hover:text-teal-800 dark:hover:text-teal-300 font-bold transition-colors">Select All</button>
+                        </div>
+                        <div id="filter-data-values" class="flex-1 overflow-y-auto custom-scroll text-xs p-1 min-h-0">
+                            <p class="text-gray-400 dark:text-gray-500 italic text-center">Select a column first.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex space-x-2 mt-1 shrink-0 pt-2">
+                  <button id="btn-draw" class="flex-1 bg-white dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 text-sm font-medium py-1 rounded transition-colors border border-gray-300 dark:border-gray-600">Draw Region</button>
+                  <button id="btn-apply-filter" disabled class="flex-1 bg-teal-600 hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 text-white text-sm font-medium py-1 rounded transition-colors flex justify-center items-center">
+                    <span id="btn-filter-text">Apply</span>
+                    <svg id="btn-filter-spinner" class="animate-spin ml-2 h-4 w-4 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  </button>
+                </div>
+                <p id="draw-status" class="text-xs text-teal-700 dark:text-teal-400 mt-2 hidden font-medium text-center shrink-0">Click & drag on map to draw box.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <button id="btn-add" disabled class="w-full bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-md transition-colors shadow-sm shrink-0">
+        Add Selected Layers to Map
+      </button>
+    </div>
+
+    <!-- Right Map Panel -->
+    <div class="w-full md:w-[62%] lg:w-[65%] xl:w-[70%] h-full relative">
+      <div id="map" class="w-full h-full z-0"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="fixed bottom-6 right-6 bg-gray-800 dark:bg-gray-700 text-white px-4 py-3 rounded shadow-xl transform transition-all duration-300 translate-y-20 opacity-0 z-50 flex items-center max-w-sm pointer-events-none">
+    <span id="toast-message" class="text-sm break-words"></span>
+  </div>
+
+  <script>
+    const map = L.map('map').setView([0, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+    let fetchedLayers = [];
+    let activeLayers = [];
+    let currentServerUrl = '';
+    let currentServerType = '';
+    
+    // Panel Tracking
+    let activeTableLayerKey = null; 
+    let activeEditLayerKey = null;
+    let activeSplitLayerKey = null;
+    let activeCropLayerKey = null;
+
+    // DOM Elements
+    const tabBtnAvailable = document.getElementById('tab-btn-available');
+    const tabBtnAdded = document.getElementById('tab-btn-added');
+    const tabAvailable = document.getElementById('tab-available');
+    const tabAdded = document.getElementById('tab-added');
+    
+    const savedServersSelect = document.getElementById('saved-servers-select');
+    const btnSaveServer = document.getElementById('btn-save-server');
+
+    const searchContainer = document.getElementById('search-container');
+    const layerSearch = document.getElementById('layer-search');
+    const btnClearSearch = document.getElementById('btn-clear-search');
+    const availableLayerList = document.getElementById('available-layer-list');
+    
+    const addedSearchContainer = document.getElementById('added-search-container');
+    const addedLayerSearch = document.getElementById('added-layer-search');
+    const btnClearAddedSearch = document.getElementById('btn-clear-added-search');
+    const addedLayerList = document.getElementById('added-layer-list');
+    
+    const attributeTableContainer = document.getElementById('attribute-table-container');
+    const editPanelContainer = document.getElementById('edit-panel-container');
+    const splitPanelContainer = document.getElementById('split-panel-container');
+    const cropPanelContainer = document.getElementById('crop-panel-container');
+    
+    const filterType = document.getElementById('filter-type');
+    const filterRadius = document.getElementById('filter-radius');
+    const btnDraw = document.getElementById('btn-draw');
+    const btnApplyFilter = document.getElementById('btn-apply-filter');
+    const drawStatus = document.getElementById('draw-status');
+    const filterDataContainer = document.getElementById('filter-data-container');
+    const filterDataCol = document.getElementById('filter-data-col');
+    const filterDataValues = document.getElementById('filter-data-values');
+    const toast = document.getElementById('toast');
+
+    let drawingMode = null; 
+    let drawStart = null;
+    let tempShape = null; 
+    let filterGeometryData = null; 
+    const drawLayerGroup = L.featureGroup().addTo(map);
+
+    const showToast = (msg, isError=false) => {
+      toast.className = `fixed bottom-6 right-6 px-4 py-3 rounded shadow-xl transform transition-all duration-300 z-50 max-w-sm ${isError ? 'bg-red-600 text-white' : 'bg-gray-800 dark:bg-gray-700 text-white'}`;
+      document.getElementById('toast-message').textContent = msg;
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 5000);
+    };
+
+    // --- Server Database Logic ---
+    const loadSavedServers = async () => {
+        try {
+            const res = await fetch('./api/servers');
+            const servers = await res.json();
+            
+            savedServersSelect.innerHTML = '<option value="" disabled selected>-- Load saved server --</option>';
+            servers.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.url;
+                opt.textContent = s.name;
+                opt.dataset.type = s.type;
+                savedServersSelect.appendChild(opt);
+            });
+        } catch (err) {
+            console.error("Failed to load servers", err);
+        }
+    };
+
+    savedServersSelect.addEventListener('change', (e) => {
+        const opt = e.target.options[e.target.selectedIndex];
+        if (opt.value) {
+            document.getElementById('server-url').value = opt.value;
+            document.getElementById('server-type').value = opt.dataset.type;
+        }
+    });
+
+    btnSaveServer.addEventListener('click', async () => {
+        const url = document.getElementById('server-url').value.trim();
+        const type = document.getElementById('server-type').value;
+        if (!url) return showToast("Enter a Server URL to save.", true);
+        
+        const name = prompt("Enter a recognizable name for this server database:");
+        if (!name) return;
+
+        try {
+            const res = await fetch('./api/servers', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, url, type })
+            });
+            if (res.ok) {
+                showToast("Server added to Database!");
+                await loadSavedServers();
+                savedServersSelect.value = url;
+            }
+        } catch (err) {
+            showToast("Failed to save server.", true);
+        }
+    });
+
+    const switchTab = (tabName) => {
+      if (tabName === 'available') {
+        tabBtnAvailable.classList.replace('text-gray-500', 'text-blue-600');
+        tabBtnAvailable.classList.replace('dark:text-gray-400', 'dark:text-blue-400');
+        tabBtnAvailable.classList.replace('border-transparent', 'border-blue-600');
+        tabBtnAvailable.classList.replace('dark:border-transparent', 'dark:border-blue-400');
+        
+        tabBtnAdded.classList.replace('text-blue-600', 'text-gray-500');
+        tabBtnAdded.classList.replace('dark:text-blue-400', 'dark:text-gray-400');
+        tabBtnAdded.classList.replace('border-blue-600', 'border-transparent');
+        tabBtnAdded.classList.replace('dark:border-blue-400', 'dark:border-transparent');
+        
+        tabAvailable.classList.replace('hidden', 'flex');
+        tabAdded.classList.replace('flex', 'hidden');
+        document.getElementById('btn-add').classList.remove('hidden');
+      } else {
+        tabBtnAdded.classList.replace('text-gray-500', 'text-blue-600');
+        tabBtnAdded.classList.replace('dark:text-gray-400', 'dark:text-blue-400');
+        tabBtnAdded.classList.replace('border-transparent', 'border-blue-600');
+        tabBtnAdded.classList.replace('dark:border-transparent', 'dark:border-blue-400');
+        
+        tabBtnAvailable.classList.replace('text-blue-600', 'text-gray-500');
+        tabBtnAvailable.classList.replace('dark:text-blue-400', 'dark:text-gray-400');
+        tabBtnAvailable.classList.replace('border-blue-600', 'border-transparent');
+        tabBtnAvailable.classList.replace('dark:border-blue-400', 'dark:border-transparent');
+        
+        tabAdded.classList.replace('hidden', 'flex');
+        tabAvailable.classList.replace('flex', 'hidden');
+        document.getElementById('btn-add').classList.add('hidden');
+      }
+    };
+
+    tabBtnAvailable.addEventListener('click', () => switchTab('available'));
+    tabBtnAdded.addEventListener('click', () => switchTab('added'));
+
+    const closeAllPanels = () => {
+        activeTableLayerKey = null;
+        activeEditLayerKey = null;
+        activeSplitLayerKey = null;
+        activeCropLayerKey = null;
+        
+        attributeTableContainer.classList.add('hidden');
+        attributeTableContainer.classList.remove('flex');
+        editPanelContainer.classList.add('hidden');
+        editPanelContainer.classList.remove('flex');
+        splitPanelContainer.classList.add('hidden');
+        splitPanelContainer.classList.remove('flex');
+        cropPanelContainer.classList.add('hidden');
+        cropPanelContainer.classList.remove('flex');
+        
+        filterType.value = 'box';
+        filterRadius.classList.add('hidden');
+        filterDataContainer.classList.add('hidden');
+        btnDraw.classList.remove('hidden');
+
+        drawLayerGroup.clearLayers();
+        filterGeometryData = null;
+        drawingMode = null;
+        btnApplyFilter.disabled = true;
+        drawStatus.classList.add('hidden');
+        map.getContainer().style.cursor = '';
+        renderAddedLayers();
+    };
+    window.closeAllPanels = closeAllPanels;
+
+    // --- Search Logic: Available Layers ---
+    const triggerSearch = () => {
+      const term = layerSearch.value.toLowerCase();
+      if (term === '') {
+        btnClearSearch.classList.add('hidden');
+      } else {
+        btnClearSearch.classList.remove('hidden');
+      }
+      
+      let visibleCount = 0;
+      document.querySelectorAll('.available-layer-item').forEach(item => {
+        if (item.getAttribute('data-search').includes(term)) {
+          item.classList.remove('hidden');
+          visibleCount++;
+        } else {
+          item.classList.add('hidden');
+        }
+      });
+
+      let emptyMsg = document.getElementById('search-empty-msg');
+      if (visibleCount === 0 && fetchedLayers.length > 0) {
+        if (!emptyMsg) {
+          emptyMsg = document.createElement('p');
+          emptyMsg.id = 'search-empty-msg';
+          emptyMsg.className = 'text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4';
+          emptyMsg.textContent = 'No matching layers found.';
+          availableLayerList.appendChild(emptyMsg);
+        }
+        emptyMsg.classList.remove('hidden');
+      } else if (emptyMsg) {
+        emptyMsg.classList.add('hidden');
+      }
+    };
+
+    layerSearch.addEventListener('input', triggerSearch);
+    btnClearSearch.addEventListener('click', () => {
+      layerSearch.value = '';
+      triggerSearch();
+      layerSearch.focus();
+    });
+
+    // --- Search Logic: Added Layers ---
+    const triggerAddedSearch = () => {
+      const term = addedLayerSearch.value.toLowerCase();
+      if (term === '') {
+        btnClearAddedSearch.classList.add('hidden');
+      } else {
+        btnClearAddedSearch.classList.remove('hidden');
+      }
+      
+      let visibleCount = 0;
+      document.querySelectorAll('.added-layer-item').forEach(item => {
+        if (item.getAttribute('data-search').includes(term)) {
+          item.classList.remove('hidden');
+          visibleCount++;
+        } else {
+          item.classList.add('hidden');
+        }
+      });
+
+      let emptyMsg = document.getElementById('added-search-empty-msg');
+      if (visibleCount === 0 && activeLayers.length > 0) {
+        if (!emptyMsg) {
+          emptyMsg = document.createElement('p');
+          emptyMsg.id = 'added-search-empty-msg';
+          emptyMsg.className = 'text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4';
+          emptyMsg.textContent = 'No matching layers found.';
+          addedLayerList.appendChild(emptyMsg);
+        }
+        emptyMsg.classList.remove('hidden');
+      } else if (emptyMsg) {
+        emptyMsg.classList.add('hidden');
+      }
+    };
+
+    addedLayerSearch.addEventListener('input', triggerAddedSearch);
+    btnClearAddedSearch.addEventListener('click', () => {
+      addedLayerSearch.value = '';
+      triggerAddedSearch();
+      addedLayerSearch.focus();
+    });
+
+    const renderAvailableLayers = () => {
+      availableLayerList.innerHTML = '';
+      if (fetchedLayers.length === 0) {
+        availableLayerList.innerHTML = `<p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers fetched yet.</p>`;
+        searchContainer.classList.add('hidden');
+        document.getElementById('btn-add').disabled = true;
+        return;
+      }
+      
+      searchContainer.classList.remove('hidden');
+
+      fetchedLayers.forEach((layer, i) => {
+        const div = document.createElement('div');
+        div.className = 'available-layer-item flex items-start p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded border border-transparent dark:border-transparent hover:border-gray-200 dark:hover:border-gray-600 mb-1 transition-colors';
+        div.setAttribute('data-search', `${layer.title} ${layer.id}`.toLowerCase());
+        div.innerHTML = `
+          <div class="flex items-center h-5"><input id="cb-${i}" type="checkbox" value="${layer.id}" class="w-4 h-4 layer-checkbox cursor-pointer accent-blue-600 dark:accent-blue-500"></div>
+          <div class="ml-3 text-sm flex-1 overflow-hidden">
+            <label for="cb-${i}" class="font-medium text-gray-700 dark:text-gray-200 block cursor-pointer truncate" title="${layer.title}">${layer.title}</label>
+            <p class="text-gray-400 dark:text-gray-500 text-[10px] truncate" title="${layer.id}">ID: ${layer.id}</p>
+          </div>`;
+        availableLayerList.appendChild(div);
+      });
+      
+      document.getElementById('btn-add').disabled = false;
+      triggerSearch(); 
+    };
+
+    const renderAddedLayers = () => {
+      tabBtnAdded.textContent = `Added (${activeLayers.length})`;
+      addedLayerList.innerHTML = '';
+
+      if (activeLayers.length === 0) {
+        addedLayerList.innerHTML = `<p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers currently added to map.</p>`;
+        addedSearchContainer.classList.add('hidden');
+        return;
+      }
+
+      addedSearchContainer.classList.remove('hidden');
+
+      activeLayers.forEach(layer => {
+        const isTableActive = (activeTableLayerKey === layer.uniqueKey);
+        const isEditActive = (activeEditLayerKey === layer.uniqueKey);
+        const isSplitActive = (activeSplitLayerKey === layer.uniqueKey);
+        const isCropActive = (activeCropLayerKey === layer.uniqueKey);
+        
+        let bgClass = 'bg-white border-gray-100 hover:bg-gray-50 shadow-sm dark:bg-gray-800 dark:border-gray-700 dark:hover:bg-gray-750';
+        if (isTableActive) bgClass = 'bg-indigo-50 border-indigo-300 shadow-md dark:bg-indigo-900/30 dark:border-indigo-600';
+        if (isEditActive) bgClass = 'bg-purple-50 border-purple-300 shadow-md dark:bg-purple-900/30 dark:border-purple-600';
+        if (isSplitActive) bgClass = 'bg-amber-50 border-amber-300 shadow-md dark:bg-amber-900/30 dark:border-amber-600';
+        if (isCropActive) bgClass = 'bg-teal-50 border-teal-300 shadow-md dark:bg-teal-900/30 dark:border-teal-600';
+
+        const div = document.createElement('div');
+        div.className = `added-layer-item flex flex-col p-2 mb-1 rounded border transition-colors ${bgClass}`;
+        div.setAttribute('data-search', `${layer.displayName} ${layer.id}`.toLowerCase());
+        
+        div.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="mr-3 shrink-0">
+               <input type="checkbox" class="w-4 h-4 text-blue-600 dark:text-blue-500 rounded cursor-pointer btn-toggle-vis accent-blue-600 dark:accent-blue-500" data-key="${layer.uniqueKey}" ${layer.isVisible ? 'checked' : ''} title="Toggle visibility">
+            </div>
+            <div class="flex-1 overflow-hidden pr-2">
+              <span class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate block" title="${layer.displayName}">${layer.displayName}</span>
+              <span class="text-[10px] text-gray-400 dark:text-gray-500 block truncate" title="${layer.id}">ID: ${layer.id}</span>
+            </div>
+          </div>
+          
+          <!-- Icon Actions Row -->
+          <div class="mt-2 flex space-x-3 border-t border-gray-200 dark:border-gray-700 pt-2 justify-end text-gray-500 dark:text-gray-400 text-sm">
+            <button class="transition-colors btn-table ${isTableActive ? 'text-indigo-600 dark:text-indigo-400' : 'hover:text-indigo-600 dark:hover:text-indigo-400'}" data-key="${layer.uniqueKey}" title="View Data Table">
+               <i class="fa-solid fa-table"></i>
+            </button>
+            <button class="transition-colors btn-edit ${isEditActive ? 'text-purple-600 dark:text-purple-400' : 'hover:text-purple-600 dark:hover:text-purple-400'}" data-key="${layer.uniqueKey}" title="Edit Appearance">
+               <i class="fa-solid fa-palette"></i>
+            </button>
+            <button class="transition-colors btn-crop ${isCropActive ? 'text-teal-600 dark:text-teal-400' : 'hover:text-teal-600 dark:hover:text-teal-400'}" data-key="${layer.uniqueKey}" title="Filter / Crop Layer">
+               <i class="fa-solid fa-crop"></i>
+            </button>
+            <button class="transition-colors btn-split ${isSplitActive ? 'text-amber-600 dark:text-amber-400' : 'hover:text-amber-600 dark:hover:text-amber-400'}" data-key="${layer.uniqueKey}" title="Split Layer by Attribute">
+               <i class="fa-solid fa-object-ungroup"></i>
+            </button>
+            <button class="hover:text-blue-500 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${layer.uniqueKey}" title="Duplicate Layer">
+               <i class="fa-solid fa-clone"></i>
+            </button>
+            <button class="hover:text-orange-500 dark:hover:text-orange-400 transition-colors btn-rename" data-key="${layer.uniqueKey}" title="Rename Layer">
+               <i class="fa-solid fa-pen"></i>
+            </button>
+            <button class="hover:text-green-600 dark:hover:text-green-400 transition-colors btn-export" data-key="${layer.uniqueKey}" title="Export to GeoJSON">
+               <i class="fa-solid fa-download"></i>
+            </button>
+            <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${layer.uniqueKey}" title="Remove Layer">
+               <i class="fa-solid fa-trash"></i>
+            </button>
+          </div>
+        `;
+        addedLayerList.appendChild(div);
+      });
+
+      // Bind Listeners
+      document.querySelectorAll('.btn-table').forEach(btn => btn.addEventListener('click', handleToggleTable));
+      document.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', handleToggleEdit));
+      document.querySelectorAll('.btn-split').forEach(btn => btn.addEventListener('click', handleToggleSplit));
+      document.querySelectorAll('.btn-crop').forEach(btn => btn.addEventListener('click', handleToggleCrop));
+      document.querySelectorAll('.btn-duplicate').forEach(btn => btn.addEventListener('click', handleDuplicate));
+      document.querySelectorAll('.btn-rename').forEach(btn => btn.addEventListener('click', handleRename));
+      document.querySelectorAll('.btn-export').forEach(btn => btn.addEventListener('click', handleExport));
+      document.querySelectorAll('.btn-remove').forEach(btn => btn.addEventListener('click', handleRemove));
+      document.querySelectorAll('.btn-toggle-vis').forEach(btn => btn.addEventListener('change', handleToggleVisibility));
+    };
+
+    // --- Action Handlers ---
+    const handleToggleVisibility = (e) => {
+      const key = e.target.getAttribute('data-key');
+      const layer = activeLayers.find(l => l.uniqueKey === key);
+      if (!layer) return;
+      layer.isVisible = e.target.checked;
+      if (layer.isVisible) map.addLayer(layer.mapLayer);
+      else map.removeLayer(layer.mapLayer);
+    };
+
+    const handleRename = (e) => {
+      const layer = activeLayers.find(l => l.uniqueKey === e.currentTarget.getAttribute('data-key'));
+      const newName = prompt("Enter new display name:", layer.displayName);
+      if (newName) { layer.displayName = newName.trim(); renderAddedLayers(); }
+    };
+
+    const handleRemove = (e) => {
+      const key = e.currentTarget.getAttribute('data-key');
+      const idx = activeLayers.findIndex(l => l.uniqueKey === key);
+      map.removeLayer(activeLayers[idx].mapLayer);
+      activeLayers.splice(idx, 1);
+      
+      if(activeTableLayerKey === key || activeEditLayerKey === key || activeSplitLayerKey === key || activeCropLayerKey === key) { 
+         closeAllPanels(); 
+      } else {
+         renderAddedLayers();
+      }
+    };
+
+    const ensureGeoJSON = async (layer) => {
+        if (layer.isLocalGeoJSON) return true;
+        if (!layer.exportUrl) {
+            showToast("Cannot extract vector data for this specific layer.", true);
+            return false;
+        }
+        try {
+            let queryUrl = layer.exportUrl;
+            if (queryUrl.includes('WFS')) queryUrl += '&maxFeatures=5000'; 
+            
+            const res = await fetch(`./proxy?url=${encodeURIComponent(queryUrl)}`);
+            if (!res.ok) throw new Error("Server error");
+            const geoJson = await res.json();
+            if (!geoJson.features || geoJson.features.length === 0) throw new Error("Empty or Invalid GeoJSON");
+
+            map.removeLayer(layer.mapLayer);
+            
+            const newMapLayer = L.geoJSON(geoJson, {
+                style: { color: '#4f46e5', opacity: 1.0, fillColor: '#4f46e5', fillOpacity: 0.5, weight: 2 },
+                onEachFeature: attachPopupsToFeatures
+            });
+            
+            if (layer.isVisible) newMapLayer.addTo(map);
+
+            layer.mapLayer = newMapLayer;
+            layer.geoJsonData = geoJson;
+            layer.isLocalGeoJSON = true;
+            layer.exportUrl = null; 
+            layer.customStyle = { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0 }; 
+            return true;
+        } catch (err) {
+            console.error(err);
+            showToast("Failed to fetch vector data. Layer may be too large.", true);
+            return false;
+        }
+    };
+
+    const createGeoJsonStyleFunction = (styleState) => {
+        return function(feature) {
+            if (styleState && styleState.type === 'categorical') {
+                const val = feature.properties[styleState.property];
+                const cat = styleState.categories[val];
+                return {
+                    fillColor: cat ? cat.fillColor : styleState.defaultFill,
+                    fillOpacity: cat ? cat.fillOpacity : styleState.defaultFillOpacity,
+                    color: cat ? cat.color : styleState.defaultColor,
+                    opacity: cat ? cat.opacity : styleState.defaultOpacity,
+                    weight: 2
+                };
+            } else {
+                return {
+                    fillColor: styleState ? styleState.fillColor : '#4f46e5',
+                    fillOpacity: styleState ? styleState.fillOpacity : 0.5,
+                    color: styleState ? styleState.color : '#4f46e5',
+                    opacity: styleState ? styleState.opacity : 1.0,
+                    weight: 2
+                };
+            }
+        };
+    };
+
+    const attachPopupsToFeatures = function(feature, l) {
+        if (feature.properties) {
+            let popupContent = '<div class="max-h-48 overflow-y-auto custom-scroll"><table class="text-xs text-left w-full text-gray-800 dark:text-gray-200">';
+            for (let k in feature.properties) {
+                popupContent += `<tr class="border-b border-gray-200 dark:border-gray-600"><td class="font-bold pr-2 py-1">${k}</td><td class="py-1">${feature.properties[k]}</td></tr>`;
+            }
+            popupContent += '</table></div>';
+            l.bindPopup(popupContent);
+        }
+    };
+
+    const handleDuplicate = async (e) => {
+        const key = e.currentTarget.getAttribute('data-key');
+        const layer = activeLayers.find(l => l.uniqueKey === key);
+        
+        showToast(`Duplicating ${layer.displayName}...`);
+        
+        const success = await ensureGeoJSON(layer);
+        if(!success) return;
+
+        const newGeoJson = JSON.parse(JSON.stringify(layer.geoJsonData));
+        const newStyleState = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0 };
+
+        const newMapLayer = L.geoJSON(newGeoJson, {
+            style: createGeoJsonStyleFunction(newStyleState),
+            onEachFeature: attachPopupsToFeatures
+        }).addTo(map);
+
+        activeLayers.push({
+            uniqueKey: Math.random().toString(36).substr(2,9),
+            id: `${layer.id}_copy`,
+            displayName: `${layer.displayName} (Copy)`,
+            mapLayer: newMapLayer,
+            exportUrl: null,
+            isLocalGeoJSON: true,
+            geoJsonData: newGeoJson,
+            customStyle: newStyleState,
+            isVisible: true 
+        });
+
+        renderAddedLayers();
+        showToast("Layer duplicated successfully!");
+    };
+
+    const handleToggleTable = async (e) => {
+      const key = e.currentTarget.getAttribute('data-key');
+      const layer = activeLayers.find(l => l.uniqueKey === key);
+
+      if (activeTableLayerKey === key) {
+        closeAllPanels();
+        return;
+      }
+
+      closeAllPanels();
+      activeTableLayerKey = key;
+      renderAddedLayers(); 
+      
+      attributeTableContainer.classList.remove('hidden');
+      attributeTableContainer.classList.add('flex');
+      attributeTableContainer.innerHTML = '<div class="flex items-center justify-center h-full"><p class="text-sm text-gray-500 dark:text-gray-400 italic animate-pulse">Fetching attributes...</p></div>';
+
+      try {
+        let features = [];
+        if (layer.isLocalGeoJSON) {
+          features = layer.geoJsonData.features || [];
+        } else {
+          if (!layer.exportUrl) throw new Error("No data endpoint available.");
+          let queryUrl = layer.exportUrl;
+          if (queryUrl.includes('WFS')) queryUrl += '&maxFeatures=100';
+          else if (queryUrl.includes('f=geojson')) queryUrl += '&resultRecordCount=100';
+
+          const res = await fetch(`./proxy?url=${encodeURIComponent(queryUrl)}`);
+          if (!res.ok) throw new Error("Failed to fetch attributes.");
+          const data = await res.json();
+          features = data.features || [];
+        }
+
+        if (features.length === 0) {
+          attributeTableContainer.innerHTML = `
+            <div class="flex justify-between items-center mb-2 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-2">
+                <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
+                <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 px-2"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <p class="text-sm text-gray-500 dark:text-gray-400 italic p-2 text-center">No attribute data available for this layer.</p>`;
+          return;
+        }
+
+        const headers = Object.keys(features[0].properties || {});
+        if(headers.length === 0) {
+           attributeTableContainer.innerHTML = `
+            <div class="flex justify-between items-center mb-2 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-2">
+                <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
+                <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 px-2"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <p class="text-sm text-gray-500 dark:text-gray-400 italic p-2 text-center">Features have no text attributes.</p>`;
+           return;
+        }
+
+        let tableHtml = `
+            <div class="flex justify-between items-center mb-2 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
+                <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
+                <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 px-2"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="flex-1 overflow-auto min-h-0 custom-scroll border border-gray-200 dark:border-gray-700">
+                <table class="min-w-full text-xs text-left border-collapse bg-white dark:bg-gray-800">
+                    <thead class="bg-gray-100 dark:bg-gray-700 sticky top-0 shadow-sm z-10"><tr>`;
+        
+        headers.forEach(h => { 
+          tableHtml += `<th class="px-2 py-1 border border-gray-200 dark:border-gray-600 font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap">${h}</th>`; 
+        });
+        tableHtml += '</tr></thead><tbody>';
+
+        const displayFeatures = features.slice(0, 100);
+        displayFeatures.forEach(f => {
+          tableHtml += '<tr class="hover:bg-indigo-50 dark:hover:bg-indigo-900/30">';
+          headers.forEach(h => {
+             const val = f.properties[h];
+             const displayVal = (val !== null && val !== undefined) ? val : '';
+             tableHtml += `<td class="px-2 py-1 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-300 whitespace-nowrap max-w-[150px] truncate" title="${displayVal}">${displayVal}</td>`;
+          });
+          tableHtml += '</tr>';
+        });
+
+        tableHtml += '</tbody></table></div>';
+        
+        if (features.length >= 100 || (!layer.isLocalGeoJSON && features.length > 0)) {
+           tableHtml += `<p class="text-[10px] text-gray-400 dark:text-gray-500 mt-2 italic text-center shrink-0">Showing up to 100 records for preview.</p>`;
+        }
+
+        attributeTableContainer.innerHTML = tableHtml;
+
+      } catch (err) {
+        console.error(err);
+        attributeTableContainer.innerHTML = `
+          <div class="flex justify-between items-center mb-2 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-2">
+              <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
+              <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 px-2"><i class="fa-solid fa-times"></i></button>
+          </div>
+          <p class="text-sm text-red-500 dark:text-red-400 italic p-2 text-center">Failed to load attribute data.</p>`;
+      }
+    };
+
+    const handleToggleEdit = async (e) => {
+        const key = e.currentTarget.getAttribute('data-key');
+        const layer = activeLayers.find(l => l.uniqueKey === key);
+
+        if (activeEditLayerKey === key) {
+            closeAllPanels();
+            return;
+        }
+
+        closeAllPanels();
+        activeEditLayerKey = key;
+        renderAddedLayers();
+        editPanelContainer.classList.remove('hidden');
+        editPanelContainer.classList.add('flex');
+        editPanelContainer.innerHTML = '<div class="flex justify-center p-4"><p class="text-sm italic animate-pulse text-gray-500 dark:text-gray-400">Preparing editable vector data...</p></div>';
+
+        const success = await ensureGeoJSON(layer);
+        if(!success) {
+            closeAllPanels();
+            return;
+        }
+
+        const features = layer.geoJsonData.features || [];
+        let cols = [];
+        if (features.length > 0 && features[0].properties) {
+            cols = Object.keys(features[0].properties);
+        }
+
+        const cs = layer.customStyle || { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0 };
+        const isCat = (cs.type === 'categorical');
+
+        editPanelContainer.innerHTML = `
+            <div class="p-3 text-sm flex flex-col h-full min-h-0 bg-purple-50 dark:bg-transparent">
+                <div class="flex justify-between items-center mb-3 border-b border-purple-200 dark:border-purple-800 pb-2 shrink-0">
+                    <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-xs tracking-wider">Appearance & Alpha</h4>
+                    <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"><i class="fa-solid fa-times"></i></button>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto custom-scroll pr-1 flex flex-col min-h-0">
+                    <div class="flex items-center space-x-2 mb-3 bg-white dark:bg-gray-800 p-2 border border-purple-100 dark:border-purple-800 rounded shadow-sm shrink-0">
+                        <input type="checkbox" id="use-data-style" class="w-4 h-4 text-purple-600 dark:text-purple-500 rounded cursor-pointer accent-purple-600 dark:accent-purple-500" ${isCat ? 'checked' : ''}>
+                        <label for="use-data-style" class="text-xs font-semibold text-gray-700 dark:text-gray-300 whitespace-nowrap">Use Data</label>
+                        <select id="style-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs" ${isCat ? '' : 'disabled'}>
+                            <option value="" disabled ${!isCat ? 'selected' : ''}>Select attribute...</option>
+                            ${cols.map(c => `<option value="${c}" ${(isCat && cs.property === c) ? 'selected' : ''}>${c}</option>`).join('')}
+                        </select>
+                    </div>
+
+                    <div id="single-style-container" class="${isCat ? 'hidden' : 'flex'} flex-col space-y-3 mb-3 shrink-0 bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700">
+                        <div class="flex items-center space-x-3 w-full">
+                            <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Fill:</label>
+                            <input type="color" id="edit-fill-color" value="${cs.fillColor || '#4f46e5'}" class="w-8 h-8 p-0 border-0 rounded cursor-pointer shadow-sm shrink-0 bg-transparent">
+                            <input type="range" id="edit-fill-opacity" min="0" max="1" step="0.05" value="${cs.fillOpacity ?? 0.5}" class="flex-1 w-full cursor-pointer accent-purple-600 dark:accent-purple-500" title="Fill Opacity">
+                        </div>
+                        <div class="flex items-center space-x-3 w-full">
+                            <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Outline:</label>
+                            <input type="color" id="edit-stroke-color" value="${cs.color || '#4f46e5'}" class="w-8 h-8 p-0 border-0 rounded cursor-pointer shadow-sm shrink-0 bg-transparent">
+                            <input type="range" id="edit-stroke-opacity" min="0" max="1" step="0.05" value="${cs.opacity ?? 1.0}" class="flex-1 w-full cursor-pointer accent-purple-600 dark:accent-purple-500" title="Outline Opacity">
+                        </div>
+                    </div>
+
+                    <div id="categorical-style-list" class="${isCat ? 'flex' : 'hidden'} flex-1 flex-col min-h-0 border border-gray-200 dark:border-gray-700 rounded p-2 bg-white dark:bg-gray-800 mb-2">
+                        <div id="cat-inner-list" class="overflow-y-auto custom-scroll flex-1 min-h-0">
+                            <p class="text-xs text-gray-400 dark:text-gray-500 italic text-center py-2">Select an attribute column to generate colors.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex justify-between pt-3 border-t border-purple-100 dark:border-purple-800 shrink-0 mt-2">
+                    <button id="btn-bake-colors" class="bg-indigo-100 dark:bg-indigo-900/50 hover:bg-indigo-200 dark:hover:bg-indigo-800 text-indigo-800 dark:text-indigo-300 text-xs px-3 py-1.5 rounded transition-colors shadow-sm font-medium border border-indigo-200 dark:border-indigo-700" title="Write RGBA hex values to the attribute table">
+                        <i class="fa-solid fa-database mr-1"></i>Bake to Table
+                    </button>
+                    <button id="btn-apply-edit" class="bg-purple-600 hover:bg-purple-700 dark:bg-purple-600 dark:hover:bg-purple-500 text-white text-xs px-4 py-1.5 rounded transition-colors shadow-sm font-medium">Apply Style</button>
+                </div>
+            </div>
+        `;
+
+        const chkUseData = document.getElementById('use-data-style');
+        const selCol = document.getElementById('style-col-select');
+        const singleContainer = document.getElementById('single-style-container');
+        const catListWrapper = document.getElementById('categorical-style-list');
+        const catInnerList = document.getElementById('cat-inner-list');
+
+        const renderCategoryPickers = () => {
+            const propName = selCol.value;
+            if(!propName) return;
+            
+            let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[propName]))];
+            uniqueVals = uniqueVals.filter(v => v !== null && v !== undefined).slice(0, 100);
+            
+            if(uniqueVals.length === 0) {
+                catInnerList.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center">No unique values found.</p>';
+                return;
+            }
+
+            let html = '';
+            uniqueVals.forEach(val => {
+                let fCol = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
+                let sCol = fCol;
+                let fOp = 0.5, sOp = 1.0;
+
+                if (isCat && cs.property === propName && cs.categories && cs.categories[val]) {
+                    fCol = cs.categories[val].fillColor;
+                    sCol = cs.categories[val].color;
+                    fOp = cs.categories[val].fillOpacity ?? 0.5;
+                    sOp = cs.categories[val].opacity ?? 1.0;
+                }
+                
+                html += `
+                    <div class="flex items-center justify-between mb-2 pb-2 border-b border-gray-100 dark:border-gray-700 last:border-0 last:mb-0 last:pb-0 cat-row" data-val="${val}">
+                        <span class="text-xs text-gray-700 dark:text-gray-300 truncate flex-1 pr-2 font-medium" title="${val}">${val}</span>
+                        <div class="flex space-x-2 items-center shrink-0">
+                            <span class="text-[10px] text-gray-400 dark:text-gray-500 font-bold" title="Fill">F:</span>
+                            <input type="color" class="cat-fill w-6 h-6 p-0 border-0 rounded cursor-pointer shrink-0 bg-transparent" value="${fCol}">
+                            <input type="range" class="cat-fill-op w-20 sm:w-24 cursor-pointer shrink-0 accent-purple-600 dark:accent-purple-500" min="0" max="1" step="0.05" value="${fOp}" title="Fill Opacity">
+                            
+                            <span class="text-[10px] text-gray-400 dark:text-gray-500 font-bold ml-2" title="Outline">O:</span>
+                            <input type="color" class="cat-stroke w-6 h-6 p-0 border-0 rounded cursor-pointer shrink-0 bg-transparent" value="${sCol}">
+                            <input type="range" class="cat-stroke-op w-20 sm:w-24 cursor-pointer shrink-0 accent-purple-600 dark:accent-purple-500" min="0" max="1" step="0.05" value="${sOp}" title="Outline Opacity">
+                        </div>
+                    </div>
+                `;
+            });
+            catInnerList.innerHTML = html;
+        };
+
+        chkUseData.addEventListener('change', (e) => {
+            if(e.target.checked) {
+                selCol.disabled = false;
+                singleContainer.classList.add('hidden');
+                singleContainer.classList.remove('flex');
+                catListWrapper.classList.remove('hidden');
+                catListWrapper.classList.add('flex');
+                if(selCol.value) renderCategoryPickers();
+            } else {
+                selCol.disabled = true;
+                singleContainer.classList.remove('hidden');
+                singleContainer.classList.add('flex');
+                catListWrapper.classList.add('hidden');
+                catListWrapper.classList.remove('flex');
+            }
+        });
+
+        selCol.addEventListener('change', renderCategoryPickers);
+        if (isCat && cs.property) renderCategoryPickers();
+
+        document.getElementById('btn-apply-edit').addEventListener('click', () => {
+            if (chkUseData.checked) {
+                const prop = selCol.value;
+                if(!prop) return showToast("Select an attribute column for data styling.", true);
+                
+                const newCategories = {};
+                document.querySelectorAll('.cat-row').forEach(row => {
+                    const val = row.getAttribute('data-val');
+                    const f = row.querySelector('.cat-fill').value;
+                    const fOp = parseFloat(row.querySelector('.cat-fill-op').value);
+                    const s = row.querySelector('.cat-stroke').value;
+                    const sOp = parseFloat(row.querySelector('.cat-stroke-op').value);
+                    newCategories[val] = { fillColor: f, fillOpacity: fOp, color: s, opacity: sOp };
+                });
+                
+                layer.customStyle = {
+                    type: 'categorical', property: prop, categories: newCategories,
+                    defaultFill: '#cccccc', defaultFillOpacity: 0.5, defaultColor: '#999999', defaultOpacity: 1.0
+                };
+            } else {
+                const fColor = document.getElementById('edit-fill-color').value;
+                const fOp = parseFloat(document.getElementById('edit-fill-opacity').value);
+                const sColor = document.getElementById('edit-stroke-color').value;
+                const sOp = parseFloat(document.getElementById('edit-stroke-opacity').value);
+                layer.customStyle = { type: 'single', fillColor: fColor, fillOpacity: fOp, color: sColor, opacity: sOp }; 
+            }
+            
+            layer.mapLayer.setStyle(createGeoJsonStyleFunction(layer.customStyle));
+            showToast("Layer style updated!");
+        });
+
+        const hexAlpha = (hex, alpha) => {
+            const a = Math.round(alpha * 255).toString(16).padStart(2, '0').toUpperCase();
+            return (hex + a).toUpperCase();
+        };
+
+        document.getElementById('btn-bake-colors').addEventListener('click', () => {
+            if (!layer.customStyle) return showToast("Please Apply a style first.", true);
+            let count = 0;
+            layer.geoJsonData.features.forEach(f => {
+                if (!f.properties) f.properties = {};
+                let fColor = '#4F46E5', sColor = '#4F46E5', fOp = 0.5, sOp = 1.0;
+                if (layer.customStyle.type === 'categorical') {
+                    const val = f.properties[layer.customStyle.property];
+                    const cat = layer.customStyle.categories[val];
+                    fColor = cat ? cat.fillColor : layer.customStyle.defaultFill;
+                    sColor = cat ? cat.color : layer.customStyle.defaultColor;
+                    fOp = cat ? cat.fillOpacity : layer.customStyle.defaultFillOpacity;
+                    sOp = cat ? cat.opacity : layer.customStyle.defaultOpacity;
+                } else {
+                    fColor = layer.customStyle.fillColor;
+                    sColor = layer.customStyle.color;
+                    fOp = layer.customStyle.fillOpacity;
+                    sOp = layer.customStyle.opacity;
+                }
+                f.properties['COLOR_FILL'] = hexAlpha(fColor, fOp);
+                f.properties['COLOR_OUTLINE'] = hexAlpha(sColor, sOp);
+                count++;
+            });
+            map.removeLayer(layer.mapLayer);
+            const newMapLayer = L.geoJSON(layer.geoJsonData, {
+                style: createGeoJsonStyleFunction(layer.customStyle),
+                onEachFeature: attachPopupsToFeatures
+            });
+            if (layer.isVisible) newMapLayer.addTo(map);
+            layer.mapLayer = newMapLayer;
+            showToast(`Baked RGBA hex values to ${count} features!`);
+        });
+    };
+
+    const handleToggleSplit = async (e) => {
+        const key = e.currentTarget.getAttribute('data-key');
+        const layer = activeLayers.find(l => l.uniqueKey === key);
+
+        if (activeSplitLayerKey === key) {
+            closeAllPanels();
+            return;
+        }
+
+        closeAllPanels();
+        activeSplitLayerKey = key;
+        renderAddedLayers();
+        splitPanelContainer.classList.remove('hidden');
+        splitPanelContainer.classList.add('flex');
+        splitPanelContainer.innerHTML = '<div class="flex justify-center p-4"><p class="text-sm italic animate-pulse text-gray-500 dark:text-gray-400">Preparing vector data for split...</p></div>';
+
+        const success = await ensureGeoJSON(layer);
+        if(!success) { closeAllPanels(); return; }
+
+        const features = layer.geoJsonData.features || [];
+        let cols = [];
+        if (features.length > 0 && features[0].properties) {
+            cols = Object.keys(features[0].properties);
+        }
+
+        splitPanelContainer.innerHTML = `
+            <div class="p-3 text-sm flex flex-col h-full min-h-0 bg-amber-50 dark:bg-transparent">
+                <div class="flex justify-between items-center mb-3 border-b border-amber-200 dark:border-amber-800 pb-2 shrink-0">
+                    <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-xs tracking-wider">Split Layer</h4>
+                    <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"><i class="fa-solid fa-times"></i></button>
+                </div>
+                <div class="flex-1 overflow-y-auto custom-scroll pr-1 min-h-0">
+                    <p class="text-[10px] text-gray-500 dark:text-gray-400 mb-2 leading-tight">Select an attribute to duplicate this layer into multiple sub-layers based on unique data entries.</p>
+                    <div class="flex space-x-2">
+                        <select id="split-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs">
+                            <option value="" disabled selected>Select attribute column...</option>
+                            ${cols.map(c => `<option value="${c}">${c}</option>`).join('')}
+                        </select>
+                        <button id="btn-apply-split" class="bg-amber-600 hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-500 text-white text-xs px-3 py-1.5 rounded transition-colors shadow-sm shrink-0">Split Data</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.getElementById('btn-apply-split').addEventListener('click', () => {
+            const splitCol = document.getElementById('split-col-select').value;
+            if(!splitCol) return showToast("Select an attribute column first.", true);
+            
+            const uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[splitCol]))];
+            if (uniqueVals.length > 50 && !confirm(`Create ${uniqueVals.length} layers?`)) return;
+
+            let createdCount = 0;
+            uniqueVals.forEach(val => {
+                const filteredFeats = layer.geoJsonData.features.filter(f => f.properties[splitCol] === val);
+                if(filteredFeats.length === 0) return;
+
+                const newGeoJson = { type: "FeatureCollection", features: filteredFeats };
+                const rColor = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
+                const splitStyleState = { type: 'single', fillColor: rColor, fillOpacity: 0.6, color: rColor, opacity: 1.0 };
+
+                const newMapLayer = L.geoJSON(newGeoJson, {
+                    style: createGeoJsonStyleFunction(splitStyleState),
+                    onEachFeature: attachPopupsToFeatures
+                }).addTo(map);
+
+                activeLayers.push({
+                    uniqueKey: Math.random().toString(36).substr(2,9),
+                    id: `${layer.id}_${val}`,
+                    displayName: `${layer.displayName} [${val}]`,
+                    mapLayer: newMapLayer,
+                    exportUrl: null, 
+                    isLocalGeoJSON: true,
+                    geoJsonData: newGeoJson,
+                    customStyle: splitStyleState,
+                    isVisible: true 
+                });
+                createdCount++;
+            });
+            
+            layer.isVisible = false;
+            map.removeLayer(layer.mapLayer);
+            closeAllPanels();
+            renderAddedLayers();
+            showToast(`Split into ${createdCount} new layers!`);
+        });
+    };
+
+    const triggerDataFilterSetup = async (layer) => {
+        drawStatus.classList.remove('hidden');
+        drawStatus.textContent = 'Ensuring local data for filtering...';
+        
+        const success = await ensureGeoJSON(layer);
+        if(!success) {
+            drawStatus.textContent = 'Failed to load vector data.';
+            return;
+        }
+        drawStatus.textContent = 'Select an attribute column.';
+        
+        const features = layer.geoJsonData.features || [];
+        let cols = [];
+        if (features.length > 0 && features[0].properties) {
+            cols = Object.keys(features[0].properties);
+        }
+        
+        const sel = document.getElementById('filter-data-col');
+        sel.innerHTML = `<option value="" disabled selected>Select attribute column...</option>` + 
+            cols.map(c => `<option value="${c}">${c}</option>`).join('');
+            
+        document.getElementById('filter-data-values').innerHTML = '<p class="text-gray-400 dark:text-gray-500 italic text-center">Select a column first.</p>';
+        checkApplyButton();
+    };
+
+    const handleToggleCrop = (e) => {
+        const key = e.currentTarget.getAttribute('data-key');
+        const layer = activeLayers.find(l => l.uniqueKey === key);
+
+        if (activeCropLayerKey === key) {
+            closeAllPanels();
+            return;
+        }
+
+        closeAllPanels();
+        activeCropLayerKey = key;
+        cropPanelContainer.classList.remove('hidden');
+        cropPanelContainer.classList.add('flex');
+        renderAddedLayers();
+        
+        if (filterType.value === 'data') {
+            triggerDataFilterSetup(layer);
+        }
+    };
+
+    const handleExport = async (e) => {
+      const layer = activeLayers.find(l => l.uniqueKey === e.currentTarget.getAttribute('data-key'));
+      if (layer.isLocalGeoJSON) {
+        downloadBlob(new Blob([JSON.stringify(layer.geoJsonData)], {type: "application/json"}), layer.displayName);
+        return;
+      }
+      if (!layer.exportUrl) return showToast("Export not available.", true);
+      showToast(`Fetching export for ${layer.displayName}...`);
+      try {
+        const res = await fetch(`./proxy?url=${encodeURIComponent(layer.exportUrl)}`);
+        if (!res.ok) throw new Error("Server error");
+        downloadBlob(await res.blob(), layer.displayName);
+      } catch(err) {
+        showToast("Export failed.", true);
+      }
+    };
+
+    const downloadBlob = (blob, name) => {
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.geojson`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      showToast(`Exported ${name}!`);
+    };
+
+    // --- Main Fetch ---
+    document.getElementById('btn-fetch').addEventListener('click', async () => {
+      const rawUrl = document.getElementById('server-url').value.trim();
+      currentServerType = document.getElementById('server-type').value;
+      if (!rawUrl) return showToast("Enter URL.", true);
+      
+      currentServerUrl = rawUrl;
+      fetchedLayers = [];
+      document.getElementById('btn-fetch-spinner').classList.remove('hidden');
+
+      layerSearch.value = '';
+      btnClearSearch.classList.add('hidden');
+
+      try {
+        let targetUrl = new URL(rawUrl);
+        if (currentServerType === 'WFS') {
+          targetUrl.searchParams.set('service', 'WFS');
+          targetUrl.searchParams.set('request', 'GetCapabilities');
+        } else {
+          targetUrl.searchParams.set('f', 'json');
+        }
+
+        const res = await fetch(`./proxy?url=${encodeURIComponent(targetUrl.toString())}`);
+        if (!res.ok) throw new Error("Proxy error");
+
+        if (currentServerType === 'WFS') {
+          const xml = new DOMParser().parseFromString(await res.text(), 'text/xml');
+          Array.from(xml.getElementsByTagNameNS('*', 'FeatureType')).forEach(node => {
+            let name='', title='';
+            Array.from(node.children).forEach(c => { if(c.localName==='Name') name=c.textContent; if(c.localName==='Title') title=c.textContent; });
+            if(name) fetchedLayers.push({ id: name, title: title || name });
+          });
+        } else {
+          const json = await res.json();
+          if(json.layers) fetchedLayers = json.layers.map(l => ({ id: l.id.toString(), title: l.name }));
+          else fetchedLayers.push({ id: targetUrl.pathname.split('/').pop(), title: json.name || "Layer" });
+        }
+        renderAvailableLayers();
+        switchTab('available');
+      } catch(e) {
+        showToast("Fetch failed. Check console.", true);
+        availableLayerList.innerHTML = `<p class="text-sm text-red-500 dark:text-red-400 italic text-center mt-4">Failed to fetch. Check server URL.</p>`;
+        searchContainer.classList.add('hidden');
+      } finally {
+        document.getElementById('btn-fetch-spinner').classList.add('hidden');
+      }
+    });
+
+    document.getElementById('btn-add').addEventListener('click', () => {
+      const cbs = document.querySelectorAll('.layer-checkbox:checked');
+      if (cbs.length === 0) return;
+      
+      cbs.forEach(cb => {
+        const meta = fetchedLayers.find(l => l.id === cb.value);
+        const baseUrl = currentServerUrl.split('?')[0];
+        let mapLayer, exportUrl = '';
+
+        if (currentServerType === 'WFS') {
+          mapLayer = L.tileLayer.wms(baseUrl, { layers: meta.id, format: 'image/png', transparent: true });
+          exportUrl = `${baseUrl}?service=WFS&version=1.1.0&request=GetFeature&typeName=${encodeURIComponent(meta.id)}&outputFormat=application%2Fjson&srsName=EPSG:4326`;
+        } else {
+          if (!baseUrl.toLowerCase().includes('featureserver')) {
+            mapLayer = L.esri.dynamicMapLayer({ url: baseUrl, layers: [meta.id], opacity: 0.8 });
+            exportUrl = `${baseUrl}/${meta.id}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
+          } else {
+            const fUrl = baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`;
+            mapLayer = L.esri.featureLayer({ url: fUrl });
+            exportUrl = `${fUrl}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
+          }
+        }
+        
+        mapLayer.addTo(map);
+        
+        activeLayers.push({ 
+          uniqueKey: Math.random().toString(36).substr(2,9), 
+          id: meta.id, 
+          displayName: meta.title, 
+          mapLayer, 
+          exportUrl, 
+          isLocalGeoJSON: false,
+          isVisible: true 
+        });
+        
+        cb.checked = false;
+      });
+      renderAddedLayers();
+      switchTab('added');
+    });
+
+    // --- Spatial/Data Filter Map Drawing ---
+    filterType.addEventListener('change', (e) => {
+      const type = e.target.value;
+      const layer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
+      
+      filterRadius.classList.add('hidden');
+      filterDataContainer.classList.add('hidden');
+      filterDataContainer.classList.remove('flex');
+      btnDraw.classList.remove('hidden');
+      drawStatus.classList.remove('hidden');
+      
+      if(type === 'radius') {
+        filterRadius.classList.remove('hidden');
+        drawStatus.textContent = 'Click on map to set center point.';
+      } else if (type === 'box') {
+        drawStatus.textContent = 'Click & drag on map to draw box.';
+      } else if (type === 'data') {
+        btnDraw.classList.add('hidden');
+        filterDataContainer.classList.remove('hidden');
+        filterDataContainer.classList.add('flex');
+        if(layer) triggerDataFilterSetup(layer);
+      }
+      checkApplyButton();
+    });
+
+    filterDataCol.addEventListener('change', (e) => {
+        const col = e.target.value;
+        const layer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
+        if (!layer || !col) return;
+
+        let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[col]))];
+        uniqueVals = uniqueVals.filter(v => v !== null && v !== undefined).sort();
+
+        if (uniqueVals.length === 0) {
+            filterDataValues.innerHTML = '<p class="text-gray-400 dark:text-gray-500 italic text-center">No unique values found.</p>';
+            return;
+        }
+
+        let html = '<div class="flex flex-col space-y-1">';
+        uniqueVals.forEach(val => {
+            html += `
+                <label class="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 p-1 rounded transition-colors">
+                    <input type="checkbox" class="filter-data-val-cb w-3 h-3 text-teal-600 dark:text-teal-500 rounded accent-teal-600 dark:accent-teal-500" value="${val}">
+                    <span class="truncate dark:text-gray-300" title="${val}">${val}</span>
+                </label>
+            `;
+        });
+        html += '</div>';
+        filterDataValues.innerHTML = html;
+
+        document.querySelectorAll('.filter-data-val-cb').forEach(cb => {
+            cb.addEventListener('change', checkApplyButton);
+        });
+        checkApplyButton();
+    });
+
+    document.getElementById('btn-filter-select-all').addEventListener('click', () => {
+        const cbs = document.querySelectorAll('.filter-data-val-cb');
+        const allChecked = Array.from(cbs).every(cb => cb.checked);
+        cbs.forEach(cb => cb.checked = !allChecked); 
+        checkApplyButton();
+    });
+
+    btnDraw.addEventListener('click', () => {
+      drawingMode = filterType.value;
+      drawLayerGroup.clearLayers();
+      filterGeometryData = null;
+      btnApplyFilter.disabled = true;
+      map.getContainer().style.cursor = 'crosshair';
+      drawStatus.classList.remove('hidden');
+    });
+
+    map.on('mousedown', (e) => {
+      if (drawingMode === 'box') {
+        drawLayerGroup.clearLayers(); 
+        map.dragging.disable();
+        drawStart = e.latlng;
+        tempShape = L.rectangle([drawStart, drawStart], { color: '#0d9488', weight: 2, fillOpacity: 0.2 }).addTo(drawLayerGroup);
+      }
+    });
+
+    map.on('mousemove', (e) => {
+      if (drawingMode === 'box' && tempShape) tempShape.setBounds([drawStart, e.latlng]);
+    });
+
+    map.on('mouseup', (e) => {
+      if (drawingMode === 'box' && tempShape) {
+        map.dragging.enable();
+        filterGeometryData = tempShape.getBounds(); 
+        drawingMode = null;
+        map.getContainer().style.cursor = '';
+        checkApplyButton();
+      }
+    });
+
+    map.on('click', (e) => {
+      if (drawingMode === 'radius') {
+        drawLayerGroup.clearLayers(); 
+        drawStart = e.latlng;
+        const radKm = parseFloat(filterRadius.value) || 5;
+        tempShape = L.circle(drawStart, { radius: radKm * 1000, color: '#0d9488', weight: 2, fillOpacity: 0.2 }).addTo(drawLayerGroup);
+        L.marker(drawStart).addTo(drawLayerGroup);
+        filterGeometryData = drawStart; 
+        drawingMode = null;
+        map.getContainer().style.cursor = '';
+        checkApplyButton();
+      }
+    });
+
+    const checkApplyButton = () => {
+      const type = filterType.value;
+      if (type === 'data') {
+         const checked = document.querySelectorAll('.filter-data-val-cb:checked');
+         if (checked.length > 0) {
+             btnApplyFilter.disabled = false;
+             drawStatus.textContent = 'Ready to apply filter.';
+             drawStatus.classList.replace('text-teal-700', 'text-emerald-700');
+             drawStatus.classList.replace('dark:text-teal-400', 'dark:text-emerald-400');
+         } else {
+             btnApplyFilter.disabled = true;
+             drawStatus.textContent = 'Select at least one value.';
+             drawStatus.classList.replace('text-emerald-700', 'text-teal-700');
+             drawStatus.classList.replace('dark:text-emerald-400', 'dark:text-teal-400');
+         }
+      } else {
+         if (filterGeometryData && activeCropLayerKey) {
+             btnApplyFilter.disabled = false;
+             drawStatus.textContent = 'Ready to apply filter.';
+             drawStatus.classList.replace('text-teal-700', 'text-emerald-700');
+             drawStatus.classList.replace('dark:text-teal-400', 'dark:text-emerald-400');
+         } else {
+             btnApplyFilter.disabled = true;
+         }
+      }
+    };
+    filterRadius.addEventListener('input', checkApplyButton);
+
+    btnApplyFilter.addEventListener('click', async () => {
+      const targetLayer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
+      if (!targetLayer) return;
+      if (filterType.value !== 'data' && !targetLayer.exportUrl && !targetLayer.isLocalGeoJSON) {
+          return showToast("Cannot filter this layer from server.", true);
+      }
+
+      document.getElementById('btn-filter-text').textContent = 'Filtering...';
+      document.getElementById('btn-filter-spinner').classList.remove('hidden');
+      btnApplyFilter.disabled = true;
+
+      try {
+        let finalFeatures = [];
+
+        if (filterType.value === 'data') {
+            const col = filterDataCol.value;
+            const selectedVals = Array.from(document.querySelectorAll('.filter-data-val-cb:checked')).map(cb => cb.value);
+            
+            finalFeatures = targetLayer.geoJsonData.features.filter(f => {
+                return selectedVals.includes(String(f.properties[col]));
+            });
+        } else {
+            // SPATIAL FILTERING
+            if (targetLayer.isLocalGeoJSON) {
+                // Perform locally via Turf
+                let b; 
+                if (filterType.value === 'box') {
+                   b = filterGeometryData;
+                   const turfBbox = turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
+                   finalFeatures = targetLayer.geoJsonData.features.filter(f => turf.booleanIntersects(f, turfBbox));
+                } else {
+                   const radKm = parseFloat(filterRadius.value) || 5;
+                   const turfCircle = turf.circle([filterGeometryData.lng, filterGeometryData.lat], radKm, {units: 'kilometers'});
+                   finalFeatures = targetLayer.geoJsonData.features.filter(f => turf.booleanIntersects(f, turfCircle));
+                }
+            } else {
+                // Fetch from Server
+                let queryUrl = targetLayer.exportUrl;
+                let b; 
+                if (filterType.value === 'box') { b = filterGeometryData; } 
+                else { const radKm = parseFloat(filterRadius.value) || 5; b = filterGeometryData.toBounds(radKm * 1000); }
+
+                if (queryUrl.includes('WFS') || queryUrl.includes('GetFeature')) {
+                   queryUrl += `&bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()},EPSG:4326`;
+                } else {
+                   queryUrl += `&geometry=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&geometryType=esriGeometryEnvelope&inSR=4326`;
+                }
+
+                const res = await fetch(`./proxy?url=${encodeURIComponent(queryUrl)}`);
+                const rawGeojson = await res.json();
+                finalFeatures = rawGeojson.features || [];
+
+                if (filterType.value === 'radius' && finalFeatures.length > 0) {
+                    const radKm = parseFloat(filterRadius.value) || 5;
+                    const turfCircle = turf.circle([filterGeometryData.lng, filterGeometryData.lat], radKm, {units: 'kilometers'});
+                    finalFeatures = finalFeatures.filter(f => {
+                        try { return turf.booleanIntersects(f, turfCircle); } catch(e) { return false; } 
+                    });
+                }
+            }
+        }
+
+        if (finalFeatures.length === 0) {
+          showToast("Filter resulted in 0 features.", true);
+          return;
+        }
+
+        const newGeoJsonData = { type: "FeatureCollection", features: finalFeatures };
+        const newStyleState = targetLayer.customStyle ? JSON.parse(JSON.stringify(targetLayer.customStyle)) : { type: 'single', fillColor: '#0d9488', fillOpacity: 0.5, color: '#0d9488', opacity: 1.0 };
+
+        const newMapLayer = L.geoJSON(newGeoJsonData, {
+          style: createGeoJsonStyleFunction(newStyleState),
+          onEachFeature: attachPopupsToFeatures
+        }).addTo(map);
+        
+        map.fitBounds(newMapLayer.getBounds());
+
+        const namePrefix = filterType.value === 'data' ? '[Filtered]' : '[Cropped]';
+
+        activeLayers.push({
+          uniqueKey: Math.random().toString(36).substr(2,9),
+          id: `${targetLayer.id}_filtered`,
+          displayName: `${namePrefix} ${targetLayer.displayName}`,
+          mapLayer: newMapLayer,
+          exportUrl: null, 
+          isLocalGeoJSON: true,
+          geoJsonData: newGeoJsonData,
+          customStyle: newStyleState,
+          isVisible: true 
+        });
+
+        closeAllPanels();
+        renderAddedLayers();
+        showToast(`Created new filtered layer with ${finalFeatures.length} features.`);
+
+      } catch(err) {
+        console.error(err);
+        showToast("Filter failed. Server might restrict spatial queries.", true);
+      } finally {
+        document.getElementById('btn-filter-text').textContent = 'Apply';
+        document.getElementById('btn-filter-spinner').classList.add('hidden');
+        btnApplyFilter.disabled = false;
+      }
+    });
+    
+    // Initialize Database dropdown
+    loadSavedServers();
+
+  </script>
+</body>
+</html>
