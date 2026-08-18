@@ -4,6 +4,9 @@
 const map = L.map('map', { preferCanvas: true }).setView([0, 0], 2);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
+// Force Leaflet's built-in popups to render above all custom dynamic layers
+map.getPane('popupPane').style.zIndex = 3000;
+
 map.createPane('previewPane');
 map.getPane('previewPane').style.zIndex = 2000;
 map.getPane('previewPane').style.pointerEvents = 'none';
@@ -65,6 +68,15 @@ const filterDataCol = document.getElementById('filter-data-col');
 const filterDataValues = document.getElementById('filter-data-values');
 const filterDataSearch = document.getElementById('filter-data-search');
 const btnClearFilterSearch = document.getElementById('btn-clear-filter-search');
+
+const osmKeyInput = document.getElementById('osm-key');
+const osmValueDatalist = document.getElementById('osm-values');
+const btnOsmInspect = document.getElementById('btn-osm-inspect');
+const osmInspectContainer = document.getElementById('osm-inspect-container');
+const osmInspectResults = document.getElementById('osm-inspect-results');
+const btnCloseInspect = document.getElementById('btn-close-inspect');
+const osmInspectStatus = document.getElementById('osm-inspect-status');
+
 const toast = document.getElementById('toast');
 
 
@@ -114,6 +126,18 @@ const clearAllPreviews = () => {
     previewLayers = {};
 };
 
+const downloadBlob = (blob, name) => {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name.includes('.') ? name : `${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.geojson`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+  showToast(`Exported successfully!`);
+};
+
 const closeAllPanels = () => {
     activeTableLayerKey = null;
     activeEditLayerKey = null;
@@ -137,7 +161,6 @@ const closeAllPanels = () => {
     drawStatus.classList.add('hidden');
     map.getContainer().style.cursor = '';
     
-    // We only call renderAddedLayers if activeLayers has items to prevent circular dependency
     if(activeLayers.length > 0) renderAddedLayers();
 };
 window.closeAllPanels = closeAllPanels;
@@ -207,21 +230,32 @@ const createGeoJsonPointToLayer = (styleState, paneName, customRenderer) => {
         const size = styleState ? (styleState.pointSize || 8) : 8;
         
         if (shape === 'circle') {
-            return L.circleMarker(latlng, { pane: paneName, renderer: customRenderer, radius: size, fillColor: fColor, color: sColor, weight: 2, opacity: sOp, fillOpacity: fOp });
-        } else {
-            const w = size * 2 + 4; 
-            const c = w / 2;
-            let svgHtml = '';
-            if (shape === 'square') {
-                svgHtml = `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="${w-4}" height="${w-4}" fill="${fColor}" fill-opacity="${fOp}" stroke="${sColor}" stroke-opacity="${sOp}" stroke-width="2"/></svg>`;
-            } else if (shape === 'triangle') {
-                svgHtml = `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" xmlns="http://www.w3.org/2000/svg"><polygon points="2,${w-2} ${c},2 ${w-2},${w-2}" fill="${fColor}" fill-opacity="${fOp}" stroke="${sColor}" stroke-opacity="${sOp}" stroke-width="2" stroke-linejoin="round"/></svg>`;
+                return L.circleMarker(latlng, { 
+                    pane: paneName, 
+                    renderer: customRenderer, 
+                    interactive: true,
+                    radius: size, 
+                    fillColor: fColor, 
+                    color: sColor, 
+                    weight: 2, 
+                    opacity: sOp, 
+                    fillOpacity: fOp 
+                });
+            } else {
+                const w = size * 2 + 4; 
+                const c = w / 2;
+                let svgHtml = '';
+                if (shape === 'square') {
+                    svgHtml = `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="${w-4}" height="${w-4}" fill="${fColor}" fill-opacity="${fOp}" stroke="${sColor}" stroke-opacity="${sOp}" stroke-width="2"/></svg>`;
+                } else if (shape === 'triangle') {
+                    svgHtml = `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" xmlns="http://www.w3.org/2000/svg"><polygon points="2,${w-2} ${c},2 ${w-2},${w-2}" fill="${fColor}" fill-opacity="${fOp}" stroke="${sColor}" stroke-opacity="${sOp}" stroke-width="2" stroke-linejoin="round"/></svg>`;
+                }
+                return L.marker(latlng, {
+                    pane: paneName,
+                    interactive: true,
+                    icon: L.divIcon({ className: '', html: svgHtml, iconSize: [w, w], iconAnchor: [c, c] }) 
+                });
             }
-            return L.marker(latlng, {
-                pane: paneName,
-                icon: L.divIcon({ className: '', html: svgHtml, iconSize: [w, w], iconAnchor: [c, c] }) 
-            });
-        }
     };
 };
 
@@ -238,14 +272,26 @@ const attachPopupsToFeatures = function(feature, l) {
 
 const createCustomGeoJSONLayer = (geoJsonData, styleState, paneName) => {
     if (!map.getPane(paneName)) map.createPane(paneName);
-    const paneRenderer = L.canvas({ pane: paneName });
+    
+    // Create dedicated SVG renderer for this pane
+    const paneRenderer = L.svg({ pane: paneName, padding: 0.5 });
     
     return L.geoJSON(geoJsonData, {
         pane: paneName,
         renderer: paneRenderer,
+        interactive: true,
         style: createGeoJsonStyleFunction(styleState),
         pointToLayer: createGeoJsonPointToLayer(styleState, paneName, paneRenderer),
-        onEachFeature: attachPopupsToFeatures
+        onEachFeature: (feature, layer) => {
+            // Attach attribute table popups
+            attachPopupsToFeatures(feature, layer);
+            
+            // Force mouse events to register on both shapes and point markers
+            if (layer.getElement) {
+                const el = layer.getElement();
+                if (el) el.style.pointerEvents = 'auto';
+            }
+        }
     });
 };
 
@@ -327,7 +373,157 @@ const togglePreviewLayer = (layerId, isVisible) => {
 
 
 // ==========================================
-// 4. MAIN ACTION HANDLERS
+// 4. WORKSPACE PERSISTENCE
+// ==========================================
+const serializeWorkspace = () => {
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    const layersData = activeLayers.map(l => ({
+        uniqueKey: l.uniqueKey, id: l.id, displayName: l.displayName, exportUrl: l.exportUrl,
+        isLocalGeoJSON: l.isLocalGeoJSON, geoJsonData: l.geoJsonData, customStyle: l.customStyle, isVisible: l.isVisible
+    }));
+    return { version: "1.0", savedAt: new Date().toISOString(), mapState: { lat: center.lat, lng: center.lng, zoom }, activeLayers: layersData };
+};
+
+const autoSaveWorkspace = () => {
+    try { localStorage.setItem('gis_previewer_auto_save', JSON.stringify(serializeWorkspace())); } catch (e) {}
+};
+
+const restoreWorkspaceState = (data) => {
+    closeAllPanels();
+    clearAllPreviews();
+
+    activeLayers.forEach(l => {
+        if (l.mapLayer) map.removeLayer(l.mapLayer);
+        removePane(l.uniqueKey);
+    });
+    activeLayers = [];
+
+    if (data.mapState && data.mapState.lat !== undefined) {
+        map.setView([data.mapState.lat, data.mapState.lng], data.mapState.zoom || 10);
+    }
+
+    if (data.activeLayers && Array.isArray(data.activeLayers)) {
+        data.activeLayers.forEach(lData => {
+            let mapLayer;
+            const uniqueKey = lData.uniqueKey || Math.random().toString(36).substr(2,9);
+            const paneName = 'pane-' + uniqueKey;
+            
+            if (!map.getPane(paneName)) map.createPane(paneName);
+            
+            if (lData.isLocalGeoJSON && lData.geoJsonData) {
+                mapLayer = createCustomGeoJSONLayer(lData.geoJsonData, lData.customStyle, paneName);
+            } else if (lData.exportUrl) {
+                const baseUrl = lData.exportUrl.split('?')[0];
+                if (lData.exportUrl.includes('WFS')) {
+                    mapLayer = L.tileLayer.wms(baseUrl, { pane: paneName, layers: lData.id, format: 'image/png', transparent: true });
+                } else if (lData.exportUrl.includes('featureserver')) {
+                    mapLayer = L.esri.featureLayer({ pane: paneName, url: baseUrl });
+                } else {
+                    mapLayer = L.esri.dynamicMapLayer({ pane: paneName, url: baseUrl, layers: [lData.id], opacity: 0.8 });
+                }
+            }
+
+            if (mapLayer) {
+                if (lData.isVisible) mapLayer.addTo(map);
+                activeLayers.push({
+                    uniqueKey: uniqueKey, id: lData.id, displayName: lData.displayName, mapLayer: mapLayer,
+                    exportUrl: lData.exportUrl, isLocalGeoJSON: lData.isLocalGeoJSON, geoJsonData: lData.geoJsonData,
+                    customStyle: lData.customStyle, isVisible: lData.isVisible ?? true
+                });
+            }
+        });
+    }
+
+    if(activeLayers.length > 0) {
+        renderAddedLayers();
+        updateMapLayerOrder();
+    }
+};
+
+const loadSavedServers = async () => {
+    try {
+        const res = await fetch('/api/servers');
+        const servers = await res.json();
+        
+        savedServersSelect.innerHTML = '<option value="" disabled selected>-- Load saved server --</option>';
+        servers.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.url; opt.textContent = s.name; opt.dataset.type = s.type;
+            savedServersSelect.appendChild(opt);
+        });
+    } catch (err) { console.error("Failed to load servers", err); }
+};
+
+
+// ==========================================
+// 5. OSM INSPECT AREA TOOL
+// ==========================================
+const executeOsmInspect = async (bounds) => {
+    osmInspectStatus.textContent = 'Scanning area...';
+    osmInspectStatus.classList.remove('hidden');
+    osmInspectResults.innerHTML = '';
+    
+    try {
+        const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+        const query = `[out:json][timeout:25];\n(\n  node(${bbox});\n  way(${bbox});\n  relation(${bbox});\n);\nout tags;`;
+        
+        const res = await fetch(`https://overpass-api.de/api/interpreter`, { 
+            method: 'POST', body: "data=" + encodeURIComponent(query), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } 
+        });
+        
+        if (!res.ok) throw new Error("API limits or area too large.");
+        const data = await res.json();
+        
+        const tagCounts = {};
+        const ignoreList = ['source', 'created_by', 'name', 'note', 'wikipedia', 'wikidata', 'tiger:', 'ele', 'gnis:', 'import_', 'addr:', 'phone', 'website', 'email', 'fax', 'ref'];
+        
+        if (data.elements) {
+            data.elements.forEach(el => {
+                if (!el.tags) return;
+                for (let k in el.tags) {
+                    if (ignoreList.some(ig => k.startsWith(ig))) continue;
+                    const pair = `${k}=${el.tags[k]}`;
+                    tagCounts[pair] = (tagCounts[pair] || 0) + 1;
+                }
+            });
+        }
+        
+        const sortedTags = Object.entries(tagCounts).sort((a,b) => b[1] - a[1]).slice(0, 40); 
+        
+        if (sortedTags.length === 0) {
+            osmInspectStatus.textContent = 'No generic tags found in this area.';
+            return;
+        }
+        
+        osmInspectStatus.classList.add('hidden');
+        let html = '';
+        sortedTags.forEach(([pair, count]) => {
+            const [k, v] = pair.split('=');
+            html += `<div class="inspect-tag-item flex justify-between items-center p-1.5 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 cursor-pointer rounded transition-colors border border-transparent hover:border-indigo-200 dark:hover:border-indigo-700" data-k="${k}" data-v="${v}">
+                 <span class="text-indigo-800 dark:text-indigo-300 font-mono text-[10px] truncate pr-2">${k}=${v}</span>
+                 <span class="text-gray-500 dark:text-gray-400 text-[9px] bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-full font-bold">${count}</span>
+            </div>`;
+        });
+        osmInspectResults.innerHTML = html;
+        
+        document.querySelectorAll('.inspect-tag-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                const el = e.currentTarget;
+                document.getElementById('osm-key').value = el.getAttribute('data-k');
+                document.getElementById('osm-value').value = el.getAttribute('data-v');
+                showToast(`Copied ${el.getAttribute('data-k')}=${el.getAttribute('data-v')} to Query Builder!`);
+            });
+        });
+        
+    } catch (err) {
+        osmInspectStatus.textContent = 'Scan failed. Area might be too large.';
+    }
+};
+
+
+// ==========================================
+// 6. MAIN LAYER ACTION HANDLERS
 // ==========================================
 const handleReorder = (e) => {
     const btn = e.currentTarget;
@@ -903,9 +1099,63 @@ const checkApplyButton = () => {
   }
 };
 
+const triggerSearch = () => {
+  const term = layerSearch.value.toLowerCase();
+  if (term === '') btnClearSearch.classList.add('hidden');
+  else btnClearSearch.classList.remove('hidden');
+  
+  let visibleCount = 0;
+  document.querySelectorAll('.available-layer-item').forEach(item => {
+    if (item.getAttribute('data-search').includes(term)) { item.classList.remove('hidden'); visibleCount++; } 
+    else { item.classList.add('hidden'); }
+  });
+  
+  let emptyMsg = document.getElementById('search-empty-msg');
+  if (visibleCount === 0 && fetchedLayers.length > 0) {
+    if (!emptyMsg) {
+      emptyMsg = document.createElement('p'); emptyMsg.id = 'search-empty-msg'; emptyMsg.className = 'text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4'; emptyMsg.textContent = 'No matching layers found.';
+      availableLayerList.appendChild(emptyMsg);
+    }
+    emptyMsg.classList.remove('hidden');
+  } else if (emptyMsg) { emptyMsg.classList.add('hidden'); }
+};
+
+const triggerAddedSearch = () => {
+  const term = addedLayerSearch.value.toLowerCase();
+  if (term === '') btnClearAddedSearch.classList.add('hidden');
+  else btnClearAddedSearch.classList.remove('hidden');
+  
+  let visibleCount = 0;
+  document.querySelectorAll('.added-layer-item').forEach(item => {
+    if (item.getAttribute('data-search').includes(term)) { item.classList.remove('hidden'); visibleCount++; } 
+    else { item.classList.add('hidden'); }
+  });
+  
+  let emptyMsg = document.getElementById('added-search-empty-msg');
+  if (visibleCount === 0 && activeLayers.length > 0) {
+    if (!emptyMsg) {
+      emptyMsg = document.createElement('p'); emptyMsg.id = 'added-search-empty-msg'; emptyMsg.className = 'text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4'; emptyMsg.textContent = 'No matching layers found.';
+      addedLayerList.appendChild(emptyMsg);
+    }
+    emptyMsg.classList.remove('hidden');
+  } else if (emptyMsg) { emptyMsg.classList.add('hidden'); }
+};
+
+const triggerFilterDataSearch = () => {
+    const term = filterDataSearch.value.toLowerCase();
+    if (term === '') btnClearFilterSearch.classList.add('hidden');
+    else btnClearFilterSearch.classList.remove('hidden');
+    
+    document.querySelectorAll('#filter-data-values label').forEach(label => {
+        const val = label.querySelector('input').value.toLowerCase();
+        if (val.includes(term)) { label.classList.remove('hidden'); label.classList.add('flex'); } 
+        else { label.classList.add('hidden'); label.classList.remove('flex'); }
+    });
+};
+
 
 // ==========================================
-// 5. MAIN UI RENDERERS
+// 7. MAIN UI RENDERERS
 // ==========================================
 const renderAvailableLayers = () => {
   availableLayerList.innerHTML = '';
@@ -1023,148 +1273,6 @@ const renderAddedLayers = () => {
   document.querySelectorAll('.btn-reorder').forEach(btn => btn.addEventListener('click', handleReorder));
 };
 
-
-// ==========================================
-// 6. WORKSPACE & PERSISTENCE
-// ==========================================
-const serializeWorkspace = () => {
-    const center = map.getCenter();
-    const zoom = map.getZoom();
-    const layersData = activeLayers.map(l => ({
-        uniqueKey: l.uniqueKey, id: l.id, displayName: l.displayName, exportUrl: l.exportUrl,
-        isLocalGeoJSON: l.isLocalGeoJSON, geoJsonData: l.geoJsonData, customStyle: l.customStyle, isVisible: l.isVisible
-    }));
-    return { version: "1.0", savedAt: new Date().toISOString(), mapState: { lat: center.lat, lng: center.lng, zoom }, activeLayers: layersData };
-};
-
-const autoSaveWorkspace = () => {
-    try { localStorage.setItem('gis_previewer_auto_save', JSON.stringify(serializeWorkspace())); } catch (e) {}
-};
-
-const restoreWorkspaceState = (data) => {
-    closeAllPanels();
-    clearAllPreviews();
-
-    activeLayers.forEach(l => {
-        if (l.mapLayer) map.removeLayer(l.mapLayer);
-        removePane(l.uniqueKey);
-    });
-    activeLayers = [];
-
-    if (data.mapState && data.mapState.lat !== undefined) {
-        map.setView([data.mapState.lat, data.mapState.lng], data.mapState.zoom || 10);
-    }
-
-    if (data.activeLayers && Array.isArray(data.activeLayers)) {
-        data.activeLayers.forEach(lData => {
-            let mapLayer;
-            const uniqueKey = lData.uniqueKey || Math.random().toString(36).substr(2,9);
-            const paneName = 'pane-' + uniqueKey;
-            
-            if (!map.getPane(paneName)) map.createPane(paneName);
-            
-            if (lData.isLocalGeoJSON && lData.geoJsonData) {
-                mapLayer = createCustomGeoJSONLayer(lData.geoJsonData, lData.customStyle, paneName);
-            } else if (lData.exportUrl) {
-                const baseUrl = lData.exportUrl.split('?')[0];
-                if (lData.exportUrl.includes('WFS')) {
-                    mapLayer = L.tileLayer.wms(baseUrl, { pane: paneName, layers: lData.id, format: 'image/png', transparent: true });
-                } else if (lData.exportUrl.includes('featureserver')) {
-                    mapLayer = L.esri.featureLayer({ pane: paneName, url: baseUrl });
-                } else {
-                    mapLayer = L.esri.dynamicMapLayer({ pane: paneName, url: baseUrl, layers: [lData.id], opacity: 0.8 });
-                }
-            }
-
-            if (mapLayer) {
-                if (lData.isVisible) mapLayer.addTo(map);
-                activeLayers.push({
-                    uniqueKey: uniqueKey, id: lData.id, displayName: lData.displayName, mapLayer: mapLayer,
-                    exportUrl: lData.exportUrl, isLocalGeoJSON: lData.isLocalGeoJSON, geoJsonData: lData.geoJsonData,
-                    customStyle: lData.customStyle, isVisible: lData.isVisible ?? true
-                });
-            }
-        });
-    }
-
-    if(activeLayers.length > 0) {
-        renderAddedLayers();
-        updateMapLayerOrder();
-    }
-};
-
-const loadSavedServers = async () => {
-    try {
-        const res = await fetch('/api/servers');
-        const servers = await res.json();
-        
-        savedServersSelect.innerHTML = '<option value="" disabled selected>-- Load saved server --</option>';
-        servers.forEach(s => {
-            const opt = document.createElement('option');
-            opt.value = s.url; opt.textContent = s.name; opt.dataset.type = s.type;
-            savedServersSelect.appendChild(opt);
-        });
-    } catch (err) { console.error("Failed to load servers", err); }
-};
-
-
-// ==========================================
-// 7. EVENT LISTENERS & SEARCH
-// ==========================================
-const triggerSearch = () => {
-  const term = layerSearch.value.toLowerCase();
-  if (term === '') btnClearSearch.classList.add('hidden');
-  else btnClearSearch.classList.remove('hidden');
-  
-  let visibleCount = 0;
-  document.querySelectorAll('.available-layer-item').forEach(item => {
-    if (item.getAttribute('data-search').includes(term)) { item.classList.remove('hidden'); visibleCount++; } 
-    else { item.classList.add('hidden'); }
-  });
-  
-  let emptyMsg = document.getElementById('search-empty-msg');
-  if (visibleCount === 0 && fetchedLayers.length > 0) {
-    if (!emptyMsg) {
-      emptyMsg = document.createElement('p'); emptyMsg.id = 'search-empty-msg'; emptyMsg.className = 'text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4'; emptyMsg.textContent = 'No matching layers found.';
-      availableLayerList.appendChild(emptyMsg);
-    }
-    emptyMsg.classList.remove('hidden');
-  } else if (emptyMsg) { emptyMsg.classList.add('hidden'); }
-};
-
-const triggerAddedSearch = () => {
-  const term = addedLayerSearch.value.toLowerCase();
-  if (term === '') btnClearAddedSearch.classList.add('hidden');
-  else btnClearAddedSearch.classList.remove('hidden');
-  
-  let visibleCount = 0;
-  document.querySelectorAll('.added-layer-item').forEach(item => {
-    if (item.getAttribute('data-search').includes(term)) { item.classList.remove('hidden'); visibleCount++; } 
-    else { item.classList.add('hidden'); }
-  });
-  
-  let emptyMsg = document.getElementById('added-search-empty-msg');
-  if (visibleCount === 0 && activeLayers.length > 0) {
-    if (!emptyMsg) {
-      emptyMsg = document.createElement('p'); emptyMsg.id = 'added-search-empty-msg'; emptyMsg.className = 'text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4'; emptyMsg.textContent = 'No matching layers found.';
-      addedLayerList.appendChild(emptyMsg);
-    }
-    emptyMsg.classList.remove('hidden');
-  } else if (emptyMsg) { emptyMsg.classList.add('hidden'); }
-};
-
-const triggerFilterDataSearch = () => {
-    const term = filterDataSearch.value.toLowerCase();
-    if (term === '') btnClearFilterSearch.classList.add('hidden');
-    else btnClearFilterSearch.classList.remove('hidden');
-    
-    document.querySelectorAll('#filter-data-values label').forEach(label => {
-        const val = label.querySelector('input').value.toLowerCase();
-        if (val.includes(term)) { label.classList.remove('hidden'); label.classList.add('flex'); } 
-        else { label.classList.add('hidden'); label.classList.remove('flex'); }
-    });
-};
-
 const addLayerToMap = (layerId, switchTabAfter = true) => {
     const meta = fetchedLayers.find(l => l.id === layerId);
     if(!meta) return;
@@ -1213,7 +1321,20 @@ const addLayerToMap = (layerId, switchTabAfter = true) => {
     if (switchTabAfter) { renderAddedLayers(); switchTab('added'); showToast(`Added ${meta.title} to map!`); }
 };
 
-// Bind Static Listeners
+
+// ==========================================
+// 8. EVENT LISTENERS
+// ==========================================
+document.getElementById('toggle-workspace').addEventListener('click', () => {
+    document.getElementById('content-workspace').classList.toggle('hidden');
+    document.getElementById('icon-workspace').classList.toggle('-rotate-90');
+});
+
+document.getElementById('toggle-database').addEventListener('click', () => {
+    document.getElementById('content-database').classList.toggle('hidden');
+    document.getElementById('icon-database').classList.toggle('-rotate-90');
+});
+
 tabBtnAvailable.addEventListener('click', () => switchTab('available'));
 tabBtnAdded.addEventListener('click', () => switchTab('added'));
 
@@ -1243,7 +1364,7 @@ document.getElementById('btn-export-workspace').addEventListener('click', () => 
     const data = serializeWorkspace();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const dateStr = new Date().toISOString().split('T')[0];
-    downloadBlob(blob, `gis_workspace_${dateStr}`);
+    downloadBlob(blob, `gis_workspace_${dateStr}.json`);
 });
 
 document.getElementById('file-import-workspace').addEventListener('change', (e) => {
@@ -1299,6 +1420,37 @@ btnAddBulk.addEventListener('click', () => {
   renderAddedLayers(); switchTab('added'); showToast(`Bulk added ${cbs.length} layers to map!`);
 });
 
+document.getElementById('btn-available-split').addEventListener('click', () => {
+    const splitCol = document.getElementById('available-split-col').value;
+    if(!splitCol) return showToast("Select an attribute column first.", true);
+    if(!lastFetchedOsmGeoJson) return;
+    
+    const uniqueVals = [...new Set(lastFetchedOsmGeoJson.features.map(f => f.properties[splitCol]))];
+    if (uniqueVals.length > 50 && !confirm(`This will unpack ${uniqueVals.length} layers into the list below. Proceed?`)) return;
+    
+    clearAllPreviews(); 
+    fetchedLayers = []; 
+    
+    uniqueVals.forEach(val => {
+        const filteredFeats = lastFetchedOsmGeoJson.features.filter(f => f.properties[splitCol] === val);
+        if(filteredFeats.length === 0) return;
+        
+        const displayVal = (val === null || val === undefined || val === '') ? 'null' : val;
+        let extraName = '';
+        if (filteredFeats.length === 1 && filteredFeats[0].properties.name && splitCol !== 'name') {
+            extraName = ` - ${filteredFeats[0].properties.name}`;
+        }
+        
+        fetchedLayers.push({
+            id: `osm_${Date.now()}_${Math.random().toString(36).substr(2,5)}`,
+            title: `${lastFetchedOsmLayerName} [${splitCol}: ${displayVal}]${extraName}`,
+            geoJsonData: { type: "FeatureCollection", features: filteredFeats }
+        });
+    });
+    renderAvailableLayers();
+    showToast(`Successfully unpacked into ${fetchedLayers.length} sub-layers!`);
+});
+
 layerSearch.addEventListener('input', triggerSearch);
 btnClearSearch.addEventListener('click', () => { layerSearch.value = ''; triggerSearch(); layerSearch.focus(); });
 addedLayerSearch.addEventListener('input', triggerAddedSearch);
@@ -1306,45 +1458,40 @@ btnClearAddedSearch.addEventListener('click', () => { addedLayerSearch.value = '
 filterDataSearch.addEventListener('input', triggerFilterDataSearch);
 btnClearFilterSearch.addEventListener('click', () => { filterDataSearch.value = ''; triggerFilterDataSearch(); filterDataSearch.focus(); });
 
-filterType.addEventListener('change', (e) => {
-  const type = e.target.value;
-  const layer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
-  filterRadius.classList.add('hidden'); filterDataContainer.classList.add('hidden'); filterDataContainer.classList.remove('flex');
-  btnDraw.classList.remove('hidden'); drawStatus.classList.remove('hidden');
-  
-  if(type === 'radius') { filterRadius.classList.remove('hidden'); drawStatus.textContent = 'Click on map to set center point.'; } 
-  else if (type === 'box') { drawStatus.textContent = 'Click & drag on map to draw box.'; } 
-  else if (type === 'data') { btnDraw.classList.add('hidden'); filterDataContainer.classList.remove('hidden'); filterDataContainer.classList.add('flex'); if(layer) triggerDataFilterSetup(layer); }
-  checkApplyButton();
-});
-
-filterDataCol.addEventListener('change', (e) => {
-    const col = e.target.value;
-    const layer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
-    if (!layer || !col) return;
-    filterDataSearch.value = ''; btnClearFilterSearch.classList.add('hidden');
-    let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[col]))].filter(v => v !== null && v !== undefined).sort();
-
-    if (uniqueVals.length === 0) { filterDataValues.innerHTML = '<p class="text-gray-400 dark:text-gray-500 italic text-center">No unique values found.</p>'; return; }
-
-    let html = '<div class="flex flex-col space-y-1">';
-    uniqueVals.forEach(val => {
-        html += `<label class="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 p-1 rounded transition-colors"><input type="checkbox" class="filter-data-val-cb w-3 h-3 text-teal-600 dark:text-teal-500 rounded accent-teal-600 dark:accent-teal-500" value="${val}"><span class="truncate dark:text-gray-300" title="${val}">${val}</span></label>`;
+if (osmKeyInput) {
+    osmKeyInput.addEventListener('input', (e) => {
+        const key = e.target.value.toLowerCase().trim();
+        osmValueDatalist.innerHTML = ''; 
+        let values = commonOsmTags[key] || ['yes']; 
+        values.forEach(val => { const opt = document.createElement('option'); opt.value = val; osmValueDatalist.appendChild(opt); });
     });
-    html += '</div>';
-    filterDataValues.innerHTML = html;
-    document.querySelectorAll('.filter-data-val-cb').forEach(cb => cb.addEventListener('change', checkApplyButton));
-    checkApplyButton();
-});
+}
 
-document.getElementById('btn-filter-select-all').addEventListener('click', () => {
-    const visibleLabels = Array.from(document.querySelectorAll('#filter-data-values label:not(.hidden)'));
-    const cbs = visibleLabels.map(l => l.querySelector('.filter-data-val-cb'));
-    if (cbs.length === 0) return;
-    const allChecked = cbs.every(cb => cb.checked);
-    cbs.forEach(cb => cb.checked = !allChecked); 
-    checkApplyButton();
-});
+if (btnOsmInspect) {
+    btnOsmInspect.addEventListener('click', () => {
+        osmInspectContainer.classList.remove('hidden');
+        osmInspectContainer.classList.add('flex');
+        osmInspectStatus.textContent = 'Click and drag a box on the map...';
+        osmInspectStatus.classList.remove('hidden');
+        osmInspectResults.innerHTML = '';
+        
+        drawingMode = 'inspect';
+        drawLayerGroup.clearLayers();
+        map.getContainer().style.cursor = 'crosshair';
+    });
+}
+
+if (btnCloseInspect) {
+    btnCloseInspect.addEventListener('click', () => {
+        osmInspectContainer.classList.add('hidden');
+        osmInspectContainer.classList.remove('flex');
+        if (drawingMode === 'inspect') {
+            drawingMode = null;
+            map.getContainer().style.cursor = '';
+            drawLayerGroup.clearLayers();
+        }
+    });
+}
 
 btnDraw.addEventListener('click', () => {
   drawingMode = filterType.value; drawLayerGroup.clearLayers(); filterGeometryData = null;
@@ -1352,12 +1499,29 @@ btnDraw.addEventListener('click', () => {
 });
 
 map.on('mousedown', (e) => {
-  if (drawingMode === 'box') { drawLayerGroup.clearLayers(); map.dragging.disable(); drawStart = e.latlng; tempShape = L.rectangle([drawStart, drawStart], { color: '#0d9488', weight: 2, fillOpacity: 0.2 }).addTo(drawLayerGroup); }
+  if (drawingMode === 'box' || drawingMode === 'inspect') { 
+      drawLayerGroup.clearLayers(); map.dragging.disable(); drawStart = e.latlng; 
+      const color = drawingMode === 'inspect' ? '#4f46e5' : '#0d9488'; 
+      tempShape = L.rectangle([drawStart, drawStart], { color: color, weight: 2, fillOpacity: 0.2 }).addTo(drawLayerGroup); 
+  }
 });
-map.on('mousemove', (e) => { if (drawingMode === 'box' && tempShape) tempShape.setBounds([drawStart, e.latlng]); });
+
+map.on('mousemove', (e) => { 
+    if ((drawingMode === 'box' || drawingMode === 'inspect') && tempShape) tempShape.setBounds([drawStart, e.latlng]); 
+});
+
 map.on('mouseup', (e) => {
-  if (drawingMode === 'box' && tempShape) { map.dragging.enable(); filterGeometryData = tempShape.getBounds(); drawingMode = null; map.getContainer().style.cursor = ''; checkApplyButton(); }
+  if (drawingMode === 'box' && tempShape) { 
+      map.dragging.enable(); filterGeometryData = tempShape.getBounds(); drawingMode = null; map.getContainer().style.cursor = ''; checkApplyButton(); 
+  } else if (drawingMode === 'inspect' && tempShape) {
+      map.dragging.enable(); 
+      const bounds = tempShape.getBounds();
+      drawingMode = null; map.getContainer().style.cursor = '';
+      executeOsmInspect(bounds);
+      setTimeout(() => drawLayerGroup.clearLayers(), 800); 
+  }
 });
+
 map.on('click', (e) => {
   if (drawingMode === 'radius') {
     drawLayerGroup.clearLayers(); drawStart = e.latlng;
@@ -1368,6 +1532,74 @@ map.on('click', (e) => {
 });
 
 filterRadius.addEventListener('input', checkApplyButton);
+
+filterType.addEventListener('change', (e) => {
+  const type = e.target.value;
+  const layer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
+  
+  filterRadius.classList.add('hidden');
+  filterDataContainer.classList.add('hidden');
+  filterDataContainer.classList.remove('flex');
+  btnDraw.classList.remove('hidden');
+  drawStatus.classList.remove('hidden');
+  
+  if(type === 'radius') {
+    filterRadius.classList.remove('hidden');
+    drawStatus.textContent = 'Click on map to set center point.';
+  } else if (type === 'box') {
+    drawStatus.textContent = 'Click & drag on map to draw box.';
+  } else if (type === 'data') {
+    btnDraw.classList.add('hidden');
+    filterDataContainer.classList.remove('hidden');
+    filterDataContainer.classList.add('flex');
+    if(layer) triggerDataFilterSetup(layer);
+  }
+  checkApplyButton();
+});
+
+filterDataCol.addEventListener('change', (e) => {
+    const col = e.target.value;
+    const layer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
+    if (!layer || !col) return;
+    
+    filterDataSearch.value = '';
+    btnClearFilterSearch.classList.add('hidden');
+
+    let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[col]))];
+    uniqueVals = uniqueVals.filter(v => v !== null && v !== undefined).sort();
+
+    if (uniqueVals.length === 0) {
+        filterDataValues.innerHTML = '<p class="text-gray-400 dark:text-gray-500 italic text-center">No unique values found.</p>';
+        return;
+    }
+
+    let html = '<div class="flex flex-col space-y-1">';
+    uniqueVals.forEach(val => {
+        html += `
+            <label class="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 p-1 rounded transition-colors">
+                <input type="checkbox" class="filter-data-val-cb w-3 h-3 text-teal-600 dark:text-teal-500 rounded accent-teal-600 dark:accent-teal-500" value="${val}">
+                <span class="truncate dark:text-gray-300" title="${val}">${val}</span>
+            </label>
+        `;
+    });
+    html += '</div>';
+    filterDataValues.innerHTML = html;
+
+    document.querySelectorAll('.filter-data-val-cb').forEach(cb => {
+        cb.addEventListener('change', checkApplyButton);
+    });
+    checkApplyButton();
+});
+
+document.getElementById('btn-filter-select-all').addEventListener('click', () => {
+    const visibleLabels = Array.from(document.querySelectorAll('#filter-data-values label:not(.hidden)'));
+    const cbs = visibleLabels.map(l => l.querySelector('.filter-data-val-cb'));
+    if (cbs.length === 0) return;
+    
+    const allChecked = cbs.every(cb => cb.checked);
+    cbs.forEach(cb => cb.checked = !allChecked); 
+    checkApplyButton();
+});
 
 btnApplyFilter.addEventListener('click', async () => {
   const targetLayer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
@@ -1579,32 +1811,8 @@ document.getElementById('btn-fetch').addEventListener('click', async () => {
   }
 });
 
-const commonOsmTags = {
-    'amenity': ['restaurant', 'cafe', 'fast_food', 'school', 'hospital', 'parking', 'pharmacy', 'bank', 'place_of_worship'],
-    'boundary': ['administrative', 'national_park', 'protected_area', 'postal_code', 'forest', 'political'],
-    'building': ['yes', 'residential', 'commercial', 'industrial', 'house', 'retail', 'apartments', 'school'],
-    'highway': ['residential', 'primary', 'secondary', 'tertiary', 'motorway', 'footway', 'path', 'cycleway', 'track'],
-    'landuse': ['residential', 'commercial', 'industrial', 'retail', 'forest', 'grass', 'farmland', 'meadow', 'cemetery'],
-    'natural': ['water', 'wood', 'tree', 'scrub', 'wetland', 'coastline', 'beach', 'sand', 'peak'],
-    'leisure': ['park', 'pitch', 'garden', 'playground', 'sports_centre', 'nature_reserve', 'track'],
-    'shop': ['supermarket', 'convenience', 'clothes', 'hairdresser', 'bakery', 'car_repair', 'shoes'],
-    'waterway': ['river', 'stream', 'drain', 'canal', 'ditch', 'waterfall'],
-    'place': ['city', 'town', 'village', 'suburb', 'neighbourhood', 'hamlet', 'island'],
-    'tourism': ['hotel', 'motel', 'museum', 'attraction', 'viewpoint', 'guest_house', 'information']
-};
-
-const osmKeyInput = document.getElementById('osm-key');
-const osmValueDatalist = document.getElementById('osm-values');
-
-osmKeyInput.addEventListener('input', (e) => {
-    const key = e.target.value.toLowerCase().trim();
-    osmValueDatalist.innerHTML = ''; 
-    let values = commonOsmTags[key] || ['yes']; 
-    values.forEach(val => { const opt = document.createElement('option'); opt.value = val; osmValueDatalist.appendChild(opt); });
-});
-
 // ==========================================
-// 8. BOOTSTRAP APP ON LOAD
+// 9. APP BOOTSTRAP
 // ==========================================
 loadSavedServers();
 
@@ -1617,13 +1825,3 @@ try {
 } catch(e) {
     console.warn("Could not auto-restore previous workspace.", e);
 }
-// Accordion Toggles for UI Cleanliness
-document.getElementById('toggle-workspace').addEventListener('click', () => {
-    document.getElementById('content-workspace').classList.toggle('hidden');
-    document.getElementById('icon-workspace').classList.toggle('-rotate-90');
-});
-
-document.getElementById('toggle-database').addEventListener('click', () => {
-    document.getElementById('content-database').classList.toggle('hidden');
-    document.getElementById('icon-database').classList.toggle('-rotate-90');
-});
