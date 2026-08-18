@@ -1928,11 +1928,12 @@ btnApplyFilter?.addEventListener('click', async () => {
             if (filterType?.value === 'box') {
                b = filterGeometryData;
                const turfBbox = turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
-               finalFeatures = targetLayer.geoJsonData.features.filter(f => turf.booleanIntersects(f, turfBbox));
+               // Enforce strictly 'Within' instead of 'Intersects'
+               finalFeatures = targetLayer.geoJsonData.features.filter(f => { try { return turf.booleanWithin(f, turfBbox); } catch(e) { return false; } });
             } else {
                const radKm = parseFloat(filterRadius?.value) || 5;
                const turfCircle = turf.circle([filterGeometryData.lng, filterGeometryData.lat], radKm, {units: 'kilometers'});
-               finalFeatures = targetLayer.geoJsonData.features.filter(f => turf.booleanIntersects(f, turfCircle));
+               finalFeatures = targetLayer.geoJsonData.features.filter(f => { try { return turf.booleanWithin(f, turfCircle); } catch(e) { return false; } });
             }
         } else {
             let queryUrl = targetLayer.exportUrl;
@@ -1940,17 +1941,22 @@ btnApplyFilter?.addEventListener('click', async () => {
             if (filterType?.value === 'box') b = filterGeometryData; 
             else b = filterGeometryData.toBounds((parseFloat(filterRadius?.value) || 5) * 1000); 
 
+            // Ask the server for the bounding box envelope first (adding esriSpatialRelWithin for servers that support it)
             if (queryUrl.includes('WFS') || queryUrl.includes('GetFeature')) queryUrl += `&bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()},EPSG:4326`;
-            else queryUrl += `&geometry=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&geometryType=esriGeometryEnvelope&inSR=4326`;
+            else queryUrl += `&geometry=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelWithin&inSR=4326`;
 
             const res = await fetch(`/proxy?url=${encodeURIComponent(queryUrl)}`);
             const rawGeojson = await res.json();
-            finalFeatures = rawGeojson.features || [];
+            let fetchedFeatures = rawGeojson.features || [];
 
-            if (filterType?.value === 'radius' && finalFeatures.length > 0) {
+            // Strict client-side post-filtering to guarantee shapes are 'Within' (since standard WFS defaults to Intersect)
+            if (filterType?.value === 'box') {
+                const turfBbox = turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
+                finalFeatures = fetchedFeatures.filter(f => { try { return turf.booleanWithin(f, turfBbox); } catch(e) { return false; } });
+            } else if (filterType?.value === 'radius') {
                 const radKm = parseFloat(filterRadius?.value) || 5;
                 const turfCircle = turf.circle([filterGeometryData.lng, filterGeometryData.lat], radKm, {units: 'kilometers'});
-                finalFeatures = finalFeatures.filter(f => { try { return turf.booleanIntersects(f, turfCircle); } catch(e) { return false; } });
+                finalFeatures = fetchedFeatures.filter(f => { try { return turf.booleanWithin(f, turfCircle); } catch(e) { return false; } });
             }
         }
     }
@@ -1977,7 +1983,7 @@ btnApplyFilter?.addEventListener('click', async () => {
   } catch(err) {
     showToast("Filter failed. Server might restrict spatial queries.", true);
   } finally {
-    if (filterText) filterText.textContent = 'Apply'; 
+    if (filterText) filterText.textContent = 'Apply Filter'; 
     filterSpinner?.classList.add('hidden'); 
     btnApplyFilter.disabled = false;
   }
