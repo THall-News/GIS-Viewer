@@ -115,16 +115,34 @@
           <div class="flex-1 relative">
             <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
               Tag Key
-              <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="The broad category. Examples: boundary, amenity, building, natural, highway."><i class="fa-solid fa-circle-question"></i></span>
+              <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Select a core category from the dropdown or type a custom one."><i class="fa-solid fa-circle-question"></i></span>
             </label>
-            <input type="text" id="osm-key" placeholder="e.g. boundary" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+            <input type="text" id="osm-key" list="osm-keys" placeholder="e.g. boundary" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+            <datalist id="osm-keys">
+              <option value="amenity"></option>
+              <option value="boundary"></option>
+              <option value="building"></option>
+              <option value="highway"></option>
+              <option value="landuse"></option>
+              <option value="leisure"></option>
+              <option value="natural"></option>
+              <option value="place"></option>
+              <option value="shop"></option>
+              <option value="tourism"></option>
+              <option value="waterway"></option>
+            </datalist>
           </div>
           <div class="flex-1 relative">
             <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
               Tag Value
-              <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="The specific type. Examples: administrative, restaurant, school. (Leave blank to get ALL values)"><i class="fa-solid fa-circle-question"></i></span>
+              <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Select a common type or type a custom one. (Leave blank to get ALL values)"><i class="fa-solid fa-circle-question"></i></span>
             </label>
-            <input type="text" id="osm-value" placeholder="e.g. administrative" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+            <input type="text" id="osm-value" list="osm-values" placeholder="e.g. administrative" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+            <datalist id="osm-values">
+              <!-- Dynamically populated by JS based on the Tag Key -->
+              <option value="yes"></option>
+              <option value="administrative"></option>
+            </datalist>
           </div>
         </div>
 
@@ -134,7 +152,7 @@
               Feature Name
               <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Optional: Only return shapes specifically named this. e.g. Toronto"><i class="fa-solid fa-circle-question"></i></span>
             </label>
-            <input type="text" id="osm-name" placeholder="e.g. Toronto" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+            <input type="text" id="osm-name" placeholder="e.g. High Park" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
           </div>
           <div class="flex-1 relative">
             <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
@@ -151,10 +169,10 @@
 
         <div class="relative">
           <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
-            Search Area limit
-            <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Optional: Restrict search to inside a broader region (e.g. Ontario). Leave blank to search your current Map View."><i class="fa-solid fa-circle-question"></i></span>
+            Search Area
+            <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Optional: Type a city, state, or country (e.g. 'Halifax, Nova Scotia'). Leave blank to search your current Map View."><i class="fa-solid fa-circle-question"></i></span>
           </label>
-          <input type="text" id="osm-location" placeholder="e.g. Ontario (or leave blank for map view)" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+          <input type="text" id="osm-location" placeholder="e.g. Halifax, Nova Scotia" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
         </div>
       </div>
 
@@ -234,11 +252,23 @@
                     <select id="filter-data-col" class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs shrink-0">
                         <option value="" disabled selected>Select attribute column...</option>
                     </select>
+                    
                     <div class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-1 flex-1 flex flex-col min-h-0">
                         <div class="flex justify-between items-center mb-1 px-1 border-b border-gray-200 dark:border-gray-600 pb-1 shrink-0">
                             <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase">Select Values</span>
                             <button id="btn-filter-select-all" class="text-[10px] text-teal-600 dark:text-teal-400 hover:text-teal-800 dark:hover:text-teal-300 font-bold transition-colors">Select All</button>
                         </div>
+                        
+                        <!-- Search Filter Input -->
+                        <div class="px-1 pb-1 shrink-0">
+                            <div class="relative">
+                                <input type="text" id="filter-data-search" placeholder="Search values..." class="w-full pl-2 pr-6 py-1 text-xs border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded focus:outline-none focus:ring-1 focus:ring-teal-500 transition-shadow">
+                                <button id="btn-clear-filter-search" class="absolute right-1.5 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hidden transition-colors" title="Clear Search">
+                                    <i class="fa-solid fa-times text-[10px]"></i>
+                                </button>
+                            </div>
+                        </div>
+
                         <div id="filter-data-values" class="flex-1 overflow-y-auto custom-scroll text-xs p-1 min-h-0">
                             <p class="text-gray-400 dark:text-gray-500 italic text-center">Select a column first.</p>
                         </div>
@@ -326,6 +356,8 @@
     const filterDataContainer = document.getElementById('filter-data-container');
     const filterDataCol = document.getElementById('filter-data-col');
     const filterDataValues = document.getElementById('filter-data-values');
+    const filterDataSearch = document.getElementById('filter-data-search');
+    const btnClearFilterSearch = document.getElementById('btn-clear-filter-search');
     const toast = document.getElementById('toast');
 
     let drawingMode = null; 
@@ -572,6 +604,34 @@
       addedLayerSearch.value = '';
       triggerAddedSearch();
       addedLayerSearch.focus();
+    });
+
+    // --- Filter Values Search Logic ---
+    const triggerFilterDataSearch = () => {
+        const term = filterDataSearch.value.toLowerCase();
+        if (term === '') {
+            btnClearFilterSearch.classList.add('hidden');
+        } else {
+            btnClearFilterSearch.classList.remove('hidden');
+        }
+        
+        document.querySelectorAll('#filter-data-values label').forEach(label => {
+            const val = label.querySelector('input').value.toLowerCase();
+            if (val.includes(term)) {
+                label.classList.remove('hidden');
+                label.classList.add('flex'); 
+            } else {
+                label.classList.add('hidden');
+                label.classList.remove('flex');
+            }
+        });
+    };
+
+    filterDataSearch.addEventListener('input', triggerFilterDataSearch);
+    btnClearFilterSearch.addEventListener('click', () => {
+        filterDataSearch.value = '';
+        triggerFilterDataSearch();
+        filterDataSearch.focus();
     });
 
     const addLayerToMap = (layerId, switchTabAfter = true) => {
@@ -1508,6 +1568,8 @@
     const triggerDataFilterSetup = async (layer) => {
         drawStatus.classList.remove('hidden');
         drawStatus.textContent = 'Ensuring local data for filtering...';
+        filterDataSearch.value = '';
+        btnClearFilterSearch.classList.add('hidden');
         
         const success = await ensureGeoJSON(layer);
         if(!success) {
@@ -1599,18 +1661,48 @@
             let query = `[out:json][timeout:50];\n`;
             let tagFilter = val ? `["${key}"="${val}"]` : `["${key}"]`;
             
-            // If user provides a feature name, look specifically for that name
             if (featName) tagFilter += `["name"~"${featName}",i]`;
 
             if (loc) {
-                query += `area["name"="${loc}"]->.searchArea;\n`;
-                query += `(\n`;
-                if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(area.searchArea);\n`;
-                if (geomType === 'all' || geomType === 'lines_polygons') {
-                    query += `  way${tagFilter}(area.searchArea);\n`;
-                    query += `  relation${tagFilter}(area.searchArea);\n`;
+                document.getElementById('btn-fetch-text').textContent = 'Locating Area...';
+                const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(loc)}&format=json&limit=1`);
+                const nomData = await nomRes.json();
+                if (nomData.length === 0) throw new Error(`Could not find the location: "${loc}"`);
+                
+                document.getElementById('btn-fetch-text').textContent = 'Fetching Data...';
+                const place = nomData[0];
+                
+                if (place.osm_type === 'relation') {
+                    const areaId = 3600000000 + parseInt(place.osm_id);
+                    query += `area(${areaId})->.searchArea;\n`;
+                    query += `(\n`;
+                    if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(area.searchArea);\n`;
+                    if (geomType === 'all' || geomType === 'lines_polygons') {
+                        query += `  way${tagFilter}(area.searchArea);\n`;
+                        query += `  relation${tagFilter}(area.searchArea);\n`;
+                    }
+                    query += `);\n`;
+                } else if (place.osm_type === 'way') {
+                    const areaId = 2400000000 + parseInt(place.osm_id);
+                    query += `area(${areaId})->.searchArea;\n`;
+                    query += `(\n`;
+                    if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(area.searchArea);\n`;
+                    if (geomType === 'all' || geomType === 'lines_polygons') {
+                        query += `  way${tagFilter}(area.searchArea);\n`;
+                        query += `  relation${tagFilter}(area.searchArea);\n`;
+                    }
+                    query += `);\n`;
+                } else {
+                    const bb = place.boundingbox; 
+                    const bbox = `${bb[0]},${bb[2]},${bb[1]},${bb[3]}`;
+                    query += `(\n`;
+                    if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(${bbox});\n`;
+                    if (geomType === 'all' || geomType === 'lines_polygons') {
+                        query += `  way${tagFilter}(${bbox});\n`;
+                        query += `  relation${tagFilter}(${bbox});\n`;
+                    }
+                    query += `);\n`;
                 }
-                query += `);\n`;
             } else {
                 const b = map.getBounds();
                 const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
@@ -1638,9 +1730,18 @@
                  throw new Error("No data found for this query.");
             }
 
-            const geoJson = osmtogeojson(data);
+            const geoJson = osmtogeojson(data, { flatProperties: true });
             
-            // Filter strictly by requested geometry type without stripping un-named boundary lines
+            geoJson.features.forEach(f => {
+                if (f.properties) {
+                    if (f.properties.id) f.properties.osm_id = f.properties.id;
+                    delete f.properties.id;
+                    delete f.properties['@id'];
+                    delete f.properties['@relations'];
+                    delete f.properties.meta;
+                }
+            });
+            
             if (geomType === 'lines_polygons') {
                 geoJson.features = geoJson.features.filter(f => !['Point', 'MultiPoint'].includes(f.geometry?.type));
             } else if (geomType === 'points') {
@@ -1763,6 +1864,9 @@
         const col = e.target.value;
         const layer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
         if (!layer || !col) return;
+        
+        filterDataSearch.value = '';
+        btnClearFilterSearch.classList.add('hidden');
 
         let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[col]))];
         uniqueVals = uniqueVals.filter(v => v !== null && v !== undefined).sort();
@@ -1791,8 +1895,12 @@
     });
 
     document.getElementById('btn-filter-select-all').addEventListener('click', () => {
-        const cbs = document.querySelectorAll('.filter-data-val-cb');
-        const allChecked = Array.from(cbs).every(cb => cb.checked);
+        // Only target checkboxes that are currently visible based on search filter
+        const visibleLabels = Array.from(document.querySelectorAll('#filter-data-values label:not(.hidden)'));
+        const cbs = visibleLabels.map(l => l.querySelector('.filter-data-val-cb'));
+        if (cbs.length === 0) return;
+        
+        const allChecked = cbs.every(cb => cb.checked);
         cbs.forEach(cb => cb.checked = !allChecked); 
         checkApplyButton();
     });
@@ -1982,6 +2090,37 @@
     
     // Initialize Database dropdown
     loadSavedServers();
+
+    // --- OSM Dynamic Combo Box Logic ---
+    const commonOsmTags = {
+        'amenity': ['restaurant', 'cafe', 'fast_food', 'school', 'hospital', 'parking', 'pharmacy', 'bank', 'place_of_worship'],
+        'boundary': ['administrative', 'national_park', 'protected_area', 'postal_code', 'forest', 'political'],
+        'building': ['yes', 'residential', 'commercial', 'industrial', 'house', 'retail', 'apartments', 'school'],
+        'highway': ['residential', 'primary', 'secondary', 'tertiary', 'motorway', 'footway', 'path', 'cycleway', 'track'],
+        'landuse': ['residential', 'commercial', 'industrial', 'retail', 'forest', 'grass', 'farmland', 'meadow', 'cemetery'],
+        'natural': ['water', 'wood', 'tree', 'scrub', 'wetland', 'coastline', 'beach', 'sand', 'peak'],
+        'leisure': ['park', 'pitch', 'garden', 'playground', 'sports_centre', 'nature_reserve', 'track'],
+        'shop': ['supermarket', 'convenience', 'clothes', 'hairdresser', 'bakery', 'car_repair', 'shoes'],
+        'waterway': ['river', 'stream', 'drain', 'canal', 'ditch', 'waterfall'],
+        'place': ['city', 'town', 'village', 'suburb', 'neighbourhood', 'hamlet', 'island'],
+        'tourism': ['hotel', 'motel', 'museum', 'attraction', 'viewpoint', 'guest_house', 'information']
+    };
+
+    const osmKeyInput = document.getElementById('osm-key');
+    const osmValueDatalist = document.getElementById('osm-values');
+
+    osmKeyInput.addEventListener('input', (e) => {
+        const key = e.target.value.toLowerCase().trim();
+        osmValueDatalist.innerHTML = ''; 
+        
+        let values = commonOsmTags[key] || ['yes']; 
+        
+        values.forEach(val => {
+            const opt = document.createElement('option');
+            opt.value = val;
+            osmValueDatalist.appendChild(opt);
+        });
+    });
 
   </script>
 </body>
