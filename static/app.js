@@ -12,26 +12,6 @@ map.getPane('previewPane').style.zIndex = 2000;
 map.getPane('previewPane').style.pointerEvents = 'none';
 const previewRenderer = L.canvas({ pane: 'previewPane' });
 
-// Add resizable, minimizable floating map legend control
-let isLegendMinimized = false;
-let legendCustomWidth = null;
-let legendCustomHeight = null;
-
-window.toggleLegendMinimize = () => {
-    isLegendMinimized = !isLegendMinimized;
-    updateMapLegend();
-};
-
-const legendControl = L.control({ position: 'bottomright' });
-legendControl.onAdd = function () {
-    const div = L.DomUtil.create('div', 'relative bg-white/90 dark:bg-gray-800/90 backdrop-blur-md p-3 rounded-lg shadow-xl text-xs border border-gray-200 dark:border-gray-700 min-w-[170px] min-h-[42px] flex flex-col z-[1000] select-none');
-    div.id = 'map-legend-container';
-    L.DomEvent.disableClickPropagation(div);
-    L.DomEvent.disableScrollPropagation(div);
-    return div;
-};
-legendControl.addTo(map);
-
 let fetchedLayers = [];
 let activeLayers = [];
 let previewLayers = {}; 
@@ -53,73 +33,110 @@ let tempShape = null;
 let filterGeometryData = null; 
 const drawLayerGroup = L.featureGroup().addTo(map);
 
-// DOM Elements
-const tabBtnAvailable = document.getElementById('tab-btn-available');
-const tabBtnAdded = document.getElementById('tab-btn-added');
-const tabAvailable = document.getElementById('tab-available');
-const tabAdded = document.getElementById('tab-added');
-const btnAddBulk = document.getElementById('btn-add');
+// Safely Query DOM Elements
+const getEl = (id) => document.getElementById(id);
 
-const savedServersSelect = document.getElementById('saved-servers-select');
-const btnSaveServer = document.getElementById('btn-save-server');
+const tabBtnAvailable = getEl('tab-btn-available');
+const tabBtnAdded = getEl('tab-btn-added');
+const tabAvailable = getEl('tab-available');
+const tabAdded = getEl('tab-added');
+const btnAddBulk = getEl('btn-add');
 
-const searchContainer = document.getElementById('search-container');
-const layerSearch = document.getElementById('layer-search');
-const btnClearSearch = document.getElementById('btn-clear-search');
-const availableLayerList = document.getElementById('available-layer-list');
+const savedServersSelect = getEl('saved-servers-select');
+const btnSaveServer = getEl('btn-save-server');
 
-const addedSearchContainer = document.getElementById('added-search-container');
-const addedLayerSearch = document.getElementById('added-layer-search');
-const btnClearAddedSearch = document.getElementById('btn-clear-added-search');
-const addedLayerList = document.getElementById('added-layer-list');
+const searchContainer = getEl('search-container');
+const layerSearch = getEl('layer-search');
+const btnClearSearch = getEl('btn-clear-search');
+const availableLayerList = getEl('available-layer-list');
 
-const attributeTableContainer = document.getElementById('attribute-table-container');
-const editPanelContainer = document.getElementById('edit-panel-container');
-const splitPanelContainer = document.getElementById('split-panel-container');
-const cropPanelContainer = document.getElementById('crop-panel-container');
+const addedSearchContainer = getEl('added-search-container');
+const addedLayerSearch = getEl('added-layer-search');
+const btnClearAddedSearch = getEl('btn-clear-added-search');
+const addedLayerList = getEl('added-layer-list');
 
-const filterType = document.getElementById('filter-type');
-const filterRadius = document.getElementById('filter-radius');
-const btnDraw = document.getElementById('btn-draw');
-const btnApplyFilter = document.getElementById('btn-apply-filter');
-const drawStatus = document.getElementById('draw-status');
-const filterDataContainer = document.getElementById('filter-data-container');
-const filterDataCol = document.getElementById('filter-data-col');
-const filterDataValues = document.getElementById('filter-data-values');
-const filterDataSearch = document.getElementById('filter-data-search');
-const btnClearFilterSearch = document.getElementById('btn-clear-filter-search');
+const attributeTableContainer = getEl('attribute-table-container');
+const editPanelContainer = getEl('edit-panel-container');
+const splitPanelContainer = getEl('split-panel-container');
+const cropPanelContainer = getEl('crop-panel-container');
 
-const osmKeyInput = document.getElementById('osm-key');
-const osmValueDatalist = document.getElementById('osm-values');
-const btnOsmInspect = document.getElementById('btn-osm-inspect');
-const osmInspectContainer = document.getElementById('osm-inspect-container');
-const osmInspectResults = document.getElementById('osm-inspect-results');
-const btnCloseInspect = document.getElementById('btn-close-inspect');
-const osmInspectStatus = document.getElementById('osm-inspect-status');
+const filterType = getEl('filter-type');
+const filterRadius = getEl('filter-radius');
+const btnDraw = getEl('btn-draw');
+const btnApplyFilter = getEl('btn-apply-filter');
+const drawStatus = getEl('draw-status');
+const filterDataContainer = getEl('filter-data-container');
+const filterDataCol = getEl('filter-data-col');
+const filterDataValues = getEl('filter-data-values');
+const filterDataSearch = getEl('filter-data-search');
+const btnClearFilterSearch = getEl('btn-clear-filter-search');
 
-const toast = document.getElementById('toast');
+const osmKeyInput = getEl('osm-key');
+const osmValueDatalist = getEl('osm-values');
+const btnOsmInspect = getEl('btn-osm-inspect');
+const osmInspectContainer = getEl('osm-inspect-container');
+const osmInspectResults = getEl('osm-inspect-results');
+const btnCloseInspect = getEl('btn-close-inspect');
+const osmInspectStatus = getEl('osm-inspect-status');
 
+const toast = getEl('toast');
+
+// Popular OSM Tag Combo-Box Dictionary
+const commonOsmTags = {
+  'boundary': ['administrative', 'aboriginal_lands', 'postal_code', 'protected_area', 'national_park', 'census', 'maritime'],
+  'admin_level': ['2', '4', '6', '8', '9', '10'],
+  'amenity': ['restaurant', 'cafe', 'fast_food', 'pub', 'bar', 'bank', 'pharmacy', 'hospital', 'school', 'parking', 'fuel', 'place_of_worship', 'post_office', 'library', 'cinema', 'police', 'fire_station'],
+  'highway': ['residential', 'service', 'track', 'unclassified', 'footway', 'path', 'cycleway', 'bus_stop', 'traffic_signals', 'street_lamp', 'motorway', 'primary', 'secondary', 'tertiary'],
+  'building': ['yes', 'residential', 'house', 'apartments', 'commercial', 'industrial', 'retail', 'detached', 'garage', 'roof', 'warehouse'],
+  'landuse': ['residential', 'commercial', 'industrial', 'grass', 'forest', 'farmland', 'meadow', 'basin', 'military', 'recreation_ground', 'quarry'],
+  'leisure': ['park', 'pitch', 'playground', 'sports_centre', 'fitness_centre', 'garden', 'swimming_pool', 'golf_course', 'stadium', 'nature_reserve'],
+  'place': ['country', 'state', 'county', 'city', 'town', 'suburb', 'neighbourhood', 'district', 'village', 'hamlet', 'island', 'locality'],
+  'natural': ['tree', 'water', 'wood', 'wetland', 'peak', 'beach', 'scrub', 'grassland', 'cliff', 'coastline', 'glacier'],
+  'waterway': ['river', 'stream', 'canal', 'drain', 'ditch', 'waterfall', 'weir', 'riverbank'],
+  'aeroway': ['aerodrome', 'runway', 'taxiway', 'helipad', 'apron', 'terminal', 'gate'],
+  'power': ['line', 'substation', 'tower', 'pole', 'generator', 'transformer', 'minor_line'],
+  'man_made': ['pier', 'tower', 'pipeline', 'storage_tank', 'water_tower', 'silo', 'bridge', 'surveillance', 'works'],
+  'route': ['bus', 'railway', 'hiking', 'bicycle', 'subway', 'tram', 'ferry', 'detour'],
+  'barrier': ['fence', 'wall', 'gate', 'hedge', 'retaining_wall', 'bollard', 'handrail'],
+  'shop': ['supermarket', 'convenience', 'clothes', 'hairdresser', 'bakery', 'car', 'beauty', 'pharmacy', 'florist', 'electronics', 'hardware'],
+  'tourism': ['hotel', 'information', 'artwork', 'attraction', 'viewpoint', 'museum', 'guest_house', 'camp_site', 'motel', 'alpine_hut'],
+  'historic': ['memorial', 'monument', 'archaeological_site', 'castle', 'ruins', 'heritage', 'wayside_cross', 'fort'],
+  'railway': ['station', 'subway', 'tram', 'level_crossing', 'buffer_stop', 'rail', 'switch', 'platform'],
+  'office': ['company', 'government', 'estate_agent', 'lawyer', 'tech', 'insurance', 'educational_institution'],
+  'emergency': ['fire_hydrant', 'defibrillator', 'ambulance_station', 'phone', 'fire_station']
+};
 
 // ==========================================
 // 2. CORE UTILITIES
 // ==========================================
 const showToast = (msg, isError=false) => {
+  if (!toast) return;
   toast.className = `fixed bottom-6 right-6 px-4 py-3 rounded shadow-xl transform transition-all duration-300 z-50 max-w-sm ${isError ? 'bg-red-600 text-white' : 'bg-gray-800 dark:bg-gray-700 text-white'}`;
-  document.getElementById('toast-message').textContent = msg;
+  const msgEl = getEl('toast-message');
+  if (msgEl) msgEl.textContent = msg;
   toast.classList.remove('translate-y-20', 'opacity-0');
   setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 5000);
 };
 
-const darkenHex = (hex, percent = 0.3) => {
+const darkenHex = (hex = '#2563eb', percent = 0.3) => {
     hex = hex.replace('#', '');
     if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
-    let r = parseInt(hex.substring(0, 2), 16);
-    let g = parseInt(hex.substring(2, 4), 16);
-    let b = parseInt(hex.substring(4, 6), 16);
+    let r = parseInt(hex.substring(0, 2), 16) || 37;
+    let g = parseInt(hex.substring(2, 4), 16) || 99;
+    let b = parseInt(hex.substring(4, 6), 16) || 235;
     r = Math.max(0, Math.floor(r * (1 - percent)));
     g = Math.max(0, Math.floor(g * (1 - percent)));
     b = Math.max(0, Math.floor(b * (1 - percent)));
     return '#' + r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0');
+};
+
+const hexAlpha = (hex = '#2563eb', alpha = 1.0) => {
+    if (!hex) hex = '#2563eb';
+    hex = hex.replace('#', '');
+    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+    const validAlpha = Math.max(0, Math.min(1, isNaN(parseFloat(alpha)) ? 1.0 : parseFloat(alpha)));
+    const a = Math.round(validAlpha * 255).toString(16).padStart(2, '0');
+    return (`#${hex}${a}`).toUpperCase();
 };
 
 const removePane = (uniqueKey) => {
@@ -131,179 +148,6 @@ const removePane = (uniqueKey) => {
     }
 };
 
-const attachLegendResizeListeners = () => {
-    const container = document.getElementById('map-legend-container');
-    if (!container || isLegendMinimized) return;
-
-    const handleBR = document.getElementById('legend-resize-handle-br');
-    const handleTL = document.getElementById('legend-resize-handle-tl');
-
-    const updateScaleFactor = () => {
-        const w = container.offsetWidth || 200;
-        const h = container.offsetHeight || 140;
-        
-        // Baseline reference box: 200px by 140px
-        const scaleW = w / 200;
-        const scaleH = h / 140;
-        
-        // Geometric mean combines 2D area dimensions into a smooth scaling ratio
-        const geoScale = Math.sqrt(scaleW * scaleH);
-        const scale = Math.max(0.85, Math.min(1.8, geoScale));
-        
-        container.style.setProperty('--legend-scale', scale.toFixed(2));
-    };
-
-    const setupDrag = (handle, isTopLeft) => {
-        if (!handle) return;
-        handle.addEventListener('mousedown', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-
-            const startX = e.clientX;
-            const startY = e.clientY;
-            const startW = container.offsetWidth;
-            const startH = container.offsetHeight;
-
-            map.dragging.disable();
-
-            const doDrag = (moveEvt) => {
-                moveEvt.preventDefault();
-                moveEvt.stopPropagation();
-
-                const dx = moveEvt.clientX - startX;
-                const dy = moveEvt.clientY - startY;
-
-                const newW = Math.max(170, Math.min(800, isTopLeft ? startW - dx : startW + dx));
-                const newH = Math.max(60, Math.min(800, isTopLeft ? startH - dy : startH + dy));
-
-                legendCustomWidth = newW + 'px';
-                legendCustomHeight = newH + 'px';
-
-                container.style.width = legendCustomWidth;
-                container.style.height = legendCustomHeight;
-
-                updateScaleFactor();
-            };
-
-            const stopDrag = () => {
-                window.removeEventListener('mousemove', doDrag);
-                window.removeEventListener('mouseup', stopDrag);
-                map.dragging.enable();
-            };
-
-            window.addEventListener('mousemove', doDrag);
-            window.addEventListener('mouseup', stopDrag);
-        });
-    };
-
-    setupDrag(handleBR, false);
-    setupDrag(handleTL, true);
-    updateScaleFactor();
-};
-
-const updateMapLegend = () => {
-    const container = document.getElementById('map-legend-container');
-    if (!container) return;
-
-    const visibleLayers = activeLayers.filter(l => l.isVisible);
-
-    let html = `
-        <div id="legend-resize-handle-tl" class="absolute top-0.5 left-0.5 w-4 h-4 cursor-nwse-resize flex items-center justify-center text-gray-300 hover:text-gray-500 dark:hover:text-gray-300 z-30 opacity-60 hover:opacity-100" title="Drag corner to resize">
-            <i class="fa-solid fa-up-right-and-down-left-from-center text-[8px] transform rotate-90"></i>
-        </div>
-
-        <div class="font-bold text-gray-800 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 pb-1.5 pl-3 flex items-center justify-between uppercase tracking-wider select-none shrink-0 ${isLegendMinimized ? '' : 'mb-2'}" style="font-size: calc(11px * var(--legend-scale, 1));">
-            <span class="cursor-pointer flex items-center space-x-1.5" onclick="window.toggleLegendMinimize()">
-                <i class="fa-solid fa-layer-group text-indigo-500"></i>
-                <span>Legend</span>
-                <span class="bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full font-extrabold ml-1 border border-indigo-200 dark:border-indigo-700" style="font-size: calc(9px * var(--legend-scale, 1));">${visibleLayers.length}</span>
-            </span>
-            <button onclick="window.toggleLegendMinimize()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1 transition-colors" title="${isLegendMinimized ? 'Expand Legend' : 'Minimize Legend'}">
-                <i class="fa-solid ${isLegendMinimized ? 'fa-chevron-up' : 'fa-chevron-down'}"></i>
-            </button>
-        </div>
-    `;
-
-    if (isLegendMinimized) {
-        container.style.width = 'auto';
-        container.style.height = 'auto';
-        container.innerHTML = html;
-        return;
-    }
-
-    if (legendCustomWidth) container.style.width = legendCustomWidth;
-    if (legendCustomHeight) container.style.height = legendCustomHeight;
-
-    if (visibleLayers.length === 0) {
-        html += `<p class="text-gray-400 dark:text-gray-500 italic py-1" style="font-size: calc(10px * var(--legend-scale, 1));">No visible layers</p>`;
-    } else {
-        html += `<div class="space-y-2 overflow-y-auto custom-scroll flex-1 pr-1 w-full">`;
-
-        visibleLayers.forEach(layer => {
-            const cs = layer.customStyle || { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle' };
-            
-            html += `<div class="legend-layer-card p-2 rounded bg-gray-50/80 dark:bg-gray-700/50 border border-gray-200/80 dark:border-gray-600/60 space-y-1 w-full" style="padding: calc(6px * var(--legend-scale, 1));">
-                <div class="font-bold text-gray-800 dark:text-gray-100 leading-tight break-words" style="font-size: calc(11px * var(--legend-scale, 1));" title="${layer.displayName}">
-                    ${layer.displayName}
-                </div>`;
-
-            if (cs.type === 'categorical' && cs.categories) {
-                html += `<div class="inline-block text-gray-500 dark:text-gray-400 font-mono bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 leading-none mb-1" style="font-size: calc(8.5px * var(--legend-scale, 1));">Column: ${cs.property}</div>`;
-                
-                html += `<div class="grid grid-cols-[repeat(auto-fill,minmax(calc(100px*var(--legend-scale,1)),1fr))] gap-2 w-full items-center">`;
-                const entries = Object.entries(cs.categories);
-
-                entries.forEach(([catVal, catStyle]) => {
-                    html += `
-                        <div class="flex items-center space-x-2 min-w-0">
-                            <span class="shrink-0 rounded-sm border shadow-xs" style="width: calc(11px * var(--legend-scale, 1)); height: calc(11px * var(--legend-scale, 1)); background-color: ${catStyle.fillColor}; border-color: ${catStyle.color}; opacity: ${catStyle.fillOpacity ?? 0.8};"></span>
-                            <span class="text-gray-700 dark:text-gray-200 font-medium leading-normal break-words" style="font-size: calc(9.5px * var(--legend-scale, 1));" title="${catVal}">${catVal || 'null'}</span>
-                        </div>
-                    `;
-                });
-                html += `</div>`;
-            } else {
-                const fillCol = cs.fillColor || '#4f46e5';
-                const strokeCol = cs.color || '#4f46e5';
-                const fillOp = cs.fillOpacity ?? 0.5;
-
-                html += `<div class="flex items-center space-x-2 pt-0.5">`;
-                if (cs.pointShape === 'square') {
-                    html += `<span class="shrink-0 border shadow-xs" style="width: calc(11px * var(--legend-scale, 1)); height: calc(11px * var(--legend-scale, 1)); background-color: ${fillCol}; border-color: ${strokeCol}; opacity: ${fillOp};"></span>`;
-                } else if (cs.pointShape === 'triangle') {
-                    html += `<span class="w-0 h-0 shrink-0 border-l-transparent border-r-transparent" style="border-left-width: calc(5.5px * var(--legend-scale, 1)); border-right-width: calc(5.5px * var(--legend-scale, 1)); border-bottom-width: calc(9px * var(--legend-scale, 1)); border-bottom-color: ${fillCol}; opacity: ${fillOp};"></span>`;
-                } else {
-                    html += `<span class="rounded-full shrink-0 border shadow-xs" style="width: calc(11px * var(--legend-scale, 1)); height: calc(11px * var(--legend-scale, 1)); background-color: ${fillCol}; border-color: ${strokeCol}; opacity: ${fillOp};"></span>`;
-                }
-                html += `<span class="text-gray-600 dark:text-gray-300 font-medium leading-normal" style="font-size: calc(9.5px * var(--legend-scale, 1));">Default Style</span>`;
-                html += `</div>`;
-            }
-
-            if (cs.usePointScaleData && cs.pointScaleProp) {
-                html += `
-                    <div class="inline-flex items-center space-x-1 font-mono text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/40 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800 leading-none mt-1" style="font-size: calc(8.5px * var(--legend-scale, 1));">
-                        <i class="fa-solid fa-arrow-up-right-dots"></i>
-                        <span>Size: ${cs.pointScaleProp} (${cs.pointScaleMinTarget}-${cs.pointScaleMaxTarget}px)</span>
-                    </div>
-                `;
-            }
-
-            html += `</div>`;
-        });
-
-        html += `</div>`;
-    }
-
-    html += `
-        <div id="legend-resize-handle-br" class="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-center justify-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 z-30 opacity-70 hover:opacity-100" title="Drag corner to resize">
-            <i class="fa-solid fa-grip-lines-diagonal text-[10px]"></i>
-        </div>
-    `;
-
-    container.innerHTML = html;
-    attachLegendResizeListeners();
-};
-
 const updateMapLayerOrder = () => {
     for (let i = activeLayers.length - 1; i >= 0; i--) {
         const layer = activeLayers[i];
@@ -311,7 +155,6 @@ const updateMapLayerOrder = () => {
         const pane = map.getPane('pane-' + layer.uniqueKey);
         if (pane) pane.style.zIndex = 1000 - i;
     }
-    updateMapLegend();
     autoSaveWorkspace(); 
 };
 
@@ -332,71 +175,86 @@ const downloadBlob = (blob, name) => {
   showToast(`Exported successfully!`);
 };
 
+const openContextSubmenu = () => {
+    getEl('context-panel-wrapper')?.classList.remove('hidden');
+    getEl('context-panel-wrapper')?.classList.add('flex');
+    getEl('context-resizer')?.classList.remove('hidden');
+};
+
 const closeAllPanels = () => {
     activeTableLayerKey = null;
     activeEditLayerKey = null;
     activeSplitLayerKey = null;
     activeCropLayerKey = null;
     
-    attributeTableContainer.classList.add('hidden'); attributeTableContainer.classList.remove('flex');
-    editPanelContainer.classList.add('hidden'); editPanelContainer.classList.remove('flex');
-    splitPanelContainer.classList.add('hidden'); splitPanelContainer.classList.remove('flex');
-    cropPanelContainer.classList.add('hidden'); cropPanelContainer.classList.remove('flex');
+    attributeTableContainer?.classList.add('hidden'); 
+    attributeTableContainer?.classList.remove('flex');
     
-    filterType.value = 'box';
-    filterRadius.classList.add('hidden');
-    filterDataContainer.classList.add('hidden');
-    btnDraw.classList.remove('hidden');
+    getEl('context-panel-wrapper')?.classList.add('hidden');
+    getEl('context-panel-wrapper')?.classList.remove('flex');
+    getEl('context-resizer')?.classList.add('hidden');
+
+    editPanelContainer?.classList.add('hidden'); editPanelContainer?.classList.remove('flex');
+    splitPanelContainer?.classList.add('hidden'); splitPanelContainer?.classList.remove('flex');
+    cropPanelContainer?.classList.add('hidden'); cropPanelContainer?.classList.remove('flex');
+    
+    if (filterType) filterType.value = 'box';
+    filterRadius?.classList.add('hidden');
+    filterDataContainer?.classList.add('hidden');
+    btnDraw?.classList.remove('hidden');
 
     drawLayerGroup.clearLayers();
     filterGeometryData = null;
     drawingMode = null;
-    btnApplyFilter.disabled = true;
-    drawStatus.classList.add('hidden');
+    if (btnApplyFilter) btnApplyFilter.disabled = true;
+    drawStatus?.classList.add('hidden');
     map.getContainer().style.cursor = '';
     
-    if(activeLayers.length > 0) renderAddedLayers();
+    if (activeLayers.length > 0) renderAddedLayers();
 };
 window.closeAllPanels = closeAllPanels;
 
 const switchTab = (tabName) => {
   const isAvailable = (tabName === 'available');
-  tabBtnAvailable.className = `flex-1 py-2 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${isAvailable ? 'text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400' : 'text-gray-500 dark:text-gray-400 border-transparent hover:text-gray-700 dark:hover:text-gray-200'}`;
-  tabBtnAdded.className = `flex-1 py-2 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${!isAvailable ? 'text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400' : 'text-gray-500 dark:text-gray-400 border-transparent hover:text-gray-700 dark:hover:text-gray-200'}`;
+  if (tabBtnAvailable) tabBtnAvailable.className = `flex-1 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${isAvailable ? 'text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400' : 'text-gray-500 dark:text-gray-400 border-transparent hover:text-gray-700 dark:hover:text-gray-200'}`;
+  if (tabBtnAdded) tabBtnAdded.className = `flex-1 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${!isAvailable ? 'text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400' : 'text-gray-500 dark:text-gray-400 border-transparent hover:text-gray-700 dark:hover:text-gray-200'}`;
   
   if (isAvailable) {
-    tabAvailable.classList.replace('hidden', 'flex');
-    tabAdded.classList.replace('flex', 'hidden');
-    btnAddBulk.classList.remove('hidden');
+    tabAvailable?.classList.replace('hidden', 'flex');
+    tabAdded?.classList.replace('flex', 'hidden');
+    btnAddBulk?.classList.remove('hidden');
   } else {
-    tabAdded.classList.replace('hidden', 'flex');
-    tabAvailable.classList.replace('flex', 'hidden');
-    btnAddBulk.classList.add('hidden');
+    tabAdded?.classList.replace('hidden', 'flex');
+    tabAvailable?.classList.replace('flex', 'hidden');
+    btnAddBulk?.classList.add('hidden');
   }
 };
 
 
 // ==========================================
-// 3. CANVAS STYLING & RENDERING
+// 3. SVG STYLING & RENDERING
 // ==========================================
 const createGeoJsonStyleFunction = (styleState) => {
     return function(feature) {
+        if (!feature || !feature.properties) return { fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, weight: 2 };
+        
         if (styleState && styleState.type === 'categorical') {
-            const val = feature.properties[styleState.property];
-            const cat = styleState.categories[val];
+            const rawVal = feature.properties[styleState.property];
+            const strVal = String(rawVal);
+            const cat = styleState.categories?.[rawVal] || styleState.categories?.[strVal];
             return {
-                fillColor: cat ? cat.fillColor : styleState.defaultFill,
-                fillOpacity: cat ? cat.fillOpacity : styleState.defaultFillOpacity,
-                color: cat ? cat.color : styleState.defaultColor,
-                opacity: cat ? cat.opacity : styleState.defaultOpacity,
+                fillColor: cat ? cat.fillColor : (styleState.defaultFill || '#cccccc'),
+                fillOpacity: cat ? cat.fillOpacity : (styleState.defaultFillOpacity ?? 0.5),
+                color: cat ? cat.color : (styleState.defaultColor || '#999999'),
+                opacity: cat ? cat.opacity : (styleState.defaultOpacity ?? 1.0),
                 weight: 2
             };
         } else {
             return {
-                fillColor: styleState ? styleState.fillColor : '#4f46e5',
-                fillOpacity: styleState ? styleState.fillOpacity : 0.5,
-                color: styleState ? styleState.color : '#4f46e5',
-                opacity: styleState ? styleState.opacity : 1.0,
+                fillColor: styleState ? (styleState.fillColor || '#2563eb') : '#2563eb',
+                fillOpacity: styleState ? (styleState.fillOpacity ?? 0.5) : 0.5,
+                color: styleState ? (styleState.color || '#2563eb') : '#2563eb',
+                opacity: styleState ? (styleState.opacity ?? 1.0) : 1.0,
                 weight: 2
             };
         }
@@ -405,26 +263,26 @@ const createGeoJsonStyleFunction = (styleState) => {
 
 const createGeoJsonPointToLayer = (styleState, paneName, customRenderer) => {
     return function(feature, latlng) {
-        let fColor = '#4f46e5', sColor = '#4f46e5', fOp = 0.5, sOp = 1.0;
-        if (styleState && styleState.type === 'categorical') {
-            const val = feature.properties[styleState.property];
-            const cat = styleState.categories[val];
+        let fColor = '#2563eb', sColor = '#2563eb', fOp = 0.5, sOp = 1.0;
+        if (styleState && styleState.type === 'categorical' && feature.properties) {
+            const rawVal = feature.properties[styleState.property];
+            const strVal = String(rawVal);
+            const cat = styleState.categories?.[rawVal] || styleState.categories?.[strVal];
             fColor = cat ? cat.fillColor : (styleState.defaultFill || '#cccccc');
             sColor = cat ? cat.color : (styleState.defaultColor || '#999999');
             fOp = cat ? cat.fillOpacity : (styleState.defaultFillOpacity ?? 0.5);
             sOp = cat ? cat.opacity : (styleState.defaultOpacity ?? 1.0);
         } else if (styleState) {
-            fColor = styleState.fillColor || '#4f46e5';
-            sColor = styleState.color || '#4f46e5';
+            fColor = styleState.fillColor || '#2563eb';
+            sColor = styleState.color || '#2563eb';
             fOp = styleState.fillOpacity ?? 0.5;
             sOp = styleState.opacity ?? 1.0;
         }
         
-const shape = styleState ? (styleState.pointShape || 'circle') : 'circle';
+        const shape = styleState ? (styleState.pointShape || 'circle') : 'circle';
         let size = styleState ? (styleState.pointSize || 8) : 8;
 
-        // Dynamic Scale remapping based on data
-        if (styleState && styleState.usePointScaleData && styleState.pointScaleProp) {
+        if (styleState && styleState.usePointScaleData && styleState.pointScaleProp && feature.properties) {
             const val = parseFloat(feature.properties[styleState.pointScaleProp]);
             if (!isNaN(val)) {
                 const minD = styleState.pointScaleMinData ?? 0;
@@ -434,7 +292,7 @@ const shape = styleState ? (styleState.pointShape || 'circle') : 'circle';
                 const curve = styleState.pointScaleCurve || 'linear';
 
                 let t = (maxD > minD) ? (val - minD) / (maxD - minD) : 0.5;
-                t = Math.max(0, Math.min(1, t)); // clamp [0, 1]
+                t = Math.max(0, Math.min(1, isNaN(t) ? 0.5 : t)); 
 
                 if (curve === 'exp') t = Math.pow(t, 2);
                 else if (curve === 'log') t = Math.sqrt(t);
@@ -443,39 +301,40 @@ const shape = styleState ? (styleState.pointShape || 'circle') : 'circle';
                 size = minT + t * (maxT - minT);
             }
         }
+        size = Math.max(1, isNaN(size) ? 8 : size);
         
         if (shape === 'circle') {
-                return L.circleMarker(latlng, { 
-                    pane: paneName, 
-                    renderer: customRenderer, 
-                    interactive: true,
-                    radius: size, 
-                    fillColor: fColor, 
-                    color: sColor, 
-                    weight: 2, 
-                    opacity: sOp, 
-                    fillOpacity: fOp 
-                });
-            } else {
-                const w = size * 2 + 4; 
-                const c = w / 2;
-                let svgHtml = '';
-                if (shape === 'square') {
-                    svgHtml = `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="${w-4}" height="${w-4}" fill="${fColor}" fill-opacity="${fOp}" stroke="${sColor}" stroke-opacity="${sOp}" stroke-width="2"/></svg>`;
-                } else if (shape === 'triangle') {
-                    svgHtml = `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" xmlns="http://www.w3.org/2000/svg"><polygon points="2,${w-2} ${c},2 ${w-2},${w-2}" fill="${fColor}" fill-opacity="${fOp}" stroke="${sColor}" stroke-opacity="${sOp}" stroke-width="2" stroke-linejoin="round"/></svg>`;
-                }
-                return L.marker(latlng, {
-                    pane: paneName,
-                    interactive: true,
-                    icon: L.divIcon({ className: '', html: svgHtml, iconSize: [w, w], iconAnchor: [c, c] }) 
-                });
+            return L.circleMarker(latlng, { 
+                pane: paneName, 
+                renderer: customRenderer, 
+                interactive: true,
+                radius: size, 
+                fillColor: fColor, 
+                color: sColor, 
+                weight: 2, 
+                opacity: sOp, 
+                fillOpacity: fOp 
+            });
+        } else {
+            const w = size * 2 + 4; 
+            const c = w / 2;
+            let svgHtml = '';
+            if (shape === 'square') {
+                svgHtml = `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" xmlns="http://www.w3.org/2000/svg"><rect x="2" y="2" width="${w-4}" height="${w-4}" fill="${fColor}" fill-opacity="${fOp}" stroke="${sColor}" stroke-opacity="${sOp}" stroke-width="2"/></svg>`;
+            } else if (shape === 'triangle') {
+                svgHtml = `<svg width="${w}" height="${w}" viewBox="0 0 ${w} ${w}" xmlns="http://www.w3.org/2000/svg"><polygon points="2,${w-2} ${c},2 ${w-2},${w-2}" fill="${fColor}" fill-opacity="${fOp}" stroke="${sColor}" stroke-opacity="${sOp}" stroke-width="2" stroke-linejoin="round"/></svg>`;
             }
+            return L.marker(latlng, {
+                pane: paneName,
+                interactive: true,
+                icon: L.divIcon({ className: '', html: svgHtml, iconSize: [w, w], iconAnchor: [c, c] }) 
+            });
+        }
     };
 };
 
 const attachPopupsToFeatures = function(feature, l) {
-    if (feature.properties) {
+    if (feature && feature.properties) {
         let popupContent = '<div class="max-h-48 overflow-y-auto custom-scroll"><table class="text-xs text-left w-full text-gray-800 dark:text-gray-200">';
         for (let k in feature.properties) {
             popupContent += `<tr class="border-b border-gray-200 dark:border-gray-600"><td class="font-bold pr-2 py-1">${k}</td><td class="py-1">${feature.properties[k]}</td></tr>`;
@@ -487,8 +346,6 @@ const attachPopupsToFeatures = function(feature, l) {
 
 const createCustomGeoJSONLayer = (geoJsonData, styleState, paneName) => {
     if (!map.getPane(paneName)) map.createPane(paneName);
-    
-    // Create dedicated SVG renderer for this pane
     const paneRenderer = L.svg({ pane: paneName, padding: 0.5 });
     
     return L.geoJSON(geoJsonData, {
@@ -498,10 +355,7 @@ const createCustomGeoJSONLayer = (geoJsonData, styleState, paneName) => {
         style: createGeoJsonStyleFunction(styleState),
         pointToLayer: createGeoJsonPointToLayer(styleState, paneName, paneRenderer),
         onEachFeature: (feature, layer) => {
-            // Attach attribute table popups
             attachPopupsToFeatures(feature, layer);
-            
-            // Force mouse events to register on both shapes and point markers
             if (layer.getElement) {
                 const el = layer.getElement();
                 if (el) el.style.pointerEvents = 'auto';
@@ -528,7 +382,7 @@ const ensureGeoJSON = async (layer) => {
         map.removeLayer(layer.mapLayer);
         
         const paneName = 'pane-' + layer.uniqueKey;
-        const defaultStyle = { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+        const defaultStyle = { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
         
         const newMapLayer = createCustomGeoJSONLayer(geoJson, defaultStyle, paneName);
         if (layer.isVisible) newMapLayer.addTo(map);
@@ -650,13 +504,14 @@ const restoreWorkspaceState = (data) => {
         });
     }
 
-    if(activeLayers.length > 0) {
+    if (activeLayers.length > 0) {
         renderAddedLayers();
         updateMapLayerOrder();
     }
 };
 
 const loadSavedServers = async () => {
+    if (!savedServersSelect) return;
     try {
         const res = await fetch('/api/servers');
         const servers = await res.json();
@@ -675,9 +530,16 @@ const loadSavedServers = async () => {
 // 5. OSM INSPECT AREA TOOL
 // ==========================================
 const executeOsmInspect = async (bounds) => {
-    osmInspectStatus.textContent = 'Scanning area...';
-    osmInspectStatus.classList.remove('hidden');
-    osmInspectResults.innerHTML = '';
+    const container = getEl('osm-inspect-container');
+    const status = getEl('osm-inspect-status');
+    const results = getEl('osm-inspect-results');
+
+    if (!status || !results) return;
+    container?.classList.remove('hidden');
+    container?.classList.add('flex');
+    status.textContent = 'Scanning area...';
+    status.classList.remove('hidden');
+    results.innerHTML = '';
     
     try {
         const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
@@ -707,32 +569,33 @@ const executeOsmInspect = async (bounds) => {
         const sortedTags = Object.entries(tagCounts).sort((a,b) => b[1] - a[1]).slice(0, 40); 
         
         if (sortedTags.length === 0) {
-            osmInspectStatus.textContent = 'No generic tags found in this area.';
+            status.textContent = 'No generic tags found in this area.';
             return;
         }
         
-        osmInspectStatus.classList.add('hidden');
+        status.classList.add('hidden');
         let html = '';
         sortedTags.forEach(([pair, count]) => {
             const [k, v] = pair.split('=');
-            html += `<div class="inspect-tag-item flex justify-between items-center p-1.5 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 cursor-pointer rounded transition-colors border border-transparent hover:border-indigo-200 dark:hover:border-indigo-700" data-k="${k}" data-v="${v}">
-                 <span class="text-indigo-800 dark:text-indigo-300 font-mono text-[10px] truncate pr-2">${k}=${v}</span>
-                 <span class="text-gray-500 dark:text-gray-400 text-[9px] bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-full font-bold">${count}</span>
+            html += `<div class="inspect-tag-item flex justify-between items-center p-1 hover:bg-blue-200 dark:hover:bg-blue-900 cursor-pointer rounded transition-colors" data-k="${k}" data-v="${v}">
+                 <span class="text-blue-900 dark:text-blue-200 font-mono text-[10px] truncate pr-2">${k}=${v}</span>
+                 <span class="text-gray-600 dark:text-gray-300 text-[9px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded-full font-bold shadow-xs">${count}</span>
             </div>`;
         });
-        osmInspectResults.innerHTML = html;
+        results.innerHTML = html;
         
         document.querySelectorAll('.inspect-tag-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 const el = e.currentTarget;
-                document.getElementById('osm-key').value = el.getAttribute('data-k');
-                document.getElementById('osm-value').value = el.getAttribute('data-v');
+                if (osmKeyInput) osmKeyInput.value = el.getAttribute('data-k');
+                const valEl = getEl('osm-value');
+                if (valEl) valEl.value = el.getAttribute('data-v');
                 showToast(`Copied ${el.getAttribute('data-k')}=${el.getAttribute('data-v')} to Query Builder!`);
             });
         });
         
     } catch (err) {
-        osmInspectStatus.textContent = 'Scan failed. Area might be too large.';
+        status.textContent = 'Scan failed. Area might be too large.';
     }
 };
 
@@ -767,7 +630,6 @@ const handleToggleVisibility = (e) => {
     updateMapLayerOrder(); 
   } else { 
     map.removeLayer(layer.mapLayer); 
-    updateMapLegend(); 
     autoSaveWorkspace(); 
   }
 };
@@ -784,7 +646,7 @@ const handleRemove = (e) => {
   map.removeLayer(activeLayers[idx].mapLayer);
   removePane(key); 
   activeLayers.splice(idx, 1);
-  if(activeTableLayerKey === key || activeEditLayerKey === key || activeSplitLayerKey === key || activeCropLayerKey === key) { 
+  if (activeTableLayerKey === key || activeEditLayerKey === key || activeSplitLayerKey === key || activeCropLayerKey === key) { 
      closeAllPanels(); 
   } else { renderAddedLayers(); }
   autoSaveWorkspace();
@@ -811,10 +673,11 @@ const handleDuplicate = async (e) => {
     showToast(`Duplicating ${layer.displayName}...`);
     
     const success = await ensureGeoJSON(layer);
-    if(!success) return;
+    if (!success) return;
 
     const newGeoJson = JSON.parse(JSON.stringify(layer.geoJsonData));
-    const newStyleState = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+    const defaultStyle = { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+    const newStyleState = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : defaultStyle;
 
     const uniqueKey = Math.random().toString(36).substr(2,9);
     const paneName = 'pane-' + uniqueKey;
@@ -832,18 +695,20 @@ const handleDuplicate = async (e) => {
 };
 
 const handleToggleTable = async (e) => {
-  const key = e.currentTarget.getAttribute('data-key');
+  const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
   const layer = activeLayers.find(l => l.uniqueKey === key);
+  if (!layer) return;
 
-  if (activeTableLayerKey === key) { closeAllPanels(); return; }
+  if (activeTableLayerKey === key && e.currentTarget) { closeAllPanels(); return; }
 
   closeAllPanels();
   activeTableLayerKey = key;
   renderAddedLayers(); 
   
+  if (!attributeTableContainer) return;
   attributeTableContainer.classList.remove('hidden');
   attributeTableContainer.classList.add('flex');
-  attributeTableContainer.innerHTML = '<div class="flex items-center justify-center h-full"><p class="text-sm text-gray-500 dark:text-gray-400 italic animate-pulse">Fetching attributes...</p></div>';
+  attributeTableContainer.innerHTML = '<div class="flex items-center justify-center h-full"><p class="text-xs text-gray-500 dark:text-gray-400 italic animate-pulse">Fetching attributes...</p></div>';
 
   try {
     let features = [];
@@ -861,304 +726,371 @@ const handleToggleTable = async (e) => {
       features = data.features || [];
     }
 
-    if (features.length === 0 || Object.keys(features[0].properties || {}).length === 0) {
+    if (features.length === 0 || !features[0].properties || Object.keys(features[0].properties).length === 0) {
       attributeTableContainer.innerHTML = `
-        <div class="flex justify-between items-center mb-2 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-2">
+        <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
             <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
-            <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 px-2"><i class="fa-solid fa-times"></i></button>
+            <button onclick="window.closeAllPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
         </div>
-        <p class="text-sm text-gray-500 dark:text-gray-400 italic p-2 text-center">No attributes available.</p>`;
+        <p class="text-xs text-gray-500 dark:text-gray-400 italic p-2 text-center">No attributes available.</p>`;
       return;
     }
 
-    const headers = Object.keys(features[0].properties);
+    // Collect all unique property keys across ALL features
+    const headerSet = new Set();
+    features.forEach(f => {
+        if (f.properties) Object.keys(f.properties).forEach(k => headerSet.add(k));
+    });
+    const headers = Array.from(headerSet);
+
     let tableHtml = `
-        <div class="flex justify-between items-center mb-2 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
+        <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
             <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
-            <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 px-2"><i class="fa-solid fa-times"></i></button>
+            <button onclick="window.closeAllPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
         </div>
-        <div class="flex-1 overflow-auto min-h-0 custom-scroll border border-gray-200 dark:border-gray-700">
+        <div class="flex-1 overflow-auto min-h-0 custom-scroll border border-gray-200 dark:border-gray-700 rounded">
             <table class="min-w-full text-xs text-left border-collapse bg-white dark:bg-gray-800">
-                <thead class="bg-gray-100 dark:bg-gray-700 sticky top-0 shadow-sm z-10"><tr>`;
+                <thead class="bg-gray-100 dark:bg-gray-700 sticky top-0 shadow-xs z-10"><tr>`;
     headers.forEach(h => { tableHtml += `<th class="px-2 py-1 border border-gray-200 dark:border-gray-600 font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap">${h}</th>`; });
     tableHtml += '</tr></thead><tbody>';
 
     features.slice(0, 100).forEach(f => {
-      tableHtml += '<tr class="hover:bg-indigo-50 dark:hover:bg-indigo-900/30">';
+      tableHtml += '<tr class="hover:bg-blue-50 dark:hover:bg-blue-900/30">';
       headers.forEach(h => {
-         const val = f.properties[h];
+         const val = f.properties ? f.properties[h] : '';
          const displayVal = (val !== null && val !== undefined) ? val : '';
-         tableHtml += `<td class="px-2 py-1 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-300 whitespace-nowrap max-w-[150px] truncate" title="${displayVal}">${displayVal}</td>`;
+         tableHtml += `<td class="px-2 py-0.5 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-300 whitespace-nowrap max-w-[200px] truncate" title="${displayVal}">${displayVal}</td>`;
       });
       tableHtml += '</tr>';
     });
 
     tableHtml += '</tbody></table></div>';
     if (features.length >= 100 || (!layer.isLocalGeoJSON && features.length > 0)) {
-       tableHtml += `<p class="text-[10px] text-gray-400 dark:text-gray-500 mt-2 italic text-center shrink-0">Showing up to 100 records for preview.</p>`;
+       tableHtml += `<p class="text-[9px] text-gray-400 dark:text-gray-500 mt-1 italic text-center shrink-0">Showing up to 100 records for preview.</p>`;
     }
     attributeTableContainer.innerHTML = tableHtml;
 
   } catch (err) {
     attributeTableContainer.innerHTML = `
-      <div class="flex justify-between items-center mb-2 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-2">
+      <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
           <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
-          <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 px-2"><i class="fa-solid fa-times"></i></button>
+          <button onclick="window.closeAllPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
       </div>
-      <p class="text-sm text-red-500 dark:text-red-400 italic p-2 text-center">Failed to load attribute data.</p>`;
+      <p class="text-xs text-red-500 dark:text-red-400 italic p-2 text-center">Failed to load attribute data.</p>`;
   }
 };
 
 const handleToggleEdit = async (e) => {
     const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
     const layer = activeLayers.find(l => l.uniqueKey === key);
+    if (!layer) return;
 
-    if (activeEditLayerKey === key) { closeAllPanels(); return; }
+    if (activeEditLayerKey === key && e.currentTarget) { closeAllPanels(); return; }
 
     closeAllPanels();
     activeEditLayerKey = key;
     renderAddedLayers();
-    editPanelContainer.classList.remove('hidden'); editPanelContainer.classList.add('flex');
-    editPanelContainer.innerHTML = '<div class="flex justify-center p-4"><p class="text-sm italic animate-pulse text-gray-500 dark:text-gray-400">Preparing editable vector data...</p></div>';
+    if (!editPanelContainer) return;
+    
+    openContextSubmenu();
+    editPanelContainer.classList.remove('hidden'); 
+    editPanelContainer.classList.add('flex');
+    editPanelContainer.innerHTML = '<div class="flex justify-center p-3"><p class="text-xs italic animate-pulse text-gray-500 dark:text-gray-400">Preparing editable vector data...</p></div>';
 
     const success = await ensureGeoJSON(layer);
-    if(!success) { closeAllPanels(); return; }
+    if (!success) { closeAllPanels(); return; }
 
     const features = layer.geoJsonData.features || [];
-    let cols = [];
-    if (features.length > 0 && features[0].properties) cols = Object.keys(features[0].properties);
-    
+    const colsSet = new Set();
+    features.forEach(f => { if (f.properties) Object.keys(f.properties).forEach(k => colsSet.add(k)); });
+    const cols = Array.from(colsSet).sort();
+
     const hasPoints = features.some(f => f.geometry && (f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint'));
-    const cs = layer.customStyle || { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+    const cs = layer.customStyle || { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
     const isCat = (cs.type === 'categorical');
     const pasteDisabled = copiedStyle ? '' : 'disabled';
     const pasteOpacity = copiedStyle ? '' : 'opacity-50 cursor-not-allowed';
 
-const useDataScale = cs.usePointScaleData || false;
-        const currentScaleCurve = cs.pointScaleCurve || 'linear';
+    const useDataScale = cs.usePointScaleData || false;
+    const currentScaleCurve = cs.pointScaleCurve || 'linear';
 
-        editPanelContainer.innerHTML = `
-            <div class="p-3 text-sm flex flex-col h-full min-h-0 bg-purple-50 dark:bg-transparent">
-                <div class="flex justify-between items-center mb-3 border-b border-purple-200 dark:border-purple-800 pb-2 shrink-0">
-                    <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-xs tracking-wider">Edit Appearance</h4>
-                    <div class="flex space-x-2 items-center">
-                        <button id="btn-copy-style" class="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-2 py-1 rounded transition-colors shadow-sm" title="Copy Style"><i class="fa-solid fa-copy"></i></button>
-                        <button id="btn-paste-style" class="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-2 py-1 rounded transition-colors shadow-sm ${pasteOpacity}" title="Paste Style" ${pasteDisabled}><i class="fa-solid fa-paste"></i></button>
-                        <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 ml-2"><i class="fa-solid fa-times"></i></button>
-                    </div>
+    editPanelContainer.innerHTML = `
+        <div class="p-2 text-xs flex flex-col h-full min-h-0 bg-blue-50/50 dark:bg-transparent overflow-y-auto custom-scroll">
+            <div class="flex justify-between items-center mb-2 pb-1 border-b border-blue-200 dark:border-blue-800 shrink-0">
+                <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-[11px] tracking-wider">Edit Appearance</h4>
+                <div class="flex space-x-1 items-center">
+                    <button id="btn-copy-style" class="text-[10px] bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-1.5 py-0.5 rounded transition-colors font-medium" title="Copy Style"><i class="fa-solid fa-copy"></i></button>
+                    <button id="btn-paste-style" class="text-[10px] bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-1.5 py-0.5 rounded transition-colors font-medium ${pasteOpacity}" title="Paste Style" ${pasteDisabled}><i class="fa-solid fa-paste"></i></button>
+                    <button onclick="window.closeAllPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 ml-1"><i class="fa-solid fa-times text-xs"></i></button>
                 </div>
-                
-                <div class="flex-1 overflow-y-auto custom-scroll pr-1 flex flex-col min-h-0">
-                    
-                    ${hasPoints ? `
-                    <div id="point-style-container" class="flex flex-col space-y-3 mb-3 shrink-0 bg-white dark:bg-gray-800 p-3 rounded border border-purple-100 dark:border-purple-800">
-                        <h5 class="text-[10px] font-bold text-purple-500 dark:text-purple-400 uppercase tracking-wider mb-1">Point Markers</h5>
-                        <div class="flex items-center space-x-3 w-full">
-                            <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Shape:</label>
-                            <select id="edit-point-shape" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:outline-none">
-                                <option value="circle" ${cs.pointShape === 'circle' ? 'selected' : ''}>Circle</option>
-                                <option value="square" ${cs.pointShape === 'square' ? 'selected' : ''}>Square</option>
-                                <option value="triangle" ${cs.pointShape === 'triangle' ? 'selected' : ''}>Triangle</option>
+            </div>
+            
+            <div class="space-y-2 flex-1 min-h-0">
+                ${hasPoints ? `
+                <div id="point-style-container" class="flex flex-col space-y-2 bg-white dark:bg-gray-800 p-2 rounded border border-blue-100 dark:border-blue-800">
+                    <h5 class="text-[9px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">Point Markers</h5>
+                    <div class="flex items-center space-x-2 w-full">
+                        <label class="text-[11px] text-gray-600 dark:text-gray-300 font-bold w-10 shrink-0">Shape:</label>
+                        <select id="edit-point-shape" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
+                            <option value="circle" ${cs.pointShape === 'circle' ? 'selected' : ''}>Circle</option>
+                            <option value="square" ${cs.pointShape === 'square' ? 'selected' : ''}>Square</option>
+                            <option value="triangle" ${cs.pointShape === 'triangle' ? 'selected' : ''}>Triangle</option>
+                        </select>
+                    </div>
+
+                    <div id="constant-scale-container" class="${useDataScale ? 'hidden' : 'flex'} items-center space-x-2 w-full">
+                        <label class="text-[11px] text-gray-600 dark:text-gray-300 font-bold w-10 shrink-0">Scale:</label>
+                        <input type="range" id="edit-point-size" min="2" max="30" step="1" value="${cs.pointSize || 8}" class="flex-1 cursor-pointer accent-blue-600 dark:accent-blue-500">
+                        <span id="point-size-display" class="text-xs font-mono w-4 text-right">${cs.pointSize || 8}</span>
+                    </div>
+
+                    <div class="flex items-center space-x-1.5 pt-1 border-t border-blue-100 dark:border-blue-900">
+                        <input type="checkbox" id="use-data-scale" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 rounded cursor-pointer accent-blue-600 dark:accent-blue-500" ${useDataScale ? 'checked' : ''}>
+                        <label for="use-data-scale" class="text-[11px] font-semibold text-gray-700 dark:text-gray-300 cursor-pointer">Use Data for Scale</label>
+                    </div>
+
+                    <div id="data-scale-container" class="${useDataScale ? 'flex' : 'hidden'} flex-col space-y-1.5 bg-blue-50/50 dark:bg-gray-900/50 p-1.5 rounded border border-blue-200 dark:border-blue-800">
+                        <div class="flex items-center space-x-1.5">
+                            <label class="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase w-12 shrink-0">Column:</label>
+                            <select id="point-scale-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
+                                <option value="" disabled ${!cs.pointScaleProp ? 'selected' : ''}>Select numeric attribute...</option>
+                                ${cols.map(c => `<option value="${c}" ${(useDataScale && cs.pointScaleProp === c) ? 'selected' : ''}>${c}</option>`).join('')}
                             </select>
                         </div>
 
-                        <!-- Constant Scale Slider -->
-                        <div id="constant-scale-container" class="${useDataScale ? 'hidden' : 'flex'} items-center space-x-3 w-full">
-                            <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Scale:</label>
-                            <input type="range" id="edit-point-size" min="2" max="30" step="1" value="${cs.pointSize || 8}" class="flex-1 w-full cursor-pointer accent-purple-600 dark:accent-purple-500" title="Point Size">
-                            <span id="point-size-display" class="text-xs text-gray-500 font-mono w-4 text-right">${cs.pointSize || 8}</span>
+                        <div class="flex space-x-1.5">
+                            <div class="flex-1">
+                                <label class="block text-[8px] font-bold text-gray-400 uppercase">Min Data Val</label>
+                                <input type="text" id="point-scale-min-data" readonly value="${cs.pointScaleMinData ?? ''}" placeholder="Min" class="w-full px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 font-mono text-[10px] cursor-not-allowed">
+                            </div>
+                            <div class="flex-1">
+                                <label class="block text-[8px] font-bold text-gray-400 uppercase">Max Data Val</label>
+                                <input type="text" id="point-scale-max-data" readonly value="${cs.pointScaleMaxData ?? ''}" placeholder="Max" class="w-full px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 font-mono text-[10px] cursor-not-allowed">
+                            </div>
                         </div>
 
-                        <!-- Use Data for Scale Checkbox -->
-                        <div class="flex items-center space-x-2 pt-1 border-t border-purple-100 dark:border-purple-900">
-                            <input type="checkbox" id="use-data-scale" class="w-4 h-4 text-purple-600 dark:text-purple-500 rounded cursor-pointer accent-purple-600 dark:accent-purple-500" ${useDataScale ? 'checked' : ''}>
-                            <label for="use-data-scale" class="text-xs font-semibold text-gray-700 dark:text-gray-300 cursor-pointer">Use Data for Scale</label>
+                        <div class="flex space-x-1.5">
+                            <div class="flex-1">
+                                <label class="block text-[8px] font-bold text-blue-600 dark:text-blue-400 uppercase">Min Scale Size</label>
+                                <input type="number" id="point-scale-min-target" min="1" max="50" value="${cs.pointScaleMinTarget ?? 4}" class="w-full px-1.5 py-0.5 bg-white dark:bg-gray-700 border border-blue-300 dark:border-blue-600 rounded text-gray-900 dark:text-white font-mono text-[10px]">
+                            </div>
+                            <div class="flex-1">
+                                <label class="block text-[8px] font-bold text-blue-600 dark:text-blue-400 uppercase">Max Scale Size</label>
+                                <input type="number" id="point-scale-max-target" min="1" max="100" value="${cs.pointScaleMaxTarget ?? 24}" class="w-full px-1.5 py-0.5 bg-white dark:bg-gray-700 border border-blue-300 dark:border-blue-600 rounded text-gray-900 dark:text-white font-mono text-[10px]">
+                            </div>
                         </div>
 
-                        <!-- Data Scale Configuration Panel -->
-                        <div id="data-scale-container" class="${useDataScale ? 'flex' : 'hidden'} flex-col space-y-2 bg-purple-50/50 dark:bg-gray-900/50 p-2 rounded border border-purple-200 dark:border-purple-800 text-xs">
-                            <div class="flex items-center space-x-2">
-                                <label class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-14 shrink-0">Column:</label>
-                                <select id="point-scale-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs">
-                                    <option value="" disabled ${!cs.pointScaleProp ? 'selected' : ''}>Select numeric attribute...</option>
-                                    ${cols.map(c => `<option value="${c}" ${(useDataScale && cs.pointScaleProp === c) ? 'selected' : ''}>${c}</option>`).join('')}
-                                </select>
-                            </div>
-
-                            <!-- Min / Max Detected Data Values -->
-                            <div class="flex space-x-2">
-                                <div class="flex-1">
-                                    <label class="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Min Data Val</label>
-                                    <input type="text" id="point-scale-min-data" readonly value="${cs.pointScaleMinData ?? ''}" placeholder="Min" class="w-full px-2 py-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 font-mono text-[11px] cursor-not-allowed">
-                                </div>
-                                <div class="flex-1">
-                                    <label class="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Max Data Val</label>
-                                    <input type="text" id="point-scale-max-data" readonly value="${cs.pointScaleMaxData ?? ''}" placeholder="Max" class="w-full px-2 py-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 font-mono text-[11px] cursor-not-allowed">
-                                </div>
-                            </div>
-
-                            <!-- Remapped Target Scale Inputs -->
-                            <div class="flex space-x-2">
-                                <div class="flex-1">
-                                    <label class="block text-[9px] font-bold text-purple-600 dark:text-purple-400 uppercase mb-0.5">Min Scale Size</label>
-                                    <input type="number" id="point-scale-min-target" min="1" max="50" value="${cs.pointScaleMinTarget ?? 4}" class="w-full px-2 py-1 bg-white dark:bg-gray-700 border border-purple-300 dark:border-purple-600 rounded text-gray-900 dark:text-white font-mono text-[11px]">
-                                </div>
-                                <div class="flex-1">
-                                    <label class="block text-[9px] font-bold text-purple-600 dark:text-purple-400 uppercase mb-0.5">Max Scale Size</label>
-                                    <input type="number" id="point-scale-max-target" min="1" max="100" value="${cs.pointScaleMaxTarget ?? 24}" class="w-full px-2 py-1 bg-white dark:bg-gray-700 border border-purple-300 dark:border-purple-600 rounded text-gray-900 dark:text-white font-mono text-[11px]">
-                                </div>
-                            </div>
-
-                            <!-- Curve Interpolation Weighting Buttons -->
-                            <div class="pt-1">
-                                <label class="block text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Curve Weighting</label>
-                                <div class="grid grid-cols-4 gap-1">
-                                    <button type="button" class="btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'linear' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="linear" title="Linear weighting">Linear</button>
-                                    <button type="button" class="btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'exp' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="exp" title="Exponential (t^2) weighting">Exp</button>
-                                    <button type="button" class="btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'log' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="log" title="Sub-linear / Logarithmic (sqrt(t)) weighting">Log</button>
-                                    <button type="button" class="btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'sigmoid' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="sigmoid" title="Sigmoid S-Curve weighting">Sigmoid</button>
-                                </div>
+                        <div class="pt-0.5">
+                            <label class="block text-[8px] font-bold text-gray-500 uppercase mb-0.5">Curve Weighting</label>
+                            <div class="grid grid-cols-4 gap-1">
+                                <button type="button" class="btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors ${currentScaleCurve === 'linear' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="linear">Linear</button>
+                                <button type="button" class="btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors ${currentScaleCurve === 'exp' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="exp">Exp</button>
+                                <button type="button" class="btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors ${currentScaleCurve === 'log' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="log">Log</button>
+                                <button type="button" class="btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors ${currentScaleCurve === 'sigmoid' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="sigmoid">Sigmoid</button>
                             </div>
                         </div>
                     </div>
-                    ` : ''}
+                </div>
+                ` : ''}
 
-                <div class="flex items-center space-x-2 mb-3 bg-white dark:bg-gray-800 p-2 border border-purple-100 dark:border-purple-800 rounded shadow-sm shrink-0">
-                    <input type="checkbox" id="use-data-style" class="w-4 h-4 text-purple-600 dark:text-purple-500 rounded cursor-pointer accent-purple-600 dark:accent-purple-500" ${isCat ? 'checked' : ''}>
-                    <label for="use-data-style" class="text-xs font-semibold text-gray-700 dark:text-gray-300 whitespace-nowrap">Use Data Colors</label>
-                    <select id="style-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs" ${isCat ? '' : 'disabled'}>
+                <div class="flex items-center space-x-1.5 bg-white dark:bg-gray-800 p-1.5 border border-blue-100 dark:border-blue-800 rounded">
+                    <input type="checkbox" id="use-data-style" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 rounded cursor-pointer accent-blue-600 dark:accent-blue-500" ${isCat ? 'checked' : ''}>
+                    <label for="use-data-style" class="text-[11px] font-semibold text-gray-700 dark:text-gray-300 shrink-0">Use Data Colors</label>
+                    <select id="style-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs" ${isCat ? '' : 'disabled'}>
                         <option value="" disabled ${!isCat ? 'selected' : ''}>Select attribute...</option>
                         ${cols.map(c => `<option value="${c}" ${(isCat && cs.property === c) ? 'selected' : ''}>${c}</option>`).join('')}
                     </select>
                 </div>
 
-                <div id="single-style-container" class="${isCat ? 'hidden' : 'flex'} flex-col space-y-3 mb-3 shrink-0 bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700">
-                    <div class="flex items-center space-x-3 w-full">
-                        <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Fill:</label>
-                        <input type="color" id="edit-fill-color" value="${cs.fillColor || '#4f46e5'}" class="w-8 h-8 p-0 border-0 rounded cursor-pointer shadow-sm shrink-0 bg-transparent">
-                        <input type="range" id="edit-fill-opacity" min="0" max="1" step="0.05" value="${cs.fillOpacity ?? 0.5}" class="flex-1 w-full cursor-pointer accent-purple-600 dark:accent-purple-500" title="Fill Opacity">
+                <div id="single-style-container" class="${isCat ? 'hidden' : 'flex'} flex-col space-y-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700">
+                    <div class="flex items-center space-x-2 w-full">
+                        <label class="text-[11px] text-gray-600 dark:text-gray-300 font-bold w-10 shrink-0">Fill:</label>
+                        <input type="color" id="edit-fill-color" value="${cs.fillColor || '#2563eb'}" class="w-6 h-6 p-0 border-0 rounded cursor-pointer shrink-0 bg-transparent">
+                        <input type="range" id="edit-fill-opacity" min="0" max="1" step="0.05" value="${cs.fillOpacity ?? 0.5}" class="flex-1 cursor-pointer accent-blue-600 dark:accent-blue-500">
                     </div>
-                    <div class="flex items-center space-x-3 w-full">
-                        <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Outline:</label>
-                        <input type="color" id="edit-stroke-color" value="${cs.color || '#4f46e5'}" class="w-8 h-8 p-0 border-0 rounded cursor-pointer shadow-sm shrink-0 bg-transparent">
-                        <input type="range" id="edit-stroke-opacity" min="0" max="1" step="0.05" value="${cs.opacity ?? 1.0}" class="flex-1 w-full cursor-pointer accent-purple-600 dark:accent-purple-500" title="Outline Opacity">
+                    <div class="flex items-center space-x-2 w-full">
+                        <label class="text-[11px] text-gray-600 dark:text-gray-300 font-bold w-10 shrink-0">Outline:</label>
+                        <input type="color" id="edit-stroke-color" value="${cs.color || '#2563eb'}" class="w-6 h-6 p-0 border-0 rounded cursor-pointer shrink-0 bg-transparent">
+                        <input type="range" id="edit-stroke-opacity" min="0" max="1" step="0.05" value="${cs.opacity ?? 1.0}" class="flex-1 cursor-pointer accent-blue-600 dark:accent-blue-500">
                     </div>
                 </div>
 
-                <div id="categorical-style-list" class="${isCat ? 'flex' : 'hidden'} flex-1 flex-col min-h-0 border border-gray-200 dark:border-gray-700 rounded p-2 bg-white dark:bg-gray-800 mb-2">
-                    <div id="cat-inner-list" class="overflow-y-auto custom-scroll flex-1 min-h-0">
-                        <p class="text-xs text-gray-400 dark:text-gray-500 italic text-center py-2">Select an attribute column to generate colors.</p>
+                <div id="categorical-style-list" class="${isCat ? 'flex' : 'hidden'} flex-col border border-gray-200 dark:border-gray-700 rounded p-1.5 bg-white dark:bg-gray-800">
+                    <div id="cat-inner-list" class="max-h-36 overflow-y-auto custom-scroll">
+                        <p class="text-xs text-gray-400 dark:text-gray-500 italic text-center py-1">Select an attribute column to generate colors.</p>
                     </div>
                 </div>
             </div>
 
-            <div class="flex justify-between pt-3 border-t border-purple-100 dark:border-purple-800 shrink-0 mt-2">
-                <button id="btn-bake-colors" class="bg-indigo-100 dark:bg-indigo-900/50 hover:bg-indigo-200 dark:hover:bg-indigo-800 text-indigo-800 dark:text-indigo-300 text-xs px-3 py-1.5 rounded transition-colors shadow-sm font-medium border border-indigo-200 dark:border-indigo-700" title="Write RGBA hex values to the attribute table">
+            <div class="flex justify-between pt-2 border-t border-blue-100 dark:border-blue-800 shrink-0 mt-1">
+                <button id="btn-bake-colors" class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-1 rounded transition-colors font-medium border border-gray-300 dark:border-gray-600">
                     <i class="fa-solid fa-database mr-1"></i>Bake to Table
                 </button>
-                <div class="flex space-x-2">
-                    <button id="btn-refresh-colors" class="${isCat ? '' : 'hidden'} bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 text-xs px-3 py-1.5 rounded transition-colors shadow-sm font-medium border border-gray-300 dark:border-gray-600" title="Randomize category colors">
+                <div class="flex space-x-1.5">
+                    <button id="btn-refresh-colors" class="${isCat ? '' : 'hidden'} bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-1 rounded transition-colors font-medium border border-gray-300 dark:border-gray-600">
                         <i class="fa-solid fa-arrows-rotate mr-1"></i> Refresh
                     </button>
-                    <button id="btn-apply-edit" class="bg-purple-600 hover:bg-purple-700 dark:bg-purple-600 dark:hover:bg-purple-500 text-white text-xs px-4 py-1.5 rounded transition-colors shadow-sm font-medium">Apply Style</button>
+                    <button id="btn-apply-edit" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded transition-colors font-medium">Apply Style</button>
                 </div>
             </div>
         </div>
     `;
 
-let activeScaleCurve = currentScaleCurve;
+    let activeScaleCurve = currentScaleCurve;
 
-        if (hasPoints) {
-            const chkDataScale = document.getElementById('use-data-scale');
-            const constantScaleContainer = document.getElementById('constant-scale-container');
-            const dataScaleContainer = document.getElementById('data-scale-container');
-            const pointScaleColSelect = document.getElementById('point-scale-col-select');
-            const inputMinData = document.getElementById('point-scale-min-data');
-            const inputMaxData = document.getElementById('point-scale-max-data');
+    // Dynamically extract active style settings directly from current UI DOM state
+    const extractStyleFromUI = () => {
+        const shapeEl = getEl('edit-point-shape');
+        const sizeEl = getEl('edit-point-size');
+        const pShape = shapeEl ? shapeEl.value : (layer.customStyle?.pointShape || 'circle');
+        const pSize = sizeEl ? parseInt(sizeEl.value, 10) : (layer.customStyle?.pointSize || 8);
 
-            document.getElementById('edit-point-size').addEventListener('input', (e) => {
-                document.getElementById('point-size-display').textContent = e.target.value;
+        const chkDataScale = getEl('use-data-scale');
+        const isScaleData = chkDataScale ? chkDataScale.checked : false;
+        const pScaleCol = isScaleData ? getEl('point-scale-col-select')?.value : null;
+        const pMinData = isScaleData ? parseFloat(getEl('point-scale-min-data')?.value) : null;
+        const pMaxData = isScaleData ? parseFloat(getEl('point-scale-max-data')?.value) : null;
+        const pMinTarget = isScaleData ? parseFloat(getEl('point-scale-min-target')?.value) : 4;
+        const pMaxTarget = isScaleData ? parseFloat(getEl('point-scale-max-target')?.value) : 24;
+
+        const scaleStateObj = {
+            usePointScaleData: isScaleData,
+            pointScaleProp: pScaleCol,
+            pointScaleMinData: isNaN(pMinData) ? 0 : pMinData,
+            pointScaleMaxData: isNaN(pMaxData) ? 1 : pMaxData,
+            pointScaleMinTarget: isNaN(pMinTarget) ? 4 : pMinTarget,
+            pointScaleMaxTarget: isNaN(pMaxTarget) ? 24 : pMaxTarget,
+            pointScaleCurve: activeScaleCurve || 'linear'
+        };
+
+        const chkUseData = getEl('use-data-style');
+        const selCol = getEl('style-col-select');
+
+        if (chkUseData?.checked) {
+            const prop = selCol?.value;
+            if (!prop) return null;
+            const newCategories = {};
+            document.querySelectorAll('.cat-row').forEach(row => {
+                const val = row.getAttribute('data-val');
+                const fillEl = row.querySelector('.cat-fill');
+                const fillOpEl = row.querySelector('.cat-fill-op');
+                const strokeEl = row.querySelector('.cat-stroke');
+                const strokeOpEl = row.querySelector('.cat-stroke-op');
+
+                newCategories[val] = { 
+                    fillColor: fillEl ? fillEl.value : '#2563eb', 
+                    fillOpacity: fillOpEl ? parseFloat(fillOpEl.value) : 0.5, 
+                    color: strokeEl ? strokeEl.value : '#2563eb', 
+                    opacity: strokeOpEl ? parseFloat(strokeOpEl.value) : 1.0 
+                };
             });
-
-            chkDataScale.addEventListener('change', (e) => {
-                if (e.target.checked) {
-                    constantScaleContainer.classList.add('hidden');
-                    constantScaleContainer.classList.remove('flex');
-                    dataScaleContainer.classList.remove('hidden');
-                    dataScaleContainer.classList.add('flex');
-                } else {
-                    constantScaleContainer.classList.remove('hidden');
-                    constantScaleContainer.classList.add('flex');
-                    dataScaleContainer.classList.add('hidden');
-                    dataScaleContainer.classList.remove('flex');
-                }
-            });
-
-            const updateMinMaxDataValues = () => {
-                const col = pointScaleColSelect.value;
-                if (!col) return;
-                const nums = layer.geoJsonData.features
-                    .map(f => parseFloat(f.properties[col]))
-                    .filter(n => !isNaN(n));
-
-                if (nums.length > 0) {
-                    inputMinData.value = Math.min(...nums);
-                    inputMaxData.value = Math.max(...nums);
-                } else {
-                    inputMinData.value = 'N/A';
-                    inputMaxData.value = 'N/A';
-                }
+            return { 
+                type: 'categorical', property: prop, categories: newCategories, 
+                defaultFill: '#cccccc', defaultFillOpacity: 0.5, defaultColor: '#999999', defaultOpacity: 1.0, 
+                pointShape: pShape, pointSize: pSize,
+                ...scaleStateObj
             };
-
-            pointScaleColSelect.addEventListener('change', updateMinMaxDataValues);
-            if (cs.pointScaleProp) updateMinMaxDataValues();
-
-            // Curve Weighting Selection Buttons
-            document.querySelectorAll('.btn-curve-type').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    document.querySelectorAll('.btn-curve-type').forEach(b => {
-                        b.className = 'btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600';
-                    });
-                    e.currentTarget.className = 'btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors bg-purple-600 text-white border-purple-600';
-                    activeScaleCurve = e.currentTarget.getAttribute('data-curve');
-                });
-            });
+        } else {
+            return { 
+                type: 'single', 
+                fillColor: getEl('edit-fill-color')?.value || '#2563eb', 
+                fillOpacity: parseFloat(getEl('edit-fill-opacity')?.value ?? 0.5), 
+                color: getEl('edit-stroke-color')?.value || '#2563eb', 
+                opacity: parseFloat(getEl('edit-stroke-opacity')?.value ?? 1.0), 
+                pointShape: pShape, pointSize: pSize,
+                ...scaleStateObj 
+            }; 
         }
+    };
 
-    const chkUseData = document.getElementById('use-data-style');
-    const selCol = document.getElementById('style-col-select');
-    const singleContainer = document.getElementById('single-style-container');
-    const catListWrapper = document.getElementById('categorical-style-list');
-    const catInnerList = document.getElementById('cat-inner-list');
-    const btnRefreshColors = document.getElementById('btn-refresh-colors');
+    if (hasPoints) {
+        const chkDataScale = getEl('use-data-scale');
+        const constantScaleContainer = getEl('constant-scale-container');
+        const dataScaleContainer = getEl('data-scale-container');
+        const pointScaleColSelect = getEl('point-scale-col-select');
+        const inputMinData = getEl('point-scale-min-data');
+        const inputMaxData = getEl('point-scale-max-data');
+
+        getEl('edit-point-size')?.addEventListener('input', (e) => {
+            const disp = getEl('point-size-display');
+            if (disp) disp.textContent = e.target.value;
+        });
+
+        chkDataScale?.addEventListener('change', (e) => {
+            if (e.target.checked) {
+                constantScaleContainer?.classList.add('hidden'); constantScaleContainer?.classList.remove('flex');
+                dataScaleContainer?.classList.remove('hidden'); dataScaleContainer?.classList.add('flex');
+            } else {
+                constantScaleContainer?.classList.remove('hidden'); constantScaleContainer?.classList.add('flex');
+                dataScaleContainer?.classList.add('hidden'); dataScaleContainer?.classList.remove('flex');
+            }
+        });
+
+        const updateMinMaxDataValues = () => {
+            if (!pointScaleColSelect) return;
+            const col = pointScaleColSelect.value;
+            if (!col) return;
+            const nums = layer.geoJsonData.features.map(f => parseFloat(f.properties ? f.properties[col] : NaN)).filter(n => !isNaN(n));
+            if (nums.length > 0) {
+                if (inputMinData) inputMinData.value = Math.min(...nums);
+                if (inputMaxData) inputMaxData.value = Math.max(...nums);
+            } else {
+                if (inputMinData) inputMinData.value = 'N/A';
+                if (inputMaxData) inputMaxData.value = 'N/A';
+            }
+        };
+
+        pointScaleColSelect?.addEventListener('change', updateMinMaxDataValues);
+        if (cs.pointScaleProp) updateMinMaxDataValues();
+
+        document.querySelectorAll('.btn-curve-type').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('.btn-curve-type').forEach(b => {
+                    b.className = 'btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600';
+                });
+                e.currentTarget.className = 'btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors bg-blue-600 text-white border-blue-600';
+                activeScaleCurve = e.currentTarget.getAttribute('data-curve');
+            });
+        });
+    }
+
+    const chkUseData = getEl('use-data-style');
+    const selCol = getEl('style-col-select');
+    const singleContainer = getEl('single-style-container');
+    const catListWrapper = getEl('categorical-style-list');
+    const catInnerList = getEl('cat-inner-list');
+    const btnRefreshColors = getEl('btn-refresh-colors');
 
     const renderCategoryPickers = () => {
+        if (!selCol) return;
         const propName = selCol.value;
-        if(!propName) return;
-        let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[propName]))].filter(v => v !== null && v !== undefined);
-        
+        if (!propName) return;
+        let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties ? f.properties[propName] : undefined))].filter(v => v !== null && v !== undefined);
         if (uniqueVals.length > 200 && !confirm(`Generate color pickers for ${uniqueVals.length} unique values?`)) return;
-        if(uniqueVals.length === 0) { catInnerList.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center">No unique values.</p>'; return; }
+        if (!catInnerList) return;
+        if (uniqueVals.length === 0) { catInnerList.innerHTML = '<p class="text-xs text-gray-400 italic text-center py-1">No unique values.</p>'; return; }
 
         let html = '';
         uniqueVals.forEach(val => {
             let fCol = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
             let sCol = darkenHex(fCol, 0.3), fOp = 0.5, sOp = 1.0;
-
-            if (isCat && cs.property === propName && cs.categories && cs.categories[val]) {
-                fCol = cs.categories[val].fillColor; sCol = cs.categories[val].color;
-                fOp = cs.categories[val].fillOpacity ?? 0.5; sOp = cs.categories[val].opacity ?? 1.0;
+            if (isCat && cs.property === propName && cs.categories) {
+                const cat = cs.categories[val] || cs.categories[String(val)];
+                if (cat) {
+                    fCol = cat.fillColor; sCol = cat.color;
+                    fOp = cat.fillOpacity ?? 0.5; sOp = cat.opacity ?? 1.0;
+                }
             }
             html += `
-                <div class="flex items-center justify-between mb-2 pb-2 border-b border-gray-100 dark:border-gray-700 last:border-0 last:mb-0 last:pb-0 cat-row" data-val="${val}">
-                    <span class="text-xs text-gray-700 dark:text-gray-300 truncate flex-1 pr-2 font-medium" title="${val}">${val}</span>
-                    <div class="flex space-x-2 items-center shrink-0">
-                        <span class="text-[10px] text-gray-400 dark:text-gray-500 font-bold" title="Fill">F:</span>
-                        <input type="color" class="cat-fill w-6 h-6 p-0 border-0 rounded cursor-pointer shrink-0 bg-transparent" value="${fCol}">
-                        <input type="range" class="cat-fill-op w-20 sm:w-24 cursor-pointer shrink-0 accent-purple-600 dark:accent-purple-500" min="0" max="1" step="0.05" value="${fOp}" title="Fill Opacity">
-                        <span class="text-[10px] text-gray-400 dark:text-gray-500 font-bold ml-2" title="Outline">O:</span>
-                        <input type="color" class="cat-stroke w-6 h-6 p-0 border-0 rounded cursor-pointer shrink-0 bg-transparent" value="${sCol}">
-                        <input type="range" class="cat-stroke-op w-20 sm:w-24 cursor-pointer shrink-0 accent-purple-600 dark:accent-purple-500" min="0" max="1" step="0.05" value="${sOp}" title="Outline Opacity">
+                <div class="flex items-center justify-between mb-1 pb-1 border-b border-gray-100 dark:border-gray-700 last:border-0 cat-row" data-val="${val}">
+                    <span class="text-xs text-gray-700 dark:text-gray-300 truncate flex-1 pr-1" title="${val}">${val}</span>
+                    <div class="flex space-x-1 items-center shrink-0">
+                        <span class="text-[9px] text-gray-400 font-bold">F:</span>
+                        <input type="color" class="cat-fill w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent" value="${fCol}">
+                        <input type="range" class="cat-fill-op w-16 cursor-pointer accent-blue-600" min="0" max="1" step="0.05" value="${fOp}">
+                        <span class="text-[9px] text-gray-400 font-bold ml-1">O:</span>
+                        <input type="color" class="cat-stroke w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent" value="${sCol}">
+                        <input type="range" class="cat-stroke-op w-16 cursor-pointer accent-blue-600" min="0" max="1" step="0.05" value="${sOp}">
                     </div>
                 </div>
             `;
@@ -1166,49 +1098,40 @@ let activeScaleCurve = currentScaleCurve;
         catInnerList.innerHTML = html;
     };
 
-    chkUseData.addEventListener('change', (e) => {
-        if(e.target.checked) {
-            selCol.disabled = false; singleContainer.classList.add('hidden'); singleContainer.classList.remove('flex');
-            catListWrapper.classList.remove('hidden'); catListWrapper.classList.add('flex'); btnRefreshColors.classList.remove('hidden');
-            if(selCol.value) renderCategoryPickers();
+    chkUseData?.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            if (selCol) selCol.disabled = false; singleContainer?.classList.add('hidden'); singleContainer?.classList.remove('flex');
+            catListWrapper?.classList.remove('hidden'); catListWrapper?.classList.add('flex'); btnRefreshColors?.classList.remove('hidden');
+            if (selCol?.value) renderCategoryPickers();
         } else {
-            selCol.disabled = true; singleContainer.classList.remove('hidden'); singleContainer.classList.add('flex');
-            catListWrapper.classList.add('hidden'); catListWrapper.classList.remove('flex'); btnRefreshColors.classList.add('hidden');
+            if (selCol) selCol.disabled = true; singleContainer?.classList.remove('hidden'); singleContainer?.classList.add('flex');
+            catListWrapper?.classList.add('hidden'); catListWrapper?.classList.remove('flex'); btnRefreshColors?.classList.add('hidden');
         }
     });
 
-    selCol.addEventListener('change', renderCategoryPickers);
+    selCol?.addEventListener('change', renderCategoryPickers);
     if (isCat && cs.property) renderCategoryPickers();
 
-    btnRefreshColors.addEventListener('click', () => {
+    btnRefreshColors?.addEventListener('click', () => {
         document.querySelectorAll('.cat-row').forEach(row => {
             const newFill = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
-            row.querySelector('.cat-fill').value = newFill;
-            row.querySelector('.cat-stroke').value = darkenHex(newFill, 0.3);
+            const fillIn = row.querySelector('.cat-fill');
+            const strokeIn = row.querySelector('.cat-stroke');
+            if (fillIn) fillIn.value = newFill;
+            if (strokeIn) strokeIn.value = darkenHex(newFill, 0.3);
         });
     });
 
-    document.getElementById('btn-copy-style').addEventListener('click', () => {
-        copiedStyle = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+    getEl('btn-copy-style')?.addEventListener('click', () => {
+        copiedStyle = extractStyleFromUI() || layer.customStyle;
         showToast("Style copied to clipboard!");
-        const pasteBtn = document.getElementById('btn-paste-style');
-        pasteBtn.disabled = false; pasteBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        const pasteBtn = getEl('btn-paste-style');
+        if (pasteBtn) { pasteBtn.disabled = false; pasteBtn.classList.remove('opacity-50', 'cursor-not-allowed'); }
     });
 
-    document.getElementById('btn-paste-style').addEventListener('click', () => {
+    getEl('btn-paste-style')?.addEventListener('click', () => {
         if (!copiedStyle) return;
         layer.customStyle = JSON.parse(JSON.stringify(copiedStyle));
-        if (layer.customStyle.type === 'categorical') {
-            const layerFeatures = layer.geoJsonData.features || [];
-            if (layerFeatures.length > 0 && layerFeatures[0].properties && !(layer.customStyle.property in layerFeatures[0].properties)) {
-                 showToast("Target layer missing attribute column. Applied fallback colors.", true);
-                 layer.customStyle.type = 'single';
-                 layer.customStyle.fillColor = layer.customStyle.defaultFill || '#cccccc';
-                 layer.customStyle.color = layer.customStyle.defaultColor || '#999999';
-                 layer.customStyle.fillOpacity = layer.customStyle.defaultFillOpacity || 0.5;
-                 layer.customStyle.opacity = layer.customStyle.defaultOpacity || 1.0;
-            }
-        }
         map.removeLayer(layer.mapLayer);
         const paneName = 'pane-' + layer.uniqueKey;
         const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
@@ -1219,62 +1142,11 @@ let activeScaleCurve = currentScaleCurve;
         activeEditLayerKey = null; handleToggleEdit(key); 
     });
 
-document.getElementById('btn-apply-edit').addEventListener('click', () => {
-            const shapeEl = document.getElementById('edit-point-shape');
-            const sizeEl = document.getElementById('edit-point-size');
-            const pShape = shapeEl ? shapeEl.value : (layer.customStyle.pointShape || 'circle');
-            const pSize = sizeEl ? parseInt(sizeEl.value, 10) : (layer.customStyle.pointSize || 8);
-
-            const chkDataScale = document.getElementById('use-data-scale');
-            const isScaleData = chkDataScale ? chkDataScale.checked : false;
-            const pScaleCol = isScaleData ? document.getElementById('point-scale-col-select').value : null;
-            const pMinData = isScaleData ? parseFloat(document.getElementById('point-scale-min-data').value) : null;
-            const pMaxData = isScaleData ? parseFloat(document.getElementById('point-scale-max-data').value) : null;
-            const pMinTarget = isScaleData ? parseFloat(document.getElementById('point-scale-min-target').value) : 4;
-            const pMaxTarget = isScaleData ? parseFloat(document.getElementById('point-scale-max-target').value) : 24;
-
-            const scaleStateObj = {
-                usePointScaleData: isScaleData,
-                pointScaleProp: pScaleCol,
-                pointScaleMinData: isNaN(pMinData) ? 0 : pMinData,
-                pointScaleMaxData: isNaN(pMaxData) ? 1 : pMaxData,
-                pointScaleMinTarget: isNaN(pMinTarget) ? 4 : pMinTarget,
-                pointScaleMaxTarget: isNaN(pMaxTarget) ? 24 : pMaxTarget,
-                pointScaleCurve: activeScaleCurve || 'linear'
-            };
-
-            if (chkUseData.checked) {
-            const prop = selCol.value;
-            if(!prop) return showToast("Select an attribute column for data styling.", true);
-            const newCategories = {};
-            document.querySelectorAll('.cat-row').forEach(row => {
-                const val = row.getAttribute('data-val');
-                newCategories[val] = { 
-                    fillColor: row.querySelector('.cat-fill').value, 
-                    fillOpacity: parseFloat(row.querySelector('.cat-fill-op').value), 
-                    color: row.querySelector('.cat-stroke').value, 
-                    opacity: parseFloat(row.querySelector('.cat-stroke-op').value) 
-                };
-            });
-                layer.customStyle = {
-                    type: 'categorical', property: prop, categories: newCategories,
-                    defaultFill: '#cccccc', defaultFillOpacity: 0.5, defaultColor: '#999999', defaultOpacity: 1.0,
-                    pointShape: pShape, pointSize: pSize,
-                    ...scaleStateObj
-                };
-            } else {
-                const fColor = document.getElementById('edit-fill-color').value;
-                const fOp = parseFloat(document.getElementById('edit-fill-opacity').value);
-                const sColor = document.getElementById('edit-stroke-color').value;
-                const sOp = parseFloat(document.getElementById('edit-stroke-opacity').value);
-                layer.customStyle = { 
-                    type: 'single', 
-                    fillColor: fColor, fillOpacity: fOp, color: sColor, opacity: sOp, 
-                    pointShape: pShape, pointSize: pSize,
-                    ...scaleStateObj
-                }; 
-            }
+    getEl('btn-apply-edit')?.addEventListener('click', () => {
+        const newStyle = extractStyleFromUI();
+        if (!newStyle) return showToast("Select an attribute column for data styling.", true);
         
+        layer.customStyle = newStyle;
         map.removeLayer(layer.mapLayer);
         const paneName = 'pane-' + layer.uniqueKey;
         const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
@@ -1284,93 +1156,115 @@ document.getElementById('btn-apply-edit').addEventListener('click', () => {
         showToast("Layer style updated!");
     });
 
-    const hexAlpha = (hex, alpha) => { return (hex + Math.round(alpha * 255).toString(16).padStart(2, '0').toUpperCase()).toUpperCase(); };
+    getEl('btn-bake-colors')?.addEventListener('click', () => {
+        const currentStyle = extractStyleFromUI() || layer.customStyle;
+        if (!currentStyle) return showToast("Please configure valid style parameters first.", true);
 
-    document.getElementById('btn-bake-colors').addEventListener('click', () => {
-        if (!layer.customStyle) return showToast("Please Apply a style first.", true);
+        layer.customStyle = currentStyle;
+
         let count = 0;
         layer.geoJsonData.features.forEach(f => {
             if (!f.properties) f.properties = {};
-            let fColor = '#4F46E5', sColor = '#4F46E5', fOp = 0.5, sOp = 1.0;
-            if (layer.customStyle.type === 'categorical') {
-                const cat = layer.customStyle.categories[f.properties[layer.customStyle.property]];
-                fColor = cat ? cat.fillColor : layer.customStyle.defaultFill;
-                sColor = cat ? cat.color : layer.customStyle.defaultColor;
-                fOp = cat ? cat.fillOpacity : layer.customStyle.defaultFillOpacity;
-                sOp = cat ? cat.opacity : layer.customStyle.defaultOpacity;
+            let fColor = '#2563eb', sColor = '#2563eb', fOp = 0.5, sOp = 1.0;
+
+            if (currentStyle.type === 'categorical') {
+                const rawVal = f.properties[currentStyle.property];
+                const strVal = String(rawVal);
+                const cat = currentStyle.categories?.[rawVal] || currentStyle.categories?.[strVal];
+
+                fColor = cat ? cat.fillColor : (currentStyle.defaultFill || '#cccccc');
+                sColor = cat ? cat.color : (currentStyle.defaultColor || '#999999');
+                fOp = cat ? cat.fillOpacity : (currentStyle.defaultFillOpacity ?? 0.5);
+                sOp = cat ? cat.opacity : (currentStyle.defaultOpacity ?? 1.0);
             } else {
-                fColor = layer.customStyle.fillColor; sColor = layer.customStyle.color;
-                fOp = layer.customStyle.fillOpacity; sOp = layer.customStyle.opacity;
+                fColor = currentStyle.fillColor || '#2563eb';
+                sColor = currentStyle.color || '#2563eb';
+                fOp = currentStyle.fillOpacity ?? 0.5;
+                sOp = currentStyle.opacity ?? 1.0;
             }
+
             f.properties['COLOR_FILL'] = hexAlpha(fColor, fOp);
             f.properties['COLOR_OUTLINE'] = hexAlpha(sColor, sOp);
             count++;
         });
+
+        // Re-render map layer with updated style
         map.removeLayer(layer.mapLayer);
         const paneName = 'pane-' + layer.uniqueKey;
         const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
         if (layer.isVisible) newMapLayer.addTo(map);
         layer.mapLayer = newMapLayer;
         updateMapLayerOrder();
+
+        // Refresh Attribute Table drawer if open for this layer
+        if (activeTableLayerKey === layer.uniqueKey) {
+            handleToggleTable(layer.uniqueKey);
+        }
+
         showToast(`Baked RGBA hex values to ${count} features!`);
     });
 };
 
 const handleToggleSplit = async (e) => {
-    const key = e.currentTarget.getAttribute('data-key');
+    const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
     const layer = activeLayers.find(l => l.uniqueKey === key);
+    if (!layer) return;
 
-    if (activeSplitLayerKey === key) { closeAllPanels(); return; }
+    if (activeSplitLayerKey === key && e.currentTarget) { closeAllPanels(); return; }
 
     closeAllPanels();
     activeSplitLayerKey = key;
     renderAddedLayers();
+    if (!splitPanelContainer) return;
+    
+    openContextSubmenu();
     splitPanelContainer.classList.remove('hidden');
     splitPanelContainer.classList.add('flex');
-    splitPanelContainer.innerHTML = '<div class="flex justify-center p-4"><p class="text-sm italic animate-pulse text-gray-500 dark:text-gray-400">Preparing vector data for split...</p></div>';
+    splitPanelContainer.innerHTML = '<div class="flex justify-center p-3"><p class="text-xs italic animate-pulse text-gray-500 dark:text-gray-400">Preparing vector data for split...</p></div>';
 
     const success = await ensureGeoJSON(layer);
-    if(!success) { closeAllPanels(); return; }
+    if (!success) { closeAllPanels(); return; }
 
     const features = layer.geoJsonData.features || [];
-    let cols = [];
-    if (features.length > 0 && features[0].properties) cols = Object.keys(features[0].properties);
+    const colsSet = new Set();
+    features.forEach(f => { if (f.properties) Object.keys(f.properties).forEach(k => colsSet.add(k)); });
+    const cols = Array.from(colsSet).sort();
 
     splitPanelContainer.innerHTML = `
-        <div class="p-3 text-sm flex flex-col h-full min-h-0 bg-amber-50 dark:bg-transparent">
-            <div class="flex justify-between items-center mb-3 border-b border-amber-200 dark:border-amber-800 pb-2 shrink-0">
-                <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-xs tracking-wider">Split Layer</h4>
-                <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"><i class="fa-solid fa-times"></i></button>
+        <div class="p-2 text-xs flex flex-col h-full min-h-0 bg-blue-50/50 dark:bg-transparent">
+            <div class="flex justify-between items-center mb-2 pb-1 border-b border-blue-200 dark:border-blue-800 shrink-0">
+                <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-[11px] tracking-wider">Split Layer</h4>
+                <button onclick="window.closeAllPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"><i class="fa-solid fa-times text-xs"></i></button>
             </div>
-            <div class="flex-1 overflow-y-auto custom-scroll pr-1 min-h-0">
-                <p class="text-[10px] text-gray-500 dark:text-gray-400 mb-2 leading-tight">Select an attribute to duplicate this layer into multiple sub-layers based on unique data entries.</p>
-                <div class="flex space-x-2">
-                    <select id="split-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs">
+            <div class="flex-1 space-y-2 min-h-0">
+                <p class="text-[10px] text-gray-500 dark:text-gray-400 leading-tight">Select an attribute to duplicate this layer into multiple sub-layers based on unique data entries.</p>
+                <div class="flex space-x-1.5">
+                    <select id="split-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
                         <option value="" disabled selected>Select attribute column...</option>
                         ${cols.map(c => `<option value="${c}">${c}</option>`).join('')}
                     </select>
-                    <button id="btn-apply-split" class="bg-amber-600 hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-500 text-white text-xs px-3 py-1.5 rounded transition-colors shadow-sm shrink-0">Split Data</button>
+                    <button id="btn-apply-split" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-2.5 py-0.5 rounded transition-colors font-medium shrink-0">Split Data</button>
                 </div>
             </div>
         </div>
     `;
 
-    document.getElementById('btn-apply-split').addEventListener('click', () => {
-        const splitCol = document.getElementById('split-col-select').value;
-        if(!splitCol) return showToast("Select an attribute column first.", true);
+    getEl('btn-apply-split')?.addEventListener('click', () => {
+        const splitCol = getEl('split-col-select')?.value;
+        if (!splitCol) return showToast("Select an attribute column first.", true);
         
-        const uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[splitCol]))];
+        const uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties ? f.properties[splitCol] : undefined))];
         if (uniqueVals.length > 50 && !confirm(`Create ${uniqueVals.length} layers?`)) return;
 
         let createdCount = 0;
         const newLayers = [];
 
         uniqueVals.forEach(val => {
-            const filteredFeats = layer.geoJsonData.features.filter(f => f.properties[splitCol] === val);
-            if(filteredFeats.length === 0) return;
+            const filteredFeats = layer.geoJsonData.features.filter(f => f.properties && f.properties[splitCol] === val);
+            if (filteredFeats.length === 0) return;
 
             const newGeoJson = { type: "FeatureCollection", features: filteredFeats };
-            const splitStyleState = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+            const splitStyleState = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
 
             const uniqueKey = Math.random().toString(36).substr(2,9);
             const paneName = 'pane-' + uniqueKey;
@@ -1397,69 +1291,103 @@ const handleToggleSplit = async (e) => {
 };
 
 const triggerDataFilterSetup = async (layer) => {
-    drawStatus.classList.remove('hidden'); drawStatus.textContent = 'Ensuring local data for filtering...';
-    filterDataSearch.value = ''; btnClearFilterSearch.classList.add('hidden');
-    
+    const drawStatusEl = getEl('draw-status');
+    if (drawStatusEl) { 
+        drawStatusEl.classList.remove('hidden'); 
+        drawStatusEl.textContent = 'Ensuring local data for filtering...'; 
+    }
+
+    const searchInput = getEl('filter-data-search');
+    if (searchInput) searchInput.value = '';
+    getEl('btn-clear-filter-search')?.classList.add('hidden');
+
     const success = await ensureGeoJSON(layer);
-    if(!success) { drawStatus.textContent = 'Failed to load vector data.'; return; }
-    drawStatus.textContent = 'Select an attribute column.';
+    if (!success) { 
+        if (drawStatusEl) drawStatusEl.textContent = 'Failed to load vector data.'; 
+        return; 
+    }
     
-    const features = layer.geoJsonData.features || [];
-    let cols = [];
-    if (features.length > 0 && features[0].properties) cols = Object.keys(features[0].properties);
+    if (drawStatusEl) drawStatusEl.textContent = 'Select an attribute column.';
+
+    // Collect all unique property keys across ALL features
+    const cols = new Set();
+    (layer.geoJsonData?.features || []).forEach(f => {
+        if (f.properties) Object.keys(f.properties).forEach(k => cols.add(k));
+    });
+    const sortedCols = Array.from(cols).sort();
+
+    const selectEl = getEl('filter-data-col');
+    if (selectEl) {
+        selectEl.innerHTML = `<option value="" disabled selected>Select attribute column...</option>` + 
+            sortedCols.map(c => `<option value="${c}">${c}</option>`).join('');
+    }
+
+    const valContainer = getEl('filter-data-values');
+    if (valContainer) {
+        valContainer.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center">Select a column first.</p>';
+    }
     
-    const sel = document.getElementById('filter-data-col');
-    sel.innerHTML = `<option value="" disabled selected>Select attribute column...</option>` + cols.map(c => `<option value="${c}">${c}</option>`).join('');
-    document.getElementById('filter-data-values').innerHTML = '<p class="text-gray-400 dark:text-gray-500 italic text-center">Select a column first.</p>';
     checkApplyButton();
 };
 
 const handleToggleCrop = (e) => {
-    const key = e.currentTarget.getAttribute('data-key');
+    const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
     const layer = activeLayers.find(l => l.uniqueKey === key);
+    if (!layer) return;
 
-    if (activeCropLayerKey === key) { closeAllPanels(); return; }
+    if (activeCropLayerKey === key && e.currentTarget) { closeAllPanels(); return; }
 
     closeAllPanels();
     activeCropLayerKey = key;
-    cropPanelContainer.classList.remove('hidden');
-    cropPanelContainer.classList.add('flex');
+    if (cropPanelContainer) {
+        openContextSubmenu();
+        cropPanelContainer.classList.remove('hidden');
+        cropPanelContainer.classList.add('flex');
+    }
     renderAddedLayers();
     
-    if (filterType.value === 'data') triggerDataFilterSetup(layer);
+    if (filterType?.value === 'data') triggerDataFilterSetup(layer);
 };
 
 const checkApplyButton = () => {
+  if (!filterType) return;
   const type = filterType.value;
   if (type === 'data') {
      const checked = document.querySelectorAll('.filter-data-val-cb:checked');
      if (checked.length > 0) {
-         btnApplyFilter.disabled = false;
-         drawStatus.textContent = 'Ready to apply filter.';
-         drawStatus.classList.replace('text-teal-700', 'text-emerald-700');
-         drawStatus.classList.replace('dark:text-teal-400', 'dark:text-emerald-400');
+         if (btnApplyFilter) btnApplyFilter.disabled = false;
+         if (drawStatus) {
+            drawStatus.textContent = 'Ready to apply filter.';
+            drawStatus.classList.replace('text-blue-700', 'text-emerald-700');
+            drawStatus.classList.replace('dark:text-blue-400', 'dark:text-emerald-400');
+         }
      } else {
-         btnApplyFilter.disabled = true;
-         drawStatus.textContent = 'Select at least one value.';
-         drawStatus.classList.replace('text-emerald-700', 'text-teal-700');
-         drawStatus.classList.replace('dark:text-emerald-400', 'dark:text-teal-400');
+         if (btnApplyFilter) btnApplyFilter.disabled = true;
+         if (drawStatus) {
+            drawStatus.textContent = 'Select at least one value.';
+            drawStatus.classList.replace('text-emerald-700', 'text-blue-700');
+            drawStatus.classList.replace('dark:text-emerald-400', 'dark:text-blue-400');
+         }
      }
   } else {
      if (filterGeometryData && activeCropLayerKey) {
-         btnApplyFilter.disabled = false;
-         drawStatus.textContent = 'Ready to apply filter.';
-         drawStatus.classList.replace('text-teal-700', 'text-emerald-700');
-         drawStatus.classList.replace('dark:text-teal-400', 'dark:text-emerald-400');
+         if (btnApplyFilter) btnApplyFilter.disabled = false;
+         if (drawStatus) {
+            drawStatus.textContent = 'Ready to apply filter.';
+            drawStatus.classList.replace('text-blue-700', 'text-emerald-700');
+            drawStatus.classList.replace('dark:text-blue-400', 'dark:text-emerald-400');
+         }
      } else {
-         btnApplyFilter.disabled = true;
+         if (btnApplyFilter) btnApplyFilter.disabled = true;
      }
   }
 };
 
 const triggerSearch = () => {
+  if (!layerSearch) return;
   const term = layerSearch.value.toLowerCase();
-  if (term === '') btnClearSearch.classList.add('hidden');
-  else btnClearSearch.classList.remove('hidden');
+  if (term === '') btnClearSearch?.classList.add('hidden');
+  else btnClearSearch?.classList.remove('hidden');
   
   let visibleCount = 0;
   document.querySelectorAll('.available-layer-item').forEach(item => {
@@ -1467,20 +1395,21 @@ const triggerSearch = () => {
     else { item.classList.add('hidden'); }
   });
   
-  let emptyMsg = document.getElementById('search-empty-msg');
+  let emptyMsg = getEl('search-empty-msg');
   if (visibleCount === 0 && fetchedLayers.length > 0) {
-    if (!emptyMsg) {
-      emptyMsg = document.createElement('p'); emptyMsg.id = 'search-empty-msg'; emptyMsg.className = 'text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4'; emptyMsg.textContent = 'No matching layers found.';
+    if (!emptyMsg && availableLayerList) {
+      emptyMsg = document.createElement('p'); emptyMsg.id = 'search-empty-msg'; emptyMsg.className = 'text-xs text-gray-400 italic text-center mt-3'; emptyMsg.textContent = 'No matching layers found.';
       availableLayerList.appendChild(emptyMsg);
     }
-    emptyMsg.classList.remove('hidden');
+    emptyMsg?.classList.remove('hidden');
   } else if (emptyMsg) { emptyMsg.classList.add('hidden'); }
 };
 
 const triggerAddedSearch = () => {
+  if (!addedLayerSearch) return;
   const term = addedLayerSearch.value.toLowerCase();
-  if (term === '') btnClearAddedSearch.classList.add('hidden');
-  else btnClearAddedSearch.classList.remove('hidden');
+  if (term === '') btnClearAddedSearch?.classList.add('hidden');
+  else btnClearAddedSearch?.classList.remove('hidden');
   
   let visibleCount = 0;
   document.querySelectorAll('.added-layer-item').forEach(item => {
@@ -1488,23 +1417,26 @@ const triggerAddedSearch = () => {
     else { item.classList.add('hidden'); }
   });
   
-  let emptyMsg = document.getElementById('added-search-empty-msg');
+  let emptyMsg = getEl('added-search-empty-msg');
   if (visibleCount === 0 && activeLayers.length > 0) {
-    if (!emptyMsg) {
-      emptyMsg = document.createElement('p'); emptyMsg.id = 'added-search-empty-msg'; emptyMsg.className = 'text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4'; emptyMsg.textContent = 'No matching layers found.';
+    if (!emptyMsg && addedLayerList) {
+      emptyMsg = document.createElement('p'); emptyMsg.id = 'added-search-empty-msg'; emptyMsg.className = 'text-xs text-gray-400 italic text-center mt-3'; emptyMsg.textContent = 'No matching layers found.';
       addedLayerList.appendChild(emptyMsg);
     }
-    emptyMsg.classList.remove('hidden');
+    emptyMsg?.classList.remove('hidden');
   } else if (emptyMsg) { emptyMsg.classList.add('hidden'); }
 };
 
 const triggerFilterDataSearch = () => {
+    if (!filterDataSearch) return;
     const term = filterDataSearch.value.toLowerCase();
-    if (term === '') btnClearFilterSearch.classList.add('hidden');
-    else btnClearFilterSearch.classList.remove('hidden');
+    if (term === '') btnClearFilterSearch?.classList.add('hidden');
+    else btnClearFilterSearch?.classList.remove('hidden');
     
     document.querySelectorAll('#filter-data-values label').forEach(label => {
-        const val = label.querySelector('input').value.toLowerCase();
+        const input = label.querySelector('input');
+        if (!input) return;
+        const val = input.value.toLowerCase();
         if (val.includes(term)) { label.classList.remove('hidden'); label.classList.add('flex'); } 
         else { label.classList.add('hidden'); label.classList.remove('flex'); }
     });
@@ -1515,31 +1447,32 @@ const triggerFilterDataSearch = () => {
 // 7. MAIN UI RENDERERS
 // ==========================================
 const renderAvailableLayers = () => {
+  if (!availableLayerList) return;
   availableLayerList.innerHTML = '';
   if (fetchedLayers.length === 0) {
-    availableLayerList.innerHTML = `<p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers fetched yet.</p>`;
-    searchContainer.classList.add('hidden');
-    btnAddBulk.disabled = true;
+    availableLayerList.innerHTML = `<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center mt-3">No layers fetched yet.</p>`;
+    searchContainer?.classList.add('hidden');
+    if (btnAddBulk) btnAddBulk.disabled = true;
     return;
   }
   
-  searchContainer.classList.remove('hidden');
-  btnAddBulk.disabled = false;
+  searchContainer?.classList.remove('hidden');
+  if (btnAddBulk) btnAddBulk.disabled = false;
 
   fetchedLayers.forEach((layer) => {
     const div = document.createElement('div');
-    div.className = 'available-layer-item flex items-center p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded border border-transparent dark:border-transparent hover:border-gray-200 dark:hover:border-gray-600 mb-1 transition-colors';
+    div.className = 'available-layer-item flex items-center p-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 rounded border border-transparent hover:border-gray-200 dark:hover:border-gray-600 mb-1 transition-colors';
     div.setAttribute('data-search', `${layer.title} ${layer.id}`.toLowerCase());
     
     div.innerHTML = `
-      <div class="flex items-center h-5 mr-2 shrink-0">
-         <input id="cb-${layer.id}" type="checkbox" value="${layer.id}" class="w-4 h-4 layer-checkbox cursor-pointer accent-blue-600 dark:accent-blue-500" title="Preview on Map">
+      <div class="flex items-center h-4 mr-2 shrink-0">
+         <input id="cb-${layer.id}" type="checkbox" value="${layer.id}" class="w-3.5 h-3.5 layer-checkbox cursor-pointer accent-blue-600 dark:accent-blue-500" title="Preview on Map">
       </div>
-      <div class="ml-1 text-sm flex-1 overflow-hidden pr-2 cursor-pointer">
+      <div class="ml-1 text-xs flex-1 overflow-hidden pr-2 cursor-pointer">
         <label for="cb-${layer.id}" class="font-medium text-gray-700 dark:text-gray-200 block truncate cursor-pointer" title="${layer.title}">${layer.title}</label>
         <p class="text-gray-400 dark:text-gray-500 text-[10px] truncate" title="${layer.id}">ID: ${layer.id}</p>
       </div>
-      <button class="btn-add-single shrink-0 bg-blue-100 dark:bg-blue-900/40 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 w-8 h-8 rounded-full flex items-center justify-center transition-colors shadow-sm" data-id="${layer.id}" title="Add Single Layer"><i class="fa-solid fa-plus"></i></button>
+      <button class="btn-add-single shrink-0 bg-blue-100 dark:bg-blue-900/40 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-xs" data-id="${layer.id}" title="Add Single Layer"><i class="fa-solid fa-plus text-[10px]"></i></button>
     `;
     availableLayerList.appendChild(div);
   });
@@ -1548,7 +1481,7 @@ const renderAvailableLayers = () => {
   document.querySelectorAll('.btn-add-single').forEach(btn => {
       btn.addEventListener('click', (e) => {
           const layerId = e.currentTarget.getAttribute('data-id');
-          const cb = document.getElementById(`cb-${layerId}`);
+          const cb = getEl(`cb-${layerId}`);
           if (cb) cb.checked = false;
           togglePreviewLayer(layerId, false);
           addLayerToMap(layerId, true);
@@ -1558,17 +1491,17 @@ const renderAvailableLayers = () => {
 };
 
 const renderAddedLayers = () => {
-  tabBtnAdded.textContent = `Added (${activeLayers.length})`;
+  if (tabBtnAdded) tabBtnAdded.textContent = `Added (${activeLayers.length})`;
+  if (!addedLayerList) return;
   addedLayerList.innerHTML = '';
-  updateMapLegend();
 
   if (activeLayers.length === 0) {
-    addedLayerList.innerHTML = `<p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers currently added to map.</p>`;
-    addedSearchContainer.classList.add('hidden');
+    addedLayerList.innerHTML = `<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center mt-3">No layers currently added to map.</p>`;
+    addedSearchContainer?.classList.add('hidden');
     return;
   }
 
-  addedSearchContainer.classList.remove('hidden');
+  addedSearchContainer?.classList.remove('hidden');
 
   activeLayers.forEach(layer => {
     const isTableActive = (activeTableLayerKey === layer.uniqueKey);
@@ -1576,46 +1509,45 @@ const renderAddedLayers = () => {
     const isSplitActive = (activeSplitLayerKey === layer.uniqueKey);
     const isCropActive = (activeCropLayerKey === layer.uniqueKey);
     
-    let bgClass = 'bg-white border-gray-100 hover:bg-gray-50 shadow-sm dark:bg-gray-800 dark:border-gray-700 dark:hover:bg-gray-700';
-    if (isTableActive) bgClass = 'bg-indigo-50 border-indigo-300 shadow-md dark:bg-indigo-900/30 dark:border-indigo-600';
-    if (isEditActive) bgClass = 'bg-purple-50 border-purple-300 shadow-md dark:bg-purple-900/30 dark:border-purple-600';
-    if (isSplitActive) bgClass = 'bg-amber-50 border-amber-300 shadow-md dark:bg-amber-900/30 dark:border-amber-600';
-    if (isCropActive) bgClass = 'bg-teal-50 border-teal-300 shadow-md dark:bg-teal-900/30 dark:border-teal-600';
+    let bgClass = 'bg-white border-gray-100 hover:bg-gray-50 shadow-xs dark:bg-gray-800 dark:border-gray-700 dark:hover:bg-gray-700';
+    if (isTableActive || isEditActive || isSplitActive || isCropActive) {
+        bgClass = 'bg-blue-50 border-blue-300 shadow-sm dark:bg-blue-900/30 dark:border-blue-600';
+    }
 
     const div = document.createElement('div');
-    div.className = `added-layer-item flex flex-col p-2 mb-1 rounded border transition-colors ${bgClass}`;
+    div.className = `added-layer-item flex flex-col p-1.5 mb-1 rounded border transition-colors ${bgClass}`;
     div.setAttribute('data-search', `${layer.displayName} ${layer.id}`.toLowerCase());
     
-div.innerHTML = `
-          <div class="flex items-center justify-between">
-            <div class="mr-3 shrink-0">
-               <input type="checkbox" class="w-4 h-4 text-blue-600 dark:text-blue-500 rounded cursor-pointer btn-toggle-vis accent-blue-600 dark:accent-blue-500" data-key="${layer.uniqueKey}" ${layer.isVisible ? 'checked' : ''} title="Toggle Visibility">
-            </div>
-            <div class="flex-1 overflow-hidden pr-2">
-              <span class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate block" title="${layer.displayName}">${layer.displayName}</span>
-              <span class="text-[10px] text-gray-400 dark:text-gray-500 block truncate" title="${layer.id}">ID: ${layer.id}</span>
-            </div>
-          </div>
-          
-          <div class="mt-2 flex justify-between border-t border-gray-200 dark:border-gray-700 pt-2 text-gray-500 dark:text-gray-400 text-sm">
-            <div class="flex space-x-1.5">
-               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="top" title="Bring to Front"><i class="fa-solid fa-angles-up"></i></button>
-               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="up" title="Move Up"><i class="fa-solid fa-angle-up"></i></button>
-               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="down" title="Move Down"><i class="fa-solid fa-angle-down"></i></button>
-               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="bottom" title="Send to Back"><i class="fa-solid fa-angles-down"></i></button>
-            </div>
-            <div class="flex space-x-2.5 justify-end">
-                <button class="transition-colors btn-table ${isTableActive ? 'text-indigo-600 dark:text-indigo-400' : 'hover:text-indigo-600 dark:hover:text-indigo-400'}" data-key="${layer.uniqueKey}" title="Data Table"><i class="fa-solid fa-table"></i></button>
-                <button class="transition-colors btn-edit ${isEditActive ? 'text-purple-600 dark:text-purple-400' : 'hover:text-purple-600 dark:hover:text-purple-400'}" data-key="${layer.uniqueKey}" title="Edit Appearance"><i class="fa-solid fa-palette"></i></button>
-                <button class="transition-colors btn-crop ${isCropActive ? 'text-teal-600 dark:text-teal-400' : 'hover:text-teal-600 dark:hover:text-teal-400'}" data-key="${layer.uniqueKey}" title="Filter / Crop Layer"><i class="fa-solid fa-crop"></i></button>
-                <button class="transition-colors btn-split ${isSplitActive ? 'text-amber-600 dark:text-amber-400' : 'hover:text-amber-600 dark:hover:text-amber-400'}" data-key="${layer.uniqueKey}" title="Split Layer"><i class="fa-solid fa-object-ungroup"></i></button>
-                <button class="hover:text-blue-500 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${layer.uniqueKey}" title="Duplicate Layer"><i class="fa-solid fa-clone"></i></button>
-                <button class="hover:text-orange-500 dark:hover:text-orange-400 transition-colors btn-rename" data-key="${layer.uniqueKey}" title="Rename Layer"><i class="fa-solid fa-pen"></i></button>
-                <button class="hover:text-green-600 dark:hover:text-green-400 transition-colors btn-export" data-key="${layer.uniqueKey}" title="Export Layer"><i class="fa-solid fa-download"></i></button>
-                <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${layer.uniqueKey}" title="Remove Layer"><i class="fa-solid fa-trash"></i></button>
-            </div>
-          </div>
-        `;
+    div.innerHTML = `
+      <div class="flex items-center justify-between">
+        <div class="mr-2 shrink-0">
+           <input type="checkbox" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 rounded cursor-pointer btn-toggle-vis accent-blue-600 dark:accent-blue-500" data-key="${layer.uniqueKey}" ${layer.isVisible ? 'checked' : ''} title="Toggle Visibility">
+        </div>
+        <div class="flex-1 overflow-hidden pr-1">
+          <span class="text-xs font-semibold text-gray-800 dark:text-gray-200 truncate block" title="${layer.displayName}">${layer.displayName}</span>
+          <span class="text-[9px] text-gray-400 dark:text-gray-500 block truncate" title="${layer.id}">ID: ${layer.id}</span>
+        </div>
+      </div>
+      
+      <div class="mt-1.5 flex justify-between border-t border-gray-200 dark:border-gray-700 pt-1.5 text-gray-500 dark:text-gray-400 text-xs">
+        <div class="flex space-x-1">
+           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="top" title="Bring to Front"><i class="fa-solid fa-angles-up"></i></button>
+           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="up" title="Move Up"><i class="fa-solid fa-angle-up"></i></button>
+           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="down" title="Move Down"><i class="fa-solid fa-angle-down"></i></button>
+           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="bottom" title="Send to Back"><i class="fa-solid fa-angles-down"></i></button>
+        </div>
+        <div class="flex space-x-2 justify-end">
+            <button class="transition-colors btn-table ${isTableActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${layer.uniqueKey}" title="Data Table"><i class="fa-solid fa-table"></i></button>
+            <button class="transition-colors btn-edit ${isEditActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${layer.uniqueKey}" title="Edit Appearance"><i class="fa-solid fa-palette"></i></button>
+            <button class="transition-colors btn-crop ${isCropActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${layer.uniqueKey}" title="Filter / Crop Layer"><i class="fa-solid fa-crop"></i></button>
+            <button class="transition-colors btn-split ${isSplitActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${layer.uniqueKey}" title="Split Layer"><i class="fa-solid fa-object-ungroup"></i></button>
+            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${layer.uniqueKey}" title="Duplicate Layer"><i class="fa-solid fa-clone"></i></button>
+            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-rename" data-key="${layer.uniqueKey}" title="Rename Layer"><i class="fa-solid fa-pen"></i></button>
+            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-export" data-key="${layer.uniqueKey}" title="Export Layer"><i class="fa-solid fa-download"></i></button>
+            <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${layer.uniqueKey}" title="Remove Layer"><i class="fa-solid fa-trash"></i></button>
+        </div>
+      </div>
+    `;
     addedLayerList.appendChild(div);
   });
 
@@ -1633,7 +1565,7 @@ div.innerHTML = `
 
 const addLayerToMap = (layerId, switchTabAfter = true) => {
     const meta = fetchedLayers.find(l => l.id === layerId);
-    if(!meta) return;
+    if (!meta) return;
 
     let mapLayer, exportUrl = null, isLocalGeoJSON = false, geoJsonData = null, customStyle = null;
 
@@ -1683,41 +1615,58 @@ const addLayerToMap = (layerId, switchTabAfter = true) => {
 // ==========================================
 // 8. EVENT LISTENERS
 // ==========================================
-document.getElementById('toggle-workspace').addEventListener('click', () => {
-    document.getElementById('content-workspace').classList.toggle('hidden');
-    document.getElementById('icon-workspace').classList.toggle('-rotate-90');
+getEl('toggle-workspace')?.addEventListener('click', () => {
+    getEl('content-workspace')?.classList.toggle('hidden');
+    getEl('icon-workspace')?.classList.toggle('-rotate-90');
 });
 
-document.getElementById('toggle-database').addEventListener('click', () => {
-    document.getElementById('content-database').classList.toggle('hidden');
-    document.getElementById('icon-database').classList.toggle('-rotate-90');
+getEl('toggle-database')?.addEventListener('click', () => {
+    getEl('content-database')?.classList.toggle('hidden');
+    getEl('icon-database')?.classList.toggle('-rotate-90');
 });
 
-tabBtnAvailable.addEventListener('click', () => switchTab('available'));
-tabBtnAdded.addEventListener('click', () => switchTab('added'));
+tabBtnAvailable?.addEventListener('click', () => switchTab('available'));
+tabBtnAdded?.addEventListener('click', () => switchTab('added'));
 
-savedServersSelect.addEventListener('change', (e) => {
+savedServersSelect?.addEventListener('change', (e) => {
     const opt = e.target.options[e.target.selectedIndex];
     if (opt.value) {
-        document.getElementById('server-url').value = opt.value;
-        document.getElementById('server-type').value = opt.dataset.type;
-        document.getElementById('server-type').dispatchEvent(new Event('change')); 
+        const sUrl = getEl('server-url');
+        const sType = getEl('server-type');
+        if (sUrl) sUrl.value = opt.value;
+        if (sType && opt.dataset.type) {
+            const rawType = opt.dataset.type.toUpperCase();
+            
+            if (rawType.includes('ARCGIS') || rawType.includes('ESRI') || rawType.includes('REST')) {
+                sType.value = 'ARCGIS';
+            } else if (rawType.includes('WFS') || rawType.includes('OGC')) {
+                sType.value = 'WFS';
+            } else if (rawType.includes('OVERPASS') || rawType.includes('OSM')) {
+                sType.value = 'OVERPASS';
+            } else {
+                sType.value = rawType;
+            }
+            
+            sType.dispatchEvent(new Event('change'));
+        }
     }
 });
 
-btnSaveServer.addEventListener('click', async () => {
-    const url = document.getElementById('server-url').value.trim();
-    const type = document.getElementById('server-type').value;
+btnSaveServer?.addEventListener('click', async () => {
+    const sUrl = getEl('server-url');
+    const sType = getEl('server-type');
+    const url = sUrl ? sUrl.value.trim() : '';
+    const type = sType ? sType.value : '';
     if (!url) return showToast("Enter a Server URL to save.", true);
     const name = prompt("Enter a recognizable name for this server database:");
     if (!name) return;
     try {
         const res = await fetch('/api/servers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url, type }) });
-        if (res.ok) { showToast("Server added to Database!"); await loadSavedServers(); savedServersSelect.value = url; }
+        if (res.ok) { showToast("Server added to Database!"); await loadSavedServers(); if (savedServersSelect) savedServersSelect.value = url; }
     } catch (err) { showToast("Failed to save server.", true); }
 });
 
-document.getElementById('btn-export-workspace').addEventListener('click', () => {
+getEl('btn-export-workspace')?.addEventListener('click', () => {
     if (activeLayers.length === 0) return showToast("No active layers to export in workspace.", true);
     const data = serializeWorkspace();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -1725,7 +1674,7 @@ document.getElementById('btn-export-workspace').addEventListener('click', () => 
     downloadBlob(blob, `gis_workspace_${dateStr}.json`);
 });
 
-document.getElementById('file-import-workspace').addEventListener('change', (e) => {
+getEl('file-import-workspace')?.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
@@ -1742,7 +1691,7 @@ document.getElementById('file-import-workspace').addEventListener('change', (e) 
     reader.readAsText(file);
 });
 
-document.getElementById('btn-clear-workspace').addEventListener('click', () => {
+getEl('btn-clear-workspace')?.addEventListener('click', () => {
     if (activeLayers.length === 0) return;
     if (confirm("Reset workspace? All added layers will be removed from the map.")) {
         closeAllPanels(); clearAllPreviews();
@@ -1752,46 +1701,47 @@ document.getElementById('btn-clear-workspace').addEventListener('click', () => {
     }
 });
 
-document.getElementById('server-type').addEventListener('change', (e) => {
+getEl('server-type')?.addEventListener('change', (e) => {
     const type = e.target.value;
+    const saveBtn = getEl('btn-save-server');
+    const urlFetchBtn = getEl('btn-fetch-url');
+
     if (type === 'OVERPASS') {
-        document.getElementById('server-url-container').classList.add('hidden');
-        document.getElementById('overpass-builder').classList.remove('hidden');
-        document.getElementById('btn-fetch-text').textContent = 'Fetch OSM Data';
-        document.getElementById('btn-save-server').disabled = true;
-        document.getElementById('btn-save-server').classList.add('opacity-50');
+        getEl('server-url-container')?.classList.add('hidden');
+        getEl('overpass-builder')?.classList.remove('hidden');
+        if (urlFetchBtn) urlFetchBtn.classList.add('hidden');
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.classList.add('opacity-50'); }
     } else {
-        document.getElementById('server-url-container').classList.remove('hidden');
-        document.getElementById('overpass-builder').classList.add('hidden');
-        document.getElementById('btn-fetch-text').textContent = 'Fetch Layers';
-        document.getElementById('btn-save-server').disabled = false;
-        document.getElementById('btn-save-server').classList.remove('opacity-50');
-        document.getElementById('osm-available-tools').classList.add('hidden');
-        document.getElementById('osm-available-tools').classList.remove('flex');
+        getEl('server-url-container')?.classList.remove('hidden');
+        getEl('overpass-builder')?.classList.add('hidden');
+        if (urlFetchBtn) urlFetchBtn.classList.remove('hidden');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.classList.remove('opacity-50'); }
+        const tools = getEl('osm-available-tools');
+        if (tools) { tools.classList.add('hidden'); tools.classList.remove('flex'); }
     }
 });
 
-btnAddBulk.addEventListener('click', () => {
+btnAddBulk?.addEventListener('click', () => {
   const cbs = document.querySelectorAll('.layer-checkbox:checked');
   if (cbs.length === 0) return showToast("Select at least one layer to add.", true);
   cbs.forEach(cb => { togglePreviewLayer(cb.value, false); cb.checked = false; addLayerToMap(cb.value, false); });
   renderAddedLayers(); switchTab('added'); showToast(`Bulk added ${cbs.length} layers to map!`);
 });
 
-document.getElementById('btn-available-split').addEventListener('click', () => {
-    const splitCol = document.getElementById('available-split-col').value;
-    if(!splitCol) return showToast("Select an attribute column first.", true);
-    if(!lastFetchedOsmGeoJson) return;
+getEl('btn-available-split')?.addEventListener('click', () => {
+    const splitCol = getEl('available-split-col')?.value;
+    if (!splitCol) return showToast("Select an attribute column first.", true);
+    if (!lastFetchedOsmGeoJson) return;
     
-    const uniqueVals = [...new Set(lastFetchedOsmGeoJson.features.map(f => f.properties[splitCol]))];
+    const uniqueVals = [...new Set(lastFetchedOsmGeoJson.features.map(f => f.properties ? f.properties[splitCol] : undefined))];
     if (uniqueVals.length > 50 && !confirm(`This will unpack ${uniqueVals.length} layers into the list below. Proceed?`)) return;
     
     clearAllPreviews(); 
     fetchedLayers = []; 
     
     uniqueVals.forEach(val => {
-        const filteredFeats = lastFetchedOsmGeoJson.features.filter(f => f.properties[splitCol] === val);
-        if(filteredFeats.length === 0) return;
+        const filteredFeats = lastFetchedOsmGeoJson.features.filter(f => f.properties && f.properties[splitCol] === val);
+        if (filteredFeats.length === 0) return;
         
         const displayVal = (val === null || val === undefined || val === '') ? 'null' : val;
         let extraName = '';
@@ -1809,57 +1759,52 @@ document.getElementById('btn-available-split').addEventListener('click', () => {
     showToast(`Successfully unpacked into ${fetchedLayers.length} sub-layers!`);
 });
 
-layerSearch.addEventListener('input', triggerSearch);
-btnClearSearch.addEventListener('click', () => { layerSearch.value = ''; triggerSearch(); layerSearch.focus(); });
-addedLayerSearch.addEventListener('input', triggerAddedSearch);
-btnClearAddedSearch.addEventListener('click', () => { addedLayerSearch.value = ''; triggerAddedSearch(); addedLayerSearch.focus(); });
-filterDataSearch.addEventListener('input', triggerFilterDataSearch);
-btnClearFilterSearch.addEventListener('click', () => { filterDataSearch.value = ''; triggerFilterDataSearch(); filterDataSearch.focus(); });
+layerSearch?.addEventListener('input', triggerSearch);
+btnClearSearch?.addEventListener('click', () => { if (layerSearch) { layerSearch.value = ''; triggerSearch(); layerSearch.focus(); } });
+addedLayerSearch?.addEventListener('input', triggerAddedSearch);
+btnClearAddedSearch?.addEventListener('click', () => { if (addedLayerSearch) { addedLayerSearch.value = ''; triggerAddedSearch(); addedLayerSearch.focus(); } });
+filterDataSearch?.addEventListener('input', triggerFilterDataSearch);
+btnClearFilterSearch?.addEventListener('click', () => { if (filterDataSearch) { filterDataSearch.value = ''; triggerFilterDataSearch(); filterDataSearch.focus(); } });
 
-if (osmKeyInput) {
-    osmKeyInput.addEventListener('input', (e) => {
-        const key = e.target.value.toLowerCase().trim();
-        osmValueDatalist.innerHTML = ''; 
-        let values = commonOsmTags[key] || ['yes']; 
-        values.forEach(val => { const opt = document.createElement('option'); opt.value = val; osmValueDatalist.appendChild(opt); });
-    });
-}
+btnOsmInspect?.addEventListener('click', () => {
+    const container = getEl('osm-inspect-container');
+    const status = getEl('osm-inspect-status');
+    const results = getEl('osm-inspect-results');
 
-if (btnOsmInspect) {
-    btnOsmInspect.addEventListener('click', () => {
-        osmInspectContainer.classList.remove('hidden');
-        osmInspectContainer.classList.add('flex');
-        osmInspectStatus.textContent = 'Click and drag a box on the map...';
-        osmInspectStatus.classList.remove('hidden');
-        osmInspectResults.innerHTML = '';
-        
-        drawingMode = 'inspect';
+    container?.classList.remove('hidden');
+    container?.classList.add('flex');
+    if (status) {
+        status.textContent = 'Click and drag a box on the map...';
+        status.classList.remove('hidden');
+    }
+    if (results) results.innerHTML = '';
+    
+    drawingMode = 'inspect';
+    drawLayerGroup.clearLayers();
+    map.getContainer().style.cursor = 'crosshair';
+    showToast("Click and drag a box on the map to inspect tags.");
+});
+
+btnCloseInspect?.addEventListener('click', () => {
+    getEl('osm-inspect-container')?.classList.add('hidden');
+    getEl('osm-inspect-container')?.classList.remove('flex');
+    if (drawingMode === 'inspect') {
+        drawingMode = null;
+        map.getContainer().style.cursor = '';
         drawLayerGroup.clearLayers();
-        map.getContainer().style.cursor = 'crosshair';
-    });
-}
+    }
+});
 
-if (btnCloseInspect) {
-    btnCloseInspect.addEventListener('click', () => {
-        osmInspectContainer.classList.add('hidden');
-        osmInspectContainer.classList.remove('flex');
-        if (drawingMode === 'inspect') {
-            drawingMode = null;
-            map.getContainer().style.cursor = '';
-            drawLayerGroup.clearLayers();
-        }
-    });
-}
-
-btnDraw.addEventListener('click', () => {
+btnDraw?.addEventListener('click', () => {
+  if (!filterType) return;
   drawingMode = filterType.value; drawLayerGroup.clearLayers(); filterGeometryData = null;
-  btnApplyFilter.disabled = true; map.getContainer().style.cursor = 'crosshair'; drawStatus.classList.remove('hidden');
+  if (btnApplyFilter) btnApplyFilter.disabled = true; map.getContainer().style.cursor = 'crosshair'; drawStatus?.classList.remove('hidden');
 });
 
 map.on('mousedown', (e) => {
   if (drawingMode === 'box' || drawingMode === 'inspect') { 
       drawLayerGroup.clearLayers(); map.dragging.disable(); drawStart = e.latlng; 
-      const color = drawingMode === 'inspect' ? '#4f46e5' : '#0d9488'; 
+      const color = drawingMode === 'inspect' ? '#2563eb' : '#0d9488'; 
       tempShape = L.rectangle([drawStart, drawStart], { color: color, weight: 2, fillOpacity: 0.2 }).addTo(drawLayerGroup); 
   }
 });
@@ -1883,59 +1828,60 @@ map.on('mouseup', (e) => {
 map.on('click', (e) => {
   if (drawingMode === 'radius') {
     drawLayerGroup.clearLayers(); drawStart = e.latlng;
-    const radKm = parseFloat(filterRadius.value) || 5;
+    const radKm = parseFloat(filterRadius?.value) || 5;
     tempShape = L.circle(drawStart, { radius: radKm * 1000, color: '#0d9488', weight: 2, fillOpacity: 0.2 }).addTo(drawLayerGroup);
     L.marker(drawStart).addTo(drawLayerGroup); filterGeometryData = drawStart; drawingMode = null; map.getContainer().style.cursor = ''; checkApplyButton();
   }
 });
 
-filterRadius.addEventListener('input', checkApplyButton);
+filterRadius?.addEventListener('input', checkApplyButton);
 
-filterType.addEventListener('change', (e) => {
+filterType?.addEventListener('change', (e) => {
   const type = e.target.value;
   const layer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
   
-  filterRadius.classList.add('hidden');
-  filterDataContainer.classList.add('hidden');
-  filterDataContainer.classList.remove('flex');
-  btnDraw.classList.remove('hidden');
-  drawStatus.classList.remove('hidden');
+  filterRadius?.classList.add('hidden');
+  filterDataContainer?.classList.add('hidden');
+  filterDataContainer?.classList.remove('flex');
+  btnDraw?.classList.remove('hidden');
+  drawStatus?.classList.remove('hidden');
   
-  if(type === 'radius') {
-    filterRadius.classList.remove('hidden');
-    drawStatus.textContent = 'Click on map to set center point.';
+  if (type === 'radius') {
+    filterRadius?.classList.remove('hidden');
+    if (drawStatus) drawStatus.textContent = 'Click on map to set center point.';
   } else if (type === 'box') {
-    drawStatus.textContent = 'Click & drag on map to draw box.';
+    if (drawStatus) drawStatus.textContent = 'Click & drag on map to draw box.';
   } else if (type === 'data') {
-    btnDraw.classList.add('hidden');
-    filterDataContainer.classList.remove('hidden');
-    filterDataContainer.classList.add('flex');
-    if(layer) triggerDataFilterSetup(layer);
+    btnDraw?.classList.add('hidden');
+    filterDataContainer?.classList.remove('hidden');
+    filterDataContainer?.classList.add('flex');
+    if (layer) triggerDataFilterSetup(layer);
   }
   checkApplyButton();
 });
 
-filterDataCol.addEventListener('change', (e) => {
+filterDataCol?.addEventListener('change', (e) => {
     const col = e.target.value;
     const layer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
     if (!layer || !col) return;
     
-    filterDataSearch.value = '';
-    btnClearFilterSearch.classList.add('hidden');
+    if (filterDataSearch) filterDataSearch.value = '';
+    btnClearFilterSearch?.classList.add('hidden');
 
-    let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[col]))];
+    let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties ? f.properties[col] : undefined))];
     uniqueVals = uniqueVals.filter(v => v !== null && v !== undefined).sort();
 
+    if (!filterDataValues) return;
     if (uniqueVals.length === 0) {
-        filterDataValues.innerHTML = '<p class="text-gray-400 dark:text-gray-500 italic text-center">No unique values found.</p>';
+        filterDataValues.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center">No unique values found.</p>';
         return;
     }
 
-    let html = '<div class="flex flex-col space-y-1">';
+    let html = '<div class="flex flex-col space-y-0.5">';
     uniqueVals.forEach(val => {
         html += `
-            <label class="flex items-center space-x-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 p-1 rounded transition-colors">
-                <input type="checkbox" class="filter-data-val-cb w-3 h-3 text-teal-600 dark:text-teal-500 rounded accent-teal-600 dark:accent-teal-500" value="${val}">
+            <label class="flex items-center space-x-1.5 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 p-0.5 rounded transition-colors">
+                <input type="checkbox" class="filter-data-val-cb w-3 h-3 text-blue-600 dark:text-blue-500 rounded accent-blue-600 dark:accent-blue-500" value="${val}">
                 <span class="truncate dark:text-gray-300" title="${val}">${val}</span>
             </label>
         `;
@@ -1949,9 +1895,9 @@ filterDataCol.addEventListener('change', (e) => {
     checkApplyButton();
 });
 
-document.getElementById('btn-filter-select-all').addEventListener('click', () => {
+getEl('btn-filter-select-all')?.addEventListener('click', () => {
     const visibleLabels = Array.from(document.querySelectorAll('#filter-data-values label:not(.hidden)'));
-    const cbs = visibleLabels.map(l => l.querySelector('.filter-data-val-cb'));
+    const cbs = visibleLabels.map(l => l.querySelector('.filter-data-val-cb')).filter(Boolean);
     if (cbs.length === 0) return;
     
     const allChecked = cbs.every(cb => cb.checked);
@@ -1959,38 +1905,40 @@ document.getElementById('btn-filter-select-all').addEventListener('click', () =>
     checkApplyButton();
 });
 
-btnApplyFilter.addEventListener('click', async () => {
+btnApplyFilter?.addEventListener('click', async () => {
   const targetLayer = activeLayers.find(l => l.uniqueKey === activeCropLayerKey);
   if (!targetLayer) return;
-  if (filterType.value !== 'data' && !targetLayer.exportUrl && !targetLayer.isLocalGeoJSON) return showToast("Cannot filter this layer from server.", true);
+  if (filterType?.value !== 'data' && !targetLayer.exportUrl && !targetLayer.isLocalGeoJSON) return showToast("Cannot filter this layer from server.", true);
 
-  document.getElementById('btn-filter-text').textContent = 'Filtering...';
-  document.getElementById('btn-filter-spinner').classList.remove('hidden');
+  const filterText = getEl('btn-filter-text');
+  const filterSpinner = getEl('btn-filter-spinner');
+  if (filterText) filterText.textContent = 'Filtering...';
+  filterSpinner?.classList.remove('hidden');
   btnApplyFilter.disabled = true;
 
   try {
     let finalFeatures = [];
-    if (filterType.value === 'data') {
-        const col = filterDataCol.value;
+    if (filterType?.value === 'data') {
+        const col = filterDataCol?.value;
         const selectedVals = Array.from(document.querySelectorAll('.filter-data-val-cb:checked')).map(cb => cb.value);
-        finalFeatures = targetLayer.geoJsonData.features.filter(f => selectedVals.includes(String(f.properties[col])));
+        finalFeatures = targetLayer.geoJsonData.features.filter(f => f.properties && selectedVals.includes(String(f.properties[col])));
     } else {
         if (targetLayer.isLocalGeoJSON) {
             let b; 
-            if (filterType.value === 'box') {
+            if (filterType?.value === 'box') {
                b = filterGeometryData;
                const turfBbox = turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
                finalFeatures = targetLayer.geoJsonData.features.filter(f => turf.booleanIntersects(f, turfBbox));
             } else {
-               const radKm = parseFloat(filterRadius.value) || 5;
+               const radKm = parseFloat(filterRadius?.value) || 5;
                const turfCircle = turf.circle([filterGeometryData.lng, filterGeometryData.lat], radKm, {units: 'kilometers'});
                finalFeatures = targetLayer.geoJsonData.features.filter(f => turf.booleanIntersects(f, turfCircle));
             }
         } else {
             let queryUrl = targetLayer.exportUrl;
             let b; 
-            if (filterType.value === 'box') b = filterGeometryData; 
-            else b = filterGeometryData.toBounds((parseFloat(filterRadius.value) || 5) * 1000); 
+            if (filterType?.value === 'box') b = filterGeometryData; 
+            else b = filterGeometryData.toBounds((parseFloat(filterRadius?.value) || 5) * 1000); 
 
             if (queryUrl.includes('WFS') || queryUrl.includes('GetFeature')) queryUrl += `&bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()},EPSG:4326`;
             else queryUrl += `&geometry=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&geometryType=esriGeometryEnvelope&inSR=4326`;
@@ -1999,8 +1947,8 @@ btnApplyFilter.addEventListener('click', async () => {
             const rawGeojson = await res.json();
             finalFeatures = rawGeojson.features || [];
 
-            if (filterType.value === 'radius' && finalFeatures.length > 0) {
-                const radKm = parseFloat(filterRadius.value) || 5;
+            if (filterType?.value === 'radius' && finalFeatures.length > 0) {
+                const radKm = parseFloat(filterRadius?.value) || 5;
                 const turfCircle = turf.circle([filterGeometryData.lng, filterGeometryData.lat], radKm, {units: 'kilometers'});
                 finalFeatures = finalFeatures.filter(f => { try { return turf.booleanIntersects(f, turfCircle); } catch(e) { return false; } });
             }
@@ -2010,7 +1958,7 @@ btnApplyFilter.addEventListener('click', async () => {
     if (finalFeatures.length === 0) { showToast("Filter resulted in 0 features.", true); return; }
 
     const newGeoJsonData = { type: "FeatureCollection", features: finalFeatures };
-    const newStyleState = targetLayer.customStyle ? JSON.parse(JSON.stringify(targetLayer.customStyle)) : { type: 'single', fillColor: '#0d9488', fillOpacity: 0.5, color: '#0d9488', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+    const newStyleState = targetLayer.customStyle ? JSON.parse(JSON.stringify(targetLayer.customStyle)) : { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
 
     const uniqueKey = Math.random().toString(36).substr(2,9);
     const paneName = 'pane-' + uniqueKey;
@@ -2018,7 +1966,7 @@ btnApplyFilter.addEventListener('click', async () => {
     const newMapLayer = createCustomGeoJSONLayer(newGeoJsonData, newStyleState, paneName).addTo(map);
     map.fitBounds(newMapLayer.getBounds());
 
-    const namePrefix = filterType.value === 'data' ? '[Filtered]' : '[Cropped]';
+    const namePrefix = filterType?.value === 'data' ? '[Filtered]' : '[Cropped]';
     activeLayers.unshift({ uniqueKey: uniqueKey, id: `${targetLayer.id}_filtered`, displayName: `${namePrefix} ${targetLayer.displayName}`, mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJsonData, customStyle: newStyleState, isVisible: true });
 
     if (targetLayer.isVisible) { targetLayer.isVisible = false; map.removeLayer(targetLayer.mapLayer); }
@@ -2029,22 +1977,31 @@ btnApplyFilter.addEventListener('click', async () => {
   } catch(err) {
     showToast("Filter failed. Server might restrict spatial queries.", true);
   } finally {
-    document.getElementById('btn-filter-text').textContent = 'Apply'; document.getElementById('btn-filter-spinner').classList.add('hidden'); btnApplyFilter.disabled = false;
+    if (filterText) filterText.textContent = 'Apply'; 
+    filterSpinner?.classList.add('hidden'); 
+    btnApplyFilter.disabled = false;
   }
 });
 
-document.getElementById('btn-fetch').addEventListener('click', async () => {
-  currentServerType = document.getElementById('server-type').value;
+// Shared Handler for Fetch Triggering (Works for both OSM and URL buttons)
+const handleFetchLayers = async () => {
+  const sType = getEl('server-type');
+  if (!sType) return;
+  currentServerType = sType.value;
   clearAllPreviews(); 
-  document.getElementById('btn-fetch-spinner').classList.remove('hidden'); document.getElementById('btn-fetch-text').textContent = 'Fetching...';
+  
+  const fetchSpinner = getEl('btn-fetch-spinner') || getEl('btn-fetch-spinner-url');
+  const fetchText = getEl('btn-fetch-text') || getEl('btn-fetch-text-url');
+  fetchSpinner?.classList.remove('hidden'); 
+  if (fetchText) fetchText.textContent = 'Fetching...';
 
   try {
     if (currentServerType === 'OVERPASS') {
-        const key = document.getElementById('osm-key').value.trim();
-        const val = document.getElementById('osm-value').value.trim();
-        const featName = document.getElementById('osm-name').value.trim();
-        const loc = document.getElementById('osm-location').value.trim();
-        const geomType = document.getElementById('osm-geom').value;
+        const key = getEl('osm-key')?.value.trim();
+        const val = getEl('osm-value')?.value.trim();
+        const featName = getEl('osm-name')?.value.trim();
+        const loc = getEl('osm-location')?.value.trim();
+        const geomType = getEl('osm-geom')?.value;
 
         if (!key) throw new Error("Please enter a Tag Key.");
 
@@ -2053,12 +2010,12 @@ document.getElementById('btn-fetch').addEventListener('click', async () => {
         if (featName) tagFilter += `["name"~"${featName}",i]`;
 
         if (loc) {
-            document.getElementById('btn-fetch-text').textContent = 'Locating Area...';
+            if (fetchText) fetchText.textContent = 'Locating Area...';
             const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(loc)}&format=json&limit=1`);
             const nomData = await nomRes.json();
             if (nomData.length === 0) throw new Error(`Could not find the location: "${loc}"`);
             
-            document.getElementById('btn-fetch-text').textContent = 'Fetching Data...';
+            if (fetchText) fetchText.textContent = 'Fetching Data...';
             const place = nomData[0];
             
             if (place.osm_type === 'relation' || place.osm_type === 'way') {
@@ -2105,38 +2062,45 @@ document.getElementById('btn-fetch').addEventListener('click', async () => {
         let autoCity = null;
         if (!loc) {
             const cities = {};
-            geoJson.features.forEach(f => { const c = f.properties['addr:city'] || f.properties['is_in:city'] || f.properties['is_in:municipality']; if (c) cities[c] = (cities[c] || 0) + 1; });
+            geoJson.features.forEach(f => { const c = f.properties ? (f.properties['addr:city'] || f.properties['is_in:city'] || f.properties['is_in:municipality']) : null; if (c) cities[c] = (cities[c] || 0) + 1; });
             autoCity = Object.keys(cities).sort((a,b) => cities[b] - cities[a])[0];
         }
 
         if (loc && featName) layerName = `OSM: ${featName}, ${loc} (${key})`;
         else if (featName) layerName = `OSM: ${featName} (${key})`;
         else if (loc) layerName = `OSM: ${loc} (${key}${val ? '=' + val : ''})`;
-        else if (geoJson.features.length === 1 && geoJson.features[0].properties.name) layerName = `OSM: ${geoJson.features[0].properties.name} (${key}${val ? '=' + val : ''})`;
+        else if (geoJson.features.length === 1 && geoJson.features[0].properties && geoJson.features[0].properties.name) layerName = `OSM: ${geoJson.features[0].properties.name} (${key}${val ? '=' + val : ''})`;
         else if (autoCity) layerName = `OSM: ${autoCity} (${key}${val ? '=' + val : ''})`;
         else layerName = `OSM: Map View (${key}${val ? '=' + val : ''})`;
 
         fetchedLayers = [{ id: `osm_${Date.now()}`, title: layerName, geoJsonData: geoJson }];
         lastFetchedOsmGeoJson = geoJson; lastFetchedOsmLayerName = layerName;
         
-        const toolsContainer = document.getElementById('osm-available-tools');
-        toolsContainer.classList.remove('hidden'); toolsContainer.classList.add('flex');
+        const toolsContainer = getEl('osm-available-tools');
+        if (toolsContainer) { toolsContainer.classList.remove('hidden'); toolsContainer.classList.add('flex'); }
 
         const cols = new Set();
         geoJson.features.forEach(f => { if(f.properties) Object.keys(f.properties).forEach(k => cols.add(k)); });
         
-        const sel = document.getElementById('available-split-col');
-        sel.innerHTML = '<option value="" disabled selected>Select attribute...</option>';
-        Array.from(cols).sort().forEach(c => { sel.innerHTML += `<option value="${c}">${c}</option>`; });
+        const sel = getEl('available-split-col');
+        if (sel) {
+            sel.innerHTML = '<option value="" disabled selected>Select attribute...</option>';
+            Array.from(cols).sort().forEach(c => { sel.innerHTML += `<option value="${c}">${c}</option>`; });
+        }
 
         renderAvailableLayers(); switchTab('available'); showToast(`Fetched ${geoJson.features.length} OSM features for preview!`);
         return;
     }
 
-    const rawUrl = document.getElementById('server-url').value.trim();
+    const sUrl = getEl('server-url');
+    const rawUrl = sUrl ? sUrl.value.trim() : '';
     if (!rawUrl) throw new Error("Enter URL.");
-    currentServerUrl = rawUrl; fetchedLayers = []; layerSearch.value = ''; btnClearSearch.classList.add('hidden');
-    document.getElementById('osm-available-tools').classList.add('hidden'); document.getElementById('osm-available-tools').classList.remove('flex');
+    currentServerUrl = rawUrl; fetchedLayers = []; 
+    if (layerSearch) layerSearch.value = ''; 
+    btnClearSearch?.classList.add('hidden');
+    
+    const toolsContainer = getEl('osm-available-tools');
+    if (toolsContainer) { toolsContainer.classList.add('hidden'); toolsContainer.classList.remove('flex'); }
 
     let targetUrl = new URL(rawUrl);
     if (currentServerType === 'WFS') { targetUrl.searchParams.set('service', 'WFS'); targetUrl.searchParams.set('request', 'GetCapabilities'); } 
@@ -2161,18 +2125,43 @@ document.getElementById('btn-fetch').addEventListener('click', async () => {
 
   } catch(e) {
     showToast(e.message || "Fetch failed. Check console.", true);
-    if (currentServerType !== 'OVERPASS') {
-        availableLayerList.innerHTML = `<p class="text-sm text-red-500 dark:text-red-400 italic text-center mt-4">Failed to fetch. Check server URL.</p>`; searchContainer.classList.add('hidden');
+    if (currentServerType !== 'OVERPASS' && availableLayerList) {
+        availableLayerList.innerHTML = `<p class="text-xs text-red-500 italic text-center mt-3">Failed to fetch. Check server URL.</p>`; searchContainer?.classList.add('hidden');
     }
   } finally {
-    document.getElementById('btn-fetch-spinner').classList.add('hidden'); document.getElementById('btn-fetch-text').textContent = currentServerType === 'OVERPASS' ? 'Fetch OSM Data' : 'Fetch Layers';
+    fetchSpinner?.classList.add('hidden'); 
+    if (fetchText) fetchText.textContent = currentServerType === 'OVERPASS' ? 'Fetch OSM Data' : 'Fetch Layers';
   }
-});
+};
+
+document.querySelectorAll('.btn-trigger-fetch').forEach(btn => btn.addEventListener('click', handleFetchLayers));
+
 
 // ==========================================
 // 9. APP BOOTSTRAP
 // ==========================================
+const initOsmDatalists = () => {
+    const keysList = getEl('osm-keys');
+    const valuesList = getEl('osm-values');
+    const keyInput = getEl('osm-key');
+
+    if (keysList) {
+        keysList.innerHTML = Object.keys(commonOsmTags).map(k => `<option value="${k}">`).join('');
+    }
+
+    const populateValues = (selectedKey) => {
+        if (!valuesList) return;
+        const key = selectedKey ? selectedKey.toLowerCase().trim() : '';
+        const values = commonOsmTags[key] || ['yes'];
+        valuesList.innerHTML = values.map(v => `<option value="${v}">`).join('');
+    };
+
+    keyInput?.addEventListener('input', (e) => populateValues(e.target.value));
+    keyInput?.addEventListener('focus', (e) => populateValues(e.target.value));
+};
+
 loadSavedServers();
+initOsmDatalists();
 
 try {
     const savedSession = localStorage.getItem('gis_previewer_auto_save');
@@ -2183,3 +2172,86 @@ try {
 } catch(e) {
     console.warn("Could not auto-restore previous workspace.", e);
 }
+
+
+// ==========================================
+// 10. SIDEBAR HORIZONTAL RESIZER
+// ==========================================
+const initSidebarResizer = () => {
+    const leftPanel = getEl('left-panel');
+    const resizer = getEl('sidebar-resizer');
+    if (!leftPanel || !resizer) return;
+
+    const minWidth = leftPanel.offsetWidth || 320;
+    let isResizing = false;
+
+    resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        isResizing = true;
+        document.body.classList.add('select-none', 'cursor-col-resize');
+
+        const doDrag = (moveEvt) => {
+            if (!isResizing) return;
+            const newWidth = Math.max(minWidth, moveEvt.clientX);
+            leftPanel.style.width = `${newWidth}px`;
+            map.invalidateSize();
+        };
+
+        const stopDrag = () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.classList.remove('select-none', 'cursor-col-resize');
+                window.removeEventListener('mousemove', doDrag);
+                window.removeEventListener('mouseup', stopDrag);
+                map.invalidateSize();
+            }
+        };
+
+        window.addEventListener('mousemove', doDrag);
+        window.addEventListener('mouseup', stopDrag);
+    });
+};
+
+initSidebarResizer();
+
+
+// ==========================================
+// 11. SUBMENU VERTICAL RESIZER
+// ==========================================
+const initContextPanelResizer = () => {
+    const wrapper = getEl('context-panel-wrapper');
+    const resizer = getEl('context-resizer');
+    if (!wrapper || !resizer) return;
+
+    let isResizing = false;
+
+    resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        isResizing = true;
+        document.body.classList.add('select-none', 'cursor-row-resize');
+
+        const startY = e.clientY;
+        const startHeight = wrapper.offsetHeight;
+
+        const doDrag = (moveEvt) => {
+            if (!isResizing) return;
+            const dy = startY - moveEvt.clientY;
+            const newHeight = Math.max(120, Math.min(600, startHeight + dy));
+            wrapper.style.height = `${newHeight}px`;
+        };
+
+        const stopDrag = () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.classList.remove('select-none', 'cursor-row-resize');
+                window.removeEventListener('mousemove', doDrag);
+                window.removeEventListener('mouseup', stopDrag);
+            }
+        };
+
+        window.addEventListener('mousemove', doDrag);
+        window.addEventListener('mouseup', stopDrag);
+    });
+};
+
+initContextPanelResizer();
