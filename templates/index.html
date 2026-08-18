@@ -75,10 +75,29 @@
   <div class="flex flex-col md:flex-row h-screen w-full">
     <!-- Left Control Panel -->
     <div class="w-full md:w-[38%] lg:w-[35%] xl:w-[30%] h-full bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col p-4 shadow-sm z-10 min-w-[380px] transition-colors duration-200">
-      <h1 class="text-xl font-bold mb-4 text-slate-700 dark:text-slate-200 border-b border-gray-200 dark:border-gray-700 pb-2 shrink-0">GIS Layer Previewer</h1>
+      <h1 class="text-xl font-bold mb-3 text-slate-700 dark:text-slate-200 border-b border-gray-200 dark:border-gray-700 pb-2 shrink-0">GIS Layer Previewer</h1>
       
+      <!-- Workspace Management Section -->
+      <div class="mb-3 shrink-0 bg-slate-50 dark:bg-gray-800/80 p-2 rounded-md border border-gray-200 dark:border-gray-700 shadow-sm">
+        <div class="flex justify-between items-center mb-2">
+            <span class="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider"><i class="fa-solid fa-floppy-disk mr-1"></i>Workspace Session</span>
+            <button id="btn-clear-workspace" class="text-[10px] text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 font-bold transition-colors" title="Clear active map layers">
+                <i class="fa-solid fa-rotate-left mr-1"></i>Reset
+            </button>
+        </div>
+        <div class="flex space-x-2">
+            <button id="btn-export-workspace" class="flex-1 bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:hover:bg-indigo-800 text-indigo-700 dark:text-indigo-300 font-bold py-1.5 px-2 rounded text-xs transition-colors shadow-sm flex items-center justify-center">
+                <i class="fa-solid fa-download mr-1.5"></i> Export
+            </button>
+            <label id="btn-import-workspace-label" class="flex-1 bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:hover:bg-indigo-800 text-indigo-700 dark:text-indigo-300 font-bold py-1.5 px-2 rounded text-xs transition-colors shadow-sm flex items-center justify-center cursor-pointer">
+                <i class="fa-solid fa-upload mr-1.5"></i> Import
+                <input type="file" id="file-import-workspace" accept=".json" class="hidden">
+            </label>
+        </div>
+      </div>
+
       <!-- Server Database UI -->
-      <div class="mb-4 shrink-0 bg-gray-50 dark:bg-gray-800/80 p-2 rounded-md border border-gray-200 dark:border-gray-700 transition-colors duration-200">
+      <div class="mb-3 shrink-0 bg-gray-50 dark:bg-gray-800/80 p-2 rounded-md border border-gray-200 dark:border-gray-700 transition-colors duration-200">
         <div class="flex justify-between items-center mb-2">
             <span class="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider"><i class="fa-solid fa-database mr-1"></i>Server Database</span>
             <button id="btn-save-server" class="text-[10px] bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/40 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 font-bold py-1 px-2 rounded transition-colors shadow-sm flex items-center" title="Save URL below to database">
@@ -101,14 +120,14 @@
       </div>
 
       <!-- URL Input for WFS / ESRI -->
-      <div id="server-url-container" class="mb-4 shrink-0">
+      <div id="server-url-container" class="mb-3 shrink-0">
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Server URL</label>
         <input type="url" id="server-url" placeholder="https://example.com/geoserver/wfs" 
                class="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-colors duration-200">
       </div>
 
       <!-- Query Builder for OpenStreetMap -->
-      <div id="overpass-builder" class="hidden shrink-0 mb-4 bg-indigo-50 dark:bg-gray-800/80 p-3 rounded-md border border-indigo-200 dark:border-indigo-800/50 shadow-inner">
+      <div id="overpass-builder" class="hidden shrink-0 mb-3 bg-indigo-50 dark:bg-gray-800/80 p-3 rounded-md border border-indigo-200 dark:border-indigo-800/50 shadow-inner">
         <div class="text-[11px] font-bold text-indigo-700 dark:text-indigo-400 mb-3 uppercase tracking-wider"><i class="fa-solid fa-map-location-dot mr-1"></i> OSM Data Query</div>
         
         <div class="flex space-x-2 mb-3">
@@ -176,13 +195,13 @@
         </div>
       </div>
 
-      <button id="btn-fetch" class="w-full bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-medium py-2 px-4 rounded-md transition-colors flex items-center justify-center mb-4 shadow-sm shrink-0">
+      <button id="btn-fetch" class="w-full bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-medium py-2 px-4 rounded-md transition-colors flex items-center justify-center mb-3 shadow-sm shrink-0">
         <span id="btn-fetch-text">Fetch Layers</span>
         <svg id="btn-fetch-spinner" class="animate-spin ml-2 h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
       </button>
 
       <!-- Main Layer Management UI -->
-      <div class="flex-1 overflow-hidden flex flex-col min-h-0 border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-900/50 mb-4 shadow-inner transition-colors duration-200">
+      <div class="flex-1 overflow-hidden flex flex-col min-h-0 border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-900/50 mb-3 shadow-inner transition-colors duration-200">
         <!-- Tabs -->
         <div class="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0 transition-colors duration-200">
           <button id="tab-btn-available" class="flex-1 py-2 text-xs font-semibold text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400 uppercase tracking-wider transition-colors">Available</button>
@@ -402,12 +421,39 @@
     };
 
     const updateMapLayerOrder = () => {
+        // Process layers from bottom of the UI list to the top.
+        // This ensures the top item in the UI is rendered last (visually on top).
         for (let i = activeLayers.length - 1; i >= 0; i--) {
             const layer = activeLayers[i];
             if (!layer.isVisible) continue;
-            if (typeof layer.mapLayer.setZIndex === 'function') layer.mapLayer.setZIndex(1000 - i); 
-            if (typeof layer.mapLayer.bringToFront === 'function') layer.mapLayer.bringToFront();
+            
+            const z = 1000 - i;
+            
+            // 1. Raster Tile Layers (WFS, Esri MapServer)
+            if (typeof layer.mapLayer.setZIndex === 'function') {
+                layer.mapLayer.setZIndex(z);
+            }
+            
+            // 2. Primary Vector Layer Container
+            if (typeof layer.mapLayer.bringToFront === 'function') {
+                layer.mapLayer.bringToFront();
+            }
+            
+            // 3. Drill down into FeatureGroups to explicitly reorder nested paths and HTML Markers
+            if (typeof layer.mapLayer.eachLayer === 'function') {
+                layer.mapLayer.eachLayer(child => {
+                    // Force SVG paths (polygons, lines, circleMarkers) to the front
+                    if (typeof child.bringToFront === 'function') {
+                        child.bringToFront();
+                    }
+                    // Force DOM markers (custom squares/triangles) to use accurate CSS z-indexing
+                    if (typeof child.setZIndexOffset === 'function') {
+                        child.setZIndexOffset(z);
+                    }
+                });
+            }
         }
+        autoSaveWorkspace(); 
     };
     
     const clearAllPreviews = () => {
@@ -454,6 +500,145 @@
         mapLayer.addTo(map);
         previewLayers[layerId] = mapLayer;
     };
+
+    // --- WORKSPACE PERSISTENCE LOGIC ---
+    const serializeWorkspace = () => {
+        const center = map.getCenter();
+        const zoom = map.getZoom();
+
+        const layersData = activeLayers.map(l => ({
+            uniqueKey: l.uniqueKey,
+            id: l.id,
+            displayName: l.displayName,
+            exportUrl: l.exportUrl,
+            isLocalGeoJSON: l.isLocalGeoJSON,
+            geoJsonData: l.geoJsonData,
+            customStyle: l.customStyle,
+            isVisible: l.isVisible
+        }));
+
+        return {
+            version: "1.0",
+            savedAt: new Date().toISOString(),
+            mapState: { lat: center.lat, lng: center.lng, zoom },
+            activeLayers: layersData
+        };
+    };
+
+    const autoSaveWorkspace = () => {
+        try {
+            const data = serializeWorkspace();
+            localStorage.setItem('gis_previewer_auto_save', JSON.stringify(data));
+        } catch (e) {
+            console.warn("Auto-save failed: Storage limit may be reached.", e);
+        }
+    };
+
+    const restoreWorkspaceState = (data) => {
+        closeAllPanels();
+        clearAllPreviews();
+
+        // Clear currently loaded active map layers
+        activeLayers.forEach(l => {
+            if (l.mapLayer) map.removeLayer(l.mapLayer);
+        });
+        activeLayers = [];
+
+        // Restore map view
+        if (data.mapState && data.mapState.lat !== undefined) {
+            map.setView([data.mapState.lat, data.mapState.lng], data.mapState.zoom || 10);
+        }
+
+        // Reconstruct active layers
+        if (data.activeLayers && Array.isArray(data.activeLayers)) {
+            data.activeLayers.forEach(lData => {
+                let mapLayer;
+                
+                if (lData.isLocalGeoJSON && lData.geoJsonData) {
+                    mapLayer = L.geoJSON(lData.geoJsonData, {
+                        style: createGeoJsonStyleFunction(lData.customStyle),
+                        pointToLayer: createGeoJsonPointToLayer(lData.customStyle),
+                        onEachFeature: attachPopupsToFeatures
+                    });
+                } else if (lData.exportUrl) {
+                    const baseUrl = lData.exportUrl.split('?')[0];
+                    if (lData.exportUrl.includes('WFS')) {
+                        mapLayer = L.tileLayer.wms(baseUrl, { layers: lData.id, format: 'image/png', transparent: true });
+                    } else if (lData.exportUrl.includes('featureserver')) {
+                        mapLayer = L.esri.featureLayer({ url: baseUrl });
+                    } else {
+                        mapLayer = L.esri.dynamicMapLayer({ url: baseUrl, layers: [lData.id], opacity: 0.8 });
+                    }
+                }
+
+                if (mapLayer) {
+                    if (lData.isVisible) mapLayer.addTo(map);
+                    
+                    activeLayers.push({
+                        uniqueKey: lData.uniqueKey || Math.random().toString(36).substr(2,9),
+                        id: lData.id,
+                        displayName: lData.displayName,
+                        mapLayer: mapLayer,
+                        exportUrl: lData.exportUrl,
+                        isLocalGeoJSON: lData.isLocalGeoJSON,
+                        geoJsonData: lData.geoJsonData,
+                        customStyle: lData.customStyle,
+                        isVisible: lData.isVisible ?? true
+                    });
+                }
+            });
+        }
+
+        renderAddedLayers();
+        updateMapLayerOrder();
+    };
+
+    // Export Workspace File
+    document.getElementById('btn-export-workspace').addEventListener('click', () => {
+        if (activeLayers.length === 0) return showToast("No active layers to export in workspace.", true);
+        const data = serializeWorkspace();
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+        const dateStr = new Date().toISOString().split('T')[0];
+        downloadBlob(blob, `gis_workspace_${dateStr}`);
+    });
+
+    // Import Workspace File
+    document.getElementById('file-import-workspace').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            try {
+                const data = JSON.parse(evt.target.result);
+                if (!data.activeLayers || !data.mapState) throw new Error("Invalid workspace file format.");
+                
+                restoreWorkspaceState(data);
+                switchTab('added');
+                showToast("Workspace restored successfully!");
+            } catch (err) {
+                console.error(err);
+                showToast("Failed to parse workspace JSON file.", true);
+            } finally {
+                e.target.value = ''; // Reset input
+            }
+        };
+        reader.readAsText(file);
+    });
+
+    // Reset / Clear Workspace
+    document.getElementById('btn-clear-workspace').addEventListener('click', () => {
+        if (activeLayers.length === 0) return;
+        if (confirm("Reset workspace? All added layers will be removed from the map.")) {
+            closeAllPanels();
+            clearAllPreviews();
+            activeLayers.forEach(l => map.removeLayer(l.mapLayer));
+            activeLayers = [];
+            localStorage.removeItem('gis_previewer_auto_save');
+            renderAddedLayers();
+            showToast("Workspace reset.");
+        }
+    });
 
     // --- UI Toggles ---
     document.getElementById('server-type').addEventListener('change', (e) => {
@@ -1000,13 +1185,18 @@
           updateMapLayerOrder(); 
       } else {
           map.removeLayer(layer.mapLayer);
+          autoSaveWorkspace();
       }
     };
 
     const handleRename = (e) => {
       const layer = activeLayers.find(l => l.uniqueKey === e.currentTarget.getAttribute('data-key'));
       const newName = prompt("Enter new display name:", layer.displayName);
-      if (newName) { layer.displayName = newName.trim(); renderAddedLayers(); }
+      if (newName) { 
+          layer.displayName = newName.trim(); 
+          renderAddedLayers(); 
+          autoSaveWorkspace();
+      }
     };
 
     const handleRemove = (e) => {
@@ -1020,6 +1210,7 @@
       } else {
          renderAddedLayers();
       }
+      autoSaveWorkspace();
     };
 
     // --- Path Styling (Polygons / Lines) ---
@@ -1130,6 +1321,8 @@
             layer.isLocalGeoJSON = true;
             layer.exportUrl = null; 
             layer.customStyle = defaultStyle; 
+            
+            autoSaveWorkspace();
             return true;
         } catch (err) {
             console.error(err);
@@ -1401,11 +1594,10 @@
             
             let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[propName]))];
             uniqueVals = uniqueVals.filter(v => v !== null && v !== undefined);
-
-            // Safety check for massive datasets
-            if (uniqueVals.length > 200 && !confirm(`This will generate ${uniqueVals.length} color pickers. Proceed?`)) {
-    return;
-}
+            
+            if (uniqueVals.length > 200 && !confirm(`This column contains ${uniqueVals.length} unique values. Generating color pickers for all of them may slow down your browser. Proceed?`)) {
+                return;
+            }
             
             if(uniqueVals.length === 0) {
                 catInnerList.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center">No unique values found.</p>';
@@ -2265,8 +2457,18 @@
       }
     });
     
-    // Initialize Database dropdown
+    // Initialize Database dropdown & Auto-restore previous workspace if available
     loadSavedServers();
+
+    try {
+        const savedSession = localStorage.getItem('gis_previewer_auto_save');
+        if (savedSession) {
+            const data = JSON.parse(savedSession);
+            restoreWorkspaceState(data);
+        }
+    } catch(e) {
+        console.warn("Could not auto-restore previous workspace.", e);
+    }
 
     // --- OSM Dynamic Combo Box Logic ---
     const commonOsmTags = {
