@@ -12,6 +12,26 @@ map.getPane('previewPane').style.zIndex = 2000;
 map.getPane('previewPane').style.pointerEvents = 'none';
 const previewRenderer = L.canvas({ pane: 'previewPane' });
 
+// Add resizable, minimizable floating map legend control
+let isLegendMinimized = false;
+let legendCustomWidth = null;
+let legendCustomHeight = null;
+
+window.toggleLegendMinimize = () => {
+    isLegendMinimized = !isLegendMinimized;
+    updateMapLegend();
+};
+
+const legendControl = L.control({ position: 'bottomright' });
+legendControl.onAdd = function () {
+    const div = L.DomUtil.create('div', 'relative bg-white/90 dark:bg-gray-800/90 backdrop-blur-md p-3 rounded-lg shadow-xl text-xs border border-gray-200 dark:border-gray-700 min-w-[170px] min-h-[42px] flex flex-col z-[1000] select-none');
+    div.id = 'map-legend-container';
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    return div;
+};
+legendControl.addTo(map);
+
 let fetchedLayers = [];
 let activeLayers = [];
 let previewLayers = {}; 
@@ -111,6 +131,179 @@ const removePane = (uniqueKey) => {
     }
 };
 
+const attachLegendResizeListeners = () => {
+    const container = document.getElementById('map-legend-container');
+    if (!container || isLegendMinimized) return;
+
+    const handleBR = document.getElementById('legend-resize-handle-br');
+    const handleTL = document.getElementById('legend-resize-handle-tl');
+
+    const updateScaleFactor = () => {
+        const w = container.offsetWidth || 200;
+        const h = container.offsetHeight || 140;
+        
+        // Baseline reference box: 200px by 140px
+        const scaleW = w / 200;
+        const scaleH = h / 140;
+        
+        // Geometric mean combines 2D area dimensions into a smooth scaling ratio
+        const geoScale = Math.sqrt(scaleW * scaleH);
+        const scale = Math.max(0.85, Math.min(1.8, geoScale));
+        
+        container.style.setProperty('--legend-scale', scale.toFixed(2));
+    };
+
+    const setupDrag = (handle, isTopLeft) => {
+        if (!handle) return;
+        handle.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const startX = e.clientX;
+            const startY = e.clientY;
+            const startW = container.offsetWidth;
+            const startH = container.offsetHeight;
+
+            map.dragging.disable();
+
+            const doDrag = (moveEvt) => {
+                moveEvt.preventDefault();
+                moveEvt.stopPropagation();
+
+                const dx = moveEvt.clientX - startX;
+                const dy = moveEvt.clientY - startY;
+
+                const newW = Math.max(170, Math.min(800, isTopLeft ? startW - dx : startW + dx));
+                const newH = Math.max(60, Math.min(800, isTopLeft ? startH - dy : startH + dy));
+
+                legendCustomWidth = newW + 'px';
+                legendCustomHeight = newH + 'px';
+
+                container.style.width = legendCustomWidth;
+                container.style.height = legendCustomHeight;
+
+                updateScaleFactor();
+            };
+
+            const stopDrag = () => {
+                window.removeEventListener('mousemove', doDrag);
+                window.removeEventListener('mouseup', stopDrag);
+                map.dragging.enable();
+            };
+
+            window.addEventListener('mousemove', doDrag);
+            window.addEventListener('mouseup', stopDrag);
+        });
+    };
+
+    setupDrag(handleBR, false);
+    setupDrag(handleTL, true);
+    updateScaleFactor();
+};
+
+const updateMapLegend = () => {
+    const container = document.getElementById('map-legend-container');
+    if (!container) return;
+
+    const visibleLayers = activeLayers.filter(l => l.isVisible);
+
+    let html = `
+        <div id="legend-resize-handle-tl" class="absolute top-0.5 left-0.5 w-4 h-4 cursor-nwse-resize flex items-center justify-center text-gray-300 hover:text-gray-500 dark:hover:text-gray-300 z-30 opacity-60 hover:opacity-100" title="Drag corner to resize">
+            <i class="fa-solid fa-up-right-and-down-left-from-center text-[8px] transform rotate-90"></i>
+        </div>
+
+        <div class="font-bold text-gray-800 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 pb-1.5 pl-3 flex items-center justify-between uppercase tracking-wider select-none shrink-0 ${isLegendMinimized ? '' : 'mb-2'}" style="font-size: calc(11px * var(--legend-scale, 1));">
+            <span class="cursor-pointer flex items-center space-x-1.5" onclick="window.toggleLegendMinimize()">
+                <i class="fa-solid fa-layer-group text-indigo-500"></i>
+                <span>Legend</span>
+                <span class="bg-indigo-100 dark:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full font-extrabold ml-1 border border-indigo-200 dark:border-indigo-700" style="font-size: calc(9px * var(--legend-scale, 1));">${visibleLayers.length}</span>
+            </span>
+            <button onclick="window.toggleLegendMinimize()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 px-1 transition-colors" title="${isLegendMinimized ? 'Expand Legend' : 'Minimize Legend'}">
+                <i class="fa-solid ${isLegendMinimized ? 'fa-chevron-up' : 'fa-chevron-down'}"></i>
+            </button>
+        </div>
+    `;
+
+    if (isLegendMinimized) {
+        container.style.width = 'auto';
+        container.style.height = 'auto';
+        container.innerHTML = html;
+        return;
+    }
+
+    if (legendCustomWidth) container.style.width = legendCustomWidth;
+    if (legendCustomHeight) container.style.height = legendCustomHeight;
+
+    if (visibleLayers.length === 0) {
+        html += `<p class="text-gray-400 dark:text-gray-500 italic py-1" style="font-size: calc(10px * var(--legend-scale, 1));">No visible layers</p>`;
+    } else {
+        html += `<div class="space-y-2 overflow-y-auto custom-scroll flex-1 pr-1 w-full">`;
+
+        visibleLayers.forEach(layer => {
+            const cs = layer.customStyle || { type: 'single', fillColor: '#4f46e5', fillOpacity: 0.5, color: '#4f46e5', opacity: 1.0, pointShape: 'circle' };
+            
+            html += `<div class="legend-layer-card p-2 rounded bg-gray-50/80 dark:bg-gray-700/50 border border-gray-200/80 dark:border-gray-600/60 space-y-1 w-full" style="padding: calc(6px * var(--legend-scale, 1));">
+                <div class="font-bold text-gray-800 dark:text-gray-100 leading-tight break-words" style="font-size: calc(11px * var(--legend-scale, 1));" title="${layer.displayName}">
+                    ${layer.displayName}
+                </div>`;
+
+            if (cs.type === 'categorical' && cs.categories) {
+                html += `<div class="inline-block text-gray-500 dark:text-gray-400 font-mono bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded border border-gray-200 dark:border-gray-700 leading-none mb-1" style="font-size: calc(8.5px * var(--legend-scale, 1));">Column: ${cs.property}</div>`;
+                
+                html += `<div class="grid grid-cols-[repeat(auto-fill,minmax(calc(100px*var(--legend-scale,1)),1fr))] gap-2 w-full items-center">`;
+                const entries = Object.entries(cs.categories);
+
+                entries.forEach(([catVal, catStyle]) => {
+                    html += `
+                        <div class="flex items-center space-x-2 min-w-0">
+                            <span class="shrink-0 rounded-sm border shadow-xs" style="width: calc(11px * var(--legend-scale, 1)); height: calc(11px * var(--legend-scale, 1)); background-color: ${catStyle.fillColor}; border-color: ${catStyle.color}; opacity: ${catStyle.fillOpacity ?? 0.8};"></span>
+                            <span class="text-gray-700 dark:text-gray-200 font-medium leading-normal break-words" style="font-size: calc(9.5px * var(--legend-scale, 1));" title="${catVal}">${catVal || 'null'}</span>
+                        </div>
+                    `;
+                });
+                html += `</div>`;
+            } else {
+                const fillCol = cs.fillColor || '#4f46e5';
+                const strokeCol = cs.color || '#4f46e5';
+                const fillOp = cs.fillOpacity ?? 0.5;
+
+                html += `<div class="flex items-center space-x-2 pt-0.5">`;
+                if (cs.pointShape === 'square') {
+                    html += `<span class="shrink-0 border shadow-xs" style="width: calc(11px * var(--legend-scale, 1)); height: calc(11px * var(--legend-scale, 1)); background-color: ${fillCol}; border-color: ${strokeCol}; opacity: ${fillOp};"></span>`;
+                } else if (cs.pointShape === 'triangle') {
+                    html += `<span class="w-0 h-0 shrink-0 border-l-transparent border-r-transparent" style="border-left-width: calc(5.5px * var(--legend-scale, 1)); border-right-width: calc(5.5px * var(--legend-scale, 1)); border-bottom-width: calc(9px * var(--legend-scale, 1)); border-bottom-color: ${fillCol}; opacity: ${fillOp};"></span>`;
+                } else {
+                    html += `<span class="rounded-full shrink-0 border shadow-xs" style="width: calc(11px * var(--legend-scale, 1)); height: calc(11px * var(--legend-scale, 1)); background-color: ${fillCol}; border-color: ${strokeCol}; opacity: ${fillOp};"></span>`;
+                }
+                html += `<span class="text-gray-600 dark:text-gray-300 font-medium leading-normal" style="font-size: calc(9.5px * var(--legend-scale, 1));">Default Style</span>`;
+                html += `</div>`;
+            }
+
+            if (cs.usePointScaleData && cs.pointScaleProp) {
+                html += `
+                    <div class="inline-flex items-center space-x-1 font-mono text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/40 px-1.5 py-0.5 rounded border border-purple-200 dark:border-purple-800 leading-none mt-1" style="font-size: calc(8.5px * var(--legend-scale, 1));">
+                        <i class="fa-solid fa-arrow-up-right-dots"></i>
+                        <span>Size: ${cs.pointScaleProp} (${cs.pointScaleMinTarget}-${cs.pointScaleMaxTarget}px)</span>
+                    </div>
+                `;
+            }
+
+            html += `</div>`;
+        });
+
+        html += `</div>`;
+    }
+
+    html += `
+        <div id="legend-resize-handle-br" class="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize flex items-center justify-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 z-30 opacity-70 hover:opacity-100" title="Drag corner to resize">
+            <i class="fa-solid fa-grip-lines-diagonal text-[10px]"></i>
+        </div>
+    `;
+
+    container.innerHTML = html;
+    attachLegendResizeListeners();
+};
+
 const updateMapLayerOrder = () => {
     for (let i = activeLayers.length - 1; i >= 0; i--) {
         const layer = activeLayers[i];
@@ -118,6 +311,7 @@ const updateMapLayerOrder = () => {
         const pane = map.getPane('pane-' + layer.uniqueKey);
         if (pane) pane.style.zIndex = 1000 - i;
     }
+    updateMapLegend();
     autoSaveWorkspace(); 
 };
 
@@ -226,8 +420,29 @@ const createGeoJsonPointToLayer = (styleState, paneName, customRenderer) => {
             sOp = styleState.opacity ?? 1.0;
         }
         
-        const shape = styleState ? (styleState.pointShape || 'circle') : 'circle';
-        const size = styleState ? (styleState.pointSize || 8) : 8;
+const shape = styleState ? (styleState.pointShape || 'circle') : 'circle';
+        let size = styleState ? (styleState.pointSize || 8) : 8;
+
+        // Dynamic Scale remapping based on data
+        if (styleState && styleState.usePointScaleData && styleState.pointScaleProp) {
+            const val = parseFloat(feature.properties[styleState.pointScaleProp]);
+            if (!isNaN(val)) {
+                const minD = styleState.pointScaleMinData ?? 0;
+                const maxD = styleState.pointScaleMaxData ?? 1;
+                const minT = styleState.pointScaleMinTarget ?? 4;
+                const maxT = styleState.pointScaleMaxTarget ?? 24;
+                const curve = styleState.pointScaleCurve || 'linear';
+
+                let t = (maxD > minD) ? (val - minD) / (maxD - minD) : 0.5;
+                t = Math.max(0, Math.min(1, t)); // clamp [0, 1]
+
+                if (curve === 'exp') t = Math.pow(t, 2);
+                else if (curve === 'log') t = Math.sqrt(t);
+                else if (curve === 'sigmoid') t = 1 / (1 + Math.exp(-10 * (t - 0.5)));
+
+                size = minT + t * (maxT - minT);
+            }
+        }
         
         if (shape === 'circle') {
                 return L.circleMarker(latlng, { 
@@ -547,8 +762,14 @@ const handleToggleVisibility = (e) => {
   const layer = activeLayers.find(l => l.uniqueKey === key);
   if (!layer) return;
   layer.isVisible = e.target.checked;
-  if (layer.isVisible) { map.addLayer(layer.mapLayer); updateMapLayerOrder(); } 
-  else { map.removeLayer(layer.mapLayer); autoSaveWorkspace(); }
+  if (layer.isVisible) { 
+    map.addLayer(layer.mapLayer); 
+    updateMapLayerOrder(); 
+  } else { 
+    map.removeLayer(layer.mapLayer); 
+    updateMapLegend(); 
+    autoSaveWorkspace(); 
+  }
 };
 
 const handleRename = (e) => {
@@ -713,36 +934,94 @@ const handleToggleEdit = async (e) => {
     const pasteDisabled = copiedStyle ? '' : 'disabled';
     const pasteOpacity = copiedStyle ? '' : 'opacity-50 cursor-not-allowed';
 
-    editPanelContainer.innerHTML = `
-        <div class="p-3 text-sm flex flex-col h-full min-h-0 bg-purple-50 dark:bg-transparent">
-            <div class="flex justify-between items-center mb-3 border-b border-purple-200 dark:border-purple-800 pb-2 shrink-0">
-                <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-xs tracking-wider">Appearance & Alpha</h4>
-                <div class="flex space-x-2 items-center">
-                    <button id="btn-copy-style" class="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-2 py-1 rounded transition-colors shadow-sm" title="Copy Style"><i class="fa-solid fa-copy"></i></button>
-                    <button id="btn-paste-style" class="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-2 py-1 rounded transition-colors shadow-sm ${pasteOpacity}" title="Paste Style" ${pasteDisabled}><i class="fa-solid fa-paste"></i></button>
-                    <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 ml-2"><i class="fa-solid fa-times"></i></button>
-                </div>
-            </div>
-            
-            <div class="flex-1 overflow-y-auto custom-scroll pr-1 flex flex-col min-h-0">
-                ${hasPoints ? `
-                <div id="point-style-container" class="flex flex-col space-y-3 mb-3 shrink-0 bg-white dark:bg-gray-800 p-3 rounded border border-purple-100 dark:border-purple-800">
-                    <h5 class="text-[10px] font-bold text-purple-500 dark:text-purple-400 uppercase tracking-wider mb-1">Point Markers</h5>
-                    <div class="flex items-center space-x-3 w-full">
-                        <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Shape:</label>
-                        <select id="edit-point-shape" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:outline-none">
-                            <option value="circle" ${cs.pointShape === 'circle' ? 'selected' : ''}>Circle</option>
-                            <option value="square" ${cs.pointShape === 'square' ? 'selected' : ''}>Square</option>
-                            <option value="triangle" ${cs.pointShape === 'triangle' ? 'selected' : ''}>Triangle</option>
-                        </select>
-                    </div>
-                    <div class="flex items-center space-x-3 w-full">
-                        <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Scale:</label>
-                        <input type="range" id="edit-point-size" min="2" max="30" step="1" value="${cs.pointSize || 8}" class="flex-1 w-full cursor-pointer accent-purple-600 dark:accent-purple-500" title="Point Size">
-                        <span id="point-size-display" class="text-xs text-gray-500 font-mono w-4 text-right">${cs.pointSize || 8}</span>
+const useDataScale = cs.usePointScaleData || false;
+        const currentScaleCurve = cs.pointScaleCurve || 'linear';
+
+        editPanelContainer.innerHTML = `
+            <div class="p-3 text-sm flex flex-col h-full min-h-0 bg-purple-50 dark:bg-transparent">
+                <div class="flex justify-between items-center mb-3 border-b border-purple-200 dark:border-purple-800 pb-2 shrink-0">
+                    <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-xs tracking-wider">Edit Appearance</h4>
+                    <div class="flex space-x-2 items-center">
+                        <button id="btn-copy-style" class="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-2 py-1 rounded transition-colors shadow-sm" title="Copy Style"><i class="fa-solid fa-copy"></i></button>
+                        <button id="btn-paste-style" class="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-2 py-1 rounded transition-colors shadow-sm ${pasteOpacity}" title="Paste Style" ${pasteDisabled}><i class="fa-solid fa-paste"></i></button>
+                        <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 ml-2"><i class="fa-solid fa-times"></i></button>
                     </div>
                 </div>
-                ` : ''}
+                
+                <div class="flex-1 overflow-y-auto custom-scroll pr-1 flex flex-col min-h-0">
+                    
+                    ${hasPoints ? `
+                    <div id="point-style-container" class="flex flex-col space-y-3 mb-3 shrink-0 bg-white dark:bg-gray-800 p-3 rounded border border-purple-100 dark:border-purple-800">
+                        <h5 class="text-[10px] font-bold text-purple-500 dark:text-purple-400 uppercase tracking-wider mb-1">Point Markers</h5>
+                        <div class="flex items-center space-x-3 w-full">
+                            <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Shape:</label>
+                            <select id="edit-point-shape" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:outline-none">
+                                <option value="circle" ${cs.pointShape === 'circle' ? 'selected' : ''}>Circle</option>
+                                <option value="square" ${cs.pointShape === 'square' ? 'selected' : ''}>Square</option>
+                                <option value="triangle" ${cs.pointShape === 'triangle' ? 'selected' : ''}>Triangle</option>
+                            </select>
+                        </div>
+
+                        <!-- Constant Scale Slider -->
+                        <div id="constant-scale-container" class="${useDataScale ? 'hidden' : 'flex'} items-center space-x-3 w-full">
+                            <label class="text-xs text-gray-600 dark:text-gray-300 font-bold w-12 shrink-0">Scale:</label>
+                            <input type="range" id="edit-point-size" min="2" max="30" step="1" value="${cs.pointSize || 8}" class="flex-1 w-full cursor-pointer accent-purple-600 dark:accent-purple-500" title="Point Size">
+                            <span id="point-size-display" class="text-xs text-gray-500 font-mono w-4 text-right">${cs.pointSize || 8}</span>
+                        </div>
+
+                        <!-- Use Data for Scale Checkbox -->
+                        <div class="flex items-center space-x-2 pt-1 border-t border-purple-100 dark:border-purple-900">
+                            <input type="checkbox" id="use-data-scale" class="w-4 h-4 text-purple-600 dark:text-purple-500 rounded cursor-pointer accent-purple-600 dark:accent-purple-500" ${useDataScale ? 'checked' : ''}>
+                            <label for="use-data-scale" class="text-xs font-semibold text-gray-700 dark:text-gray-300 cursor-pointer">Use Data for Scale</label>
+                        </div>
+
+                        <!-- Data Scale Configuration Panel -->
+                        <div id="data-scale-container" class="${useDataScale ? 'flex' : 'hidden'} flex-col space-y-2 bg-purple-50/50 dark:bg-gray-900/50 p-2 rounded border border-purple-200 dark:border-purple-800 text-xs">
+                            <div class="flex items-center space-x-2">
+                                <label class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-14 shrink-0">Column:</label>
+                                <select id="point-scale-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs">
+                                    <option value="" disabled ${!cs.pointScaleProp ? 'selected' : ''}>Select numeric attribute...</option>
+                                    ${cols.map(c => `<option value="${c}" ${(useDataScale && cs.pointScaleProp === c) ? 'selected' : ''}>${c}</option>`).join('')}
+                                </select>
+                            </div>
+
+                            <!-- Min / Max Detected Data Values -->
+                            <div class="flex space-x-2">
+                                <div class="flex-1">
+                                    <label class="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Min Data Val</label>
+                                    <input type="text" id="point-scale-min-data" readonly value="${cs.pointScaleMinData ?? ''}" placeholder="Min" class="w-full px-2 py-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 font-mono text-[11px] cursor-not-allowed">
+                                </div>
+                                <div class="flex-1">
+                                    <label class="block text-[9px] font-bold text-gray-400 uppercase mb-0.5">Max Data Val</label>
+                                    <input type="text" id="point-scale-max-data" readonly value="${cs.pointScaleMaxData ?? ''}" placeholder="Max" class="w-full px-2 py-1 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 font-mono text-[11px] cursor-not-allowed">
+                                </div>
+                            </div>
+
+                            <!-- Remapped Target Scale Inputs -->
+                            <div class="flex space-x-2">
+                                <div class="flex-1">
+                                    <label class="block text-[9px] font-bold text-purple-600 dark:text-purple-400 uppercase mb-0.5">Min Scale Size</label>
+                                    <input type="number" id="point-scale-min-target" min="1" max="50" value="${cs.pointScaleMinTarget ?? 4}" class="w-full px-2 py-1 bg-white dark:bg-gray-700 border border-purple-300 dark:border-purple-600 rounded text-gray-900 dark:text-white font-mono text-[11px]">
+                                </div>
+                                <div class="flex-1">
+                                    <label class="block text-[9px] font-bold text-purple-600 dark:text-purple-400 uppercase mb-0.5">Max Scale Size</label>
+                                    <input type="number" id="point-scale-max-target" min="1" max="100" value="${cs.pointScaleMaxTarget ?? 24}" class="w-full px-2 py-1 bg-white dark:bg-gray-700 border border-purple-300 dark:border-purple-600 rounded text-gray-900 dark:text-white font-mono text-[11px]">
+                                </div>
+                            </div>
+
+                            <!-- Curve Interpolation Weighting Buttons -->
+                            <div class="pt-1">
+                                <label class="block text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Curve Weighting</label>
+                                <div class="grid grid-cols-4 gap-1">
+                                    <button type="button" class="btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'linear' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="linear" title="Linear weighting">Linear</button>
+                                    <button type="button" class="btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'exp' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="exp" title="Exponential (t^2) weighting">Exp</button>
+                                    <button type="button" class="btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'log' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="log" title="Sub-linear / Logarithmic (sqrt(t)) weighting">Log</button>
+                                    <button type="button" class="btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'sigmoid' ? 'bg-purple-600 text-white border-purple-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="sigmoid" title="Sigmoid S-Curve weighting">Sigmoid</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    ` : ''}
 
                 <div class="flex items-center space-x-2 mb-3 bg-white dark:bg-gray-800 p-2 border border-purple-100 dark:border-purple-800 rounded shadow-sm shrink-0">
                     <input type="checkbox" id="use-data-style" class="w-4 h-4 text-purple-600 dark:text-purple-500 rounded cursor-pointer accent-purple-600 dark:accent-purple-500" ${isCat ? 'checked' : ''}>
@@ -787,11 +1066,64 @@ const handleToggleEdit = async (e) => {
         </div>
     `;
 
-    if (hasPoints) {
-        document.getElementById('edit-point-size').addEventListener('input', (e) => {
-            document.getElementById('point-size-display').textContent = e.target.value;
-        });
-    }
+let activeScaleCurve = currentScaleCurve;
+
+        if (hasPoints) {
+            const chkDataScale = document.getElementById('use-data-scale');
+            const constantScaleContainer = document.getElementById('constant-scale-container');
+            const dataScaleContainer = document.getElementById('data-scale-container');
+            const pointScaleColSelect = document.getElementById('point-scale-col-select');
+            const inputMinData = document.getElementById('point-scale-min-data');
+            const inputMaxData = document.getElementById('point-scale-max-data');
+
+            document.getElementById('edit-point-size').addEventListener('input', (e) => {
+                document.getElementById('point-size-display').textContent = e.target.value;
+            });
+
+            chkDataScale.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    constantScaleContainer.classList.add('hidden');
+                    constantScaleContainer.classList.remove('flex');
+                    dataScaleContainer.classList.remove('hidden');
+                    dataScaleContainer.classList.add('flex');
+                } else {
+                    constantScaleContainer.classList.remove('hidden');
+                    constantScaleContainer.classList.add('flex');
+                    dataScaleContainer.classList.add('hidden');
+                    dataScaleContainer.classList.remove('flex');
+                }
+            });
+
+            const updateMinMaxDataValues = () => {
+                const col = pointScaleColSelect.value;
+                if (!col) return;
+                const nums = layer.geoJsonData.features
+                    .map(f => parseFloat(f.properties[col]))
+                    .filter(n => !isNaN(n));
+
+                if (nums.length > 0) {
+                    inputMinData.value = Math.min(...nums);
+                    inputMaxData.value = Math.max(...nums);
+                } else {
+                    inputMinData.value = 'N/A';
+                    inputMaxData.value = 'N/A';
+                }
+            };
+
+            pointScaleColSelect.addEventListener('change', updateMinMaxDataValues);
+            if (cs.pointScaleProp) updateMinMaxDataValues();
+
+            // Curve Weighting Selection Buttons
+            document.querySelectorAll('.btn-curve-type').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    document.querySelectorAll('.btn-curve-type').forEach(b => {
+                        b.className = 'btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600';
+                    });
+                    e.currentTarget.className = 'btn-curve-type text-[10px] py-1 border rounded font-semibold transition-colors bg-purple-600 text-white border-purple-600';
+                    activeScaleCurve = e.currentTarget.getAttribute('data-curve');
+                });
+            });
+        }
 
     const chkUseData = document.getElementById('use-data-style');
     const selCol = document.getElementById('style-col-select');
@@ -887,13 +1219,31 @@ const handleToggleEdit = async (e) => {
         activeEditLayerKey = null; handleToggleEdit(key); 
     });
 
-    document.getElementById('btn-apply-edit').addEventListener('click', () => {
-        const shapeEl = document.getElementById('edit-point-shape');
-        const sizeEl = document.getElementById('edit-point-size');
-        const pShape = shapeEl ? shapeEl.value : (layer.customStyle.pointShape || 'circle');
-        const pSize = sizeEl ? parseInt(sizeEl.value, 10) : (layer.customStyle.pointSize || 8);
+document.getElementById('btn-apply-edit').addEventListener('click', () => {
+            const shapeEl = document.getElementById('edit-point-shape');
+            const sizeEl = document.getElementById('edit-point-size');
+            const pShape = shapeEl ? shapeEl.value : (layer.customStyle.pointShape || 'circle');
+            const pSize = sizeEl ? parseInt(sizeEl.value, 10) : (layer.customStyle.pointSize || 8);
 
-        if (chkUseData.checked) {
+            const chkDataScale = document.getElementById('use-data-scale');
+            const isScaleData = chkDataScale ? chkDataScale.checked : false;
+            const pScaleCol = isScaleData ? document.getElementById('point-scale-col-select').value : null;
+            const pMinData = isScaleData ? parseFloat(document.getElementById('point-scale-min-data').value) : null;
+            const pMaxData = isScaleData ? parseFloat(document.getElementById('point-scale-max-data').value) : null;
+            const pMinTarget = isScaleData ? parseFloat(document.getElementById('point-scale-min-target').value) : 4;
+            const pMaxTarget = isScaleData ? parseFloat(document.getElementById('point-scale-max-target').value) : 24;
+
+            const scaleStateObj = {
+                usePointScaleData: isScaleData,
+                pointScaleProp: pScaleCol,
+                pointScaleMinData: isNaN(pMinData) ? 0 : pMinData,
+                pointScaleMaxData: isNaN(pMaxData) ? 1 : pMaxData,
+                pointScaleMinTarget: isNaN(pMinTarget) ? 4 : pMinTarget,
+                pointScaleMaxTarget: isNaN(pMaxTarget) ? 24 : pMaxTarget,
+                pointScaleCurve: activeScaleCurve || 'linear'
+            };
+
+            if (chkUseData.checked) {
             const prop = selCol.value;
             if(!prop) return showToast("Select an attribute column for data styling.", true);
             const newCategories = {};
@@ -906,17 +1256,24 @@ const handleToggleEdit = async (e) => {
                     opacity: parseFloat(row.querySelector('.cat-stroke-op').value) 
                 };
             });
-            layer.customStyle = { type: 'categorical', property: prop, categories: newCategories, defaultFill: '#cccccc', defaultFillOpacity: 0.5, defaultColor: '#999999', defaultOpacity: 1.0, pointShape: pShape, pointSize: pSize };
-        } else {
-            layer.customStyle = { 
-                type: 'single', 
-                fillColor: document.getElementById('edit-fill-color').value, 
-                fillOpacity: parseFloat(document.getElementById('edit-fill-opacity').value), 
-                color: document.getElementById('edit-stroke-color').value, 
-                opacity: parseFloat(document.getElementById('edit-stroke-opacity').value), 
-                pointShape: pShape, pointSize: pSize 
-            }; 
-        }
+                layer.customStyle = {
+                    type: 'categorical', property: prop, categories: newCategories,
+                    defaultFill: '#cccccc', defaultFillOpacity: 0.5, defaultColor: '#999999', defaultOpacity: 1.0,
+                    pointShape: pShape, pointSize: pSize,
+                    ...scaleStateObj
+                };
+            } else {
+                const fColor = document.getElementById('edit-fill-color').value;
+                const fOp = parseFloat(document.getElementById('edit-fill-opacity').value);
+                const sColor = document.getElementById('edit-stroke-color').value;
+                const sOp = parseFloat(document.getElementById('edit-stroke-opacity').value);
+                layer.customStyle = { 
+                    type: 'single', 
+                    fillColor: fColor, fillOpacity: fOp, color: sColor, opacity: sOp, 
+                    pointShape: pShape, pointSize: pSize,
+                    ...scaleStateObj
+                }; 
+            }
         
         map.removeLayer(layer.mapLayer);
         const paneName = 'pane-' + layer.uniqueKey;
@@ -1203,6 +1560,7 @@ const renderAvailableLayers = () => {
 const renderAddedLayers = () => {
   tabBtnAdded.textContent = `Added (${activeLayers.length})`;
   addedLayerList.innerHTML = '';
+  updateMapLegend();
 
   if (activeLayers.length === 0) {
     addedLayerList.innerHTML = `<p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers currently added to map.</p>`;
@@ -1228,36 +1586,36 @@ const renderAddedLayers = () => {
     div.className = `added-layer-item flex flex-col p-2 mb-1 rounded border transition-colors ${bgClass}`;
     div.setAttribute('data-search', `${layer.displayName} ${layer.id}`.toLowerCase());
     
-    div.innerHTML = `
-      <div class="flex items-center justify-between">
-        <div class="mr-3 shrink-0">
-           <input type="checkbox" class="w-4 h-4 text-blue-600 dark:text-blue-500 rounded cursor-pointer btn-toggle-vis accent-blue-600 dark:accent-blue-500" data-key="${layer.uniqueKey}" ${layer.isVisible ? 'checked' : ''} title="Toggle visibility">
-        </div>
-        <div class="flex-1 overflow-hidden pr-2">
-          <span class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate block" title="${layer.displayName}">${layer.displayName}</span>
-          <span class="text-[10px] text-gray-400 dark:text-gray-500 block truncate" title="${layer.id}">ID: ${layer.id}</span>
-        </div>
-      </div>
-      
-      <div class="mt-2 flex justify-between border-t border-gray-200 dark:border-gray-700 pt-2 text-gray-500 dark:text-gray-400 text-sm">
-        <div class="flex space-x-1.5">
-           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="top" title="Bring to Front"><i class="fa-solid fa-angles-up"></i></button>
-           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="up" title="Move Up"><i class="fa-solid fa-angle-up"></i></button>
-           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="down" title="Move Down"><i class="fa-solid fa-angle-down"></i></button>
-           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="bottom" title="Send to Back"><i class="fa-solid fa-angles-down"></i></button>
-        </div>
-        <div class="flex space-x-2.5 justify-end">
-            <button class="transition-colors btn-table ${isTableActive ? 'text-indigo-600 dark:text-indigo-400' : 'hover:text-indigo-600 dark:hover:text-indigo-400'}" data-key="${layer.uniqueKey}" title="View Data Table"><i class="fa-solid fa-table"></i></button>
-            <button class="transition-colors btn-edit ${isEditActive ? 'text-purple-600 dark:text-purple-400' : 'hover:text-purple-600 dark:hover:text-purple-400'}" data-key="${layer.uniqueKey}" title="Edit Appearance"><i class="fa-solid fa-palette"></i></button>
-            <button class="transition-colors btn-crop ${isCropActive ? 'text-teal-600 dark:text-teal-400' : 'hover:text-teal-600 dark:hover:text-teal-400'}" data-key="${layer.uniqueKey}" title="Filter / Crop Layer"><i class="fa-solid fa-crop"></i></button>
-            <button class="transition-colors btn-split ${isSplitActive ? 'text-amber-600 dark:text-amber-400' : 'hover:text-amber-600 dark:hover:text-amber-400'}" data-key="${layer.uniqueKey}" title="Split Layer by Attribute"><i class="fa-solid fa-object-ungroup"></i></button>
-            <button class="hover:text-blue-500 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${layer.uniqueKey}" title="Duplicate Layer"><i class="fa-solid fa-clone"></i></button>
-            <button class="hover:text-orange-500 dark:hover:text-orange-400 transition-colors btn-rename" data-key="${layer.uniqueKey}" title="Rename Layer"><i class="fa-solid fa-pen"></i></button>
-            <button class="hover:text-green-600 dark:hover:text-green-400 transition-colors btn-export" data-key="${layer.uniqueKey}" title="Export to GeoJSON"><i class="fa-solid fa-download"></i></button>
-            <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${layer.uniqueKey}" title="Remove Layer"><i class="fa-solid fa-trash"></i></button>
-        </div>
-      </div>
-    `;
+div.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="mr-3 shrink-0">
+               <input type="checkbox" class="w-4 h-4 text-blue-600 dark:text-blue-500 rounded cursor-pointer btn-toggle-vis accent-blue-600 dark:accent-blue-500" data-key="${layer.uniqueKey}" ${layer.isVisible ? 'checked' : ''} title="Toggle Visibility">
+            </div>
+            <div class="flex-1 overflow-hidden pr-2">
+              <span class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate block" title="${layer.displayName}">${layer.displayName}</span>
+              <span class="text-[10px] text-gray-400 dark:text-gray-500 block truncate" title="${layer.id}">ID: ${layer.id}</span>
+            </div>
+          </div>
+          
+          <div class="mt-2 flex justify-between border-t border-gray-200 dark:border-gray-700 pt-2 text-gray-500 dark:text-gray-400 text-sm">
+            <div class="flex space-x-1.5">
+               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="top" title="Bring to Front"><i class="fa-solid fa-angles-up"></i></button>
+               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="up" title="Move Up"><i class="fa-solid fa-angle-up"></i></button>
+               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="down" title="Move Down"><i class="fa-solid fa-angle-down"></i></button>
+               <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="bottom" title="Send to Back"><i class="fa-solid fa-angles-down"></i></button>
+            </div>
+            <div class="flex space-x-2.5 justify-end">
+                <button class="transition-colors btn-table ${isTableActive ? 'text-indigo-600 dark:text-indigo-400' : 'hover:text-indigo-600 dark:hover:text-indigo-400'}" data-key="${layer.uniqueKey}" title="Data Table"><i class="fa-solid fa-table"></i></button>
+                <button class="transition-colors btn-edit ${isEditActive ? 'text-purple-600 dark:text-purple-400' : 'hover:text-purple-600 dark:hover:text-purple-400'}" data-key="${layer.uniqueKey}" title="Edit Appearance"><i class="fa-solid fa-palette"></i></button>
+                <button class="transition-colors btn-crop ${isCropActive ? 'text-teal-600 dark:text-teal-400' : 'hover:text-teal-600 dark:hover:text-teal-400'}" data-key="${layer.uniqueKey}" title="Filter / Crop Layer"><i class="fa-solid fa-crop"></i></button>
+                <button class="transition-colors btn-split ${isSplitActive ? 'text-amber-600 dark:text-amber-400' : 'hover:text-amber-600 dark:hover:text-amber-400'}" data-key="${layer.uniqueKey}" title="Split Layer"><i class="fa-solid fa-object-ungroup"></i></button>
+                <button class="hover:text-blue-500 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${layer.uniqueKey}" title="Duplicate Layer"><i class="fa-solid fa-clone"></i></button>
+                <button class="hover:text-orange-500 dark:hover:text-orange-400 transition-colors btn-rename" data-key="${layer.uniqueKey}" title="Rename Layer"><i class="fa-solid fa-pen"></i></button>
+                <button class="hover:text-green-600 dark:hover:text-green-400 transition-colors btn-export" data-key="${layer.uniqueKey}" title="Export Layer"><i class="fa-solid fa-download"></i></button>
+                <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${layer.uniqueKey}" title="Remove Layer"><i class="fa-solid fa-trash"></i></button>
+            </div>
+          </div>
+        `;
     addedLayerList.appendChild(div);
   });
 
