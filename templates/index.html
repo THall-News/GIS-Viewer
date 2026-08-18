@@ -191,6 +191,16 @@
         
         <!-- Tab: Available -->
         <div id="tab-available" class="flex-1 flex flex-col overflow-hidden bg-white dark:bg-gray-800 min-h-0 transition-colors duration-200">
+          
+          <!-- OSM Available Tab Split Tools -->
+          <div id="osm-available-tools" class="hidden p-2 border-b border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-900/20 shrink-0 shadow-sm items-center justify-between transition-colors">
+            <span class="text-[10px] font-bold text-amber-800 dark:text-amber-400 mr-2 shrink-0 uppercase tracking-wider"><i class="fa-solid fa-layer-group mr-1"></i>Split Data</span>
+            <select id="available-split-col" class="flex-1 w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 shadow-sm transition-colors">
+                <option value="" disabled selected>Select attribute...</option>
+            </select>
+            <button id="btn-available-split" class="ml-2 bg-amber-600 hover:bg-amber-700 text-white text-xs px-3 py-1 rounded transition-colors shadow-sm font-medium shrink-0">Split</button>
+          </div>
+
           <div id="search-container" class="hidden p-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 shrink-0 shadow-sm">
             <div class="relative">
               <input type="text" id="layer-search" placeholder="Search available layers..." class="w-full pl-3 pr-8 py-1.5 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 transition-shadow">
@@ -311,8 +321,13 @@
 
     let fetchedLayers = [];
     let activeLayers = [];
+    let previewLayers = {}; // Track temporary map preview layers
     let currentServerUrl = '';
     let currentServerType = '';
+    
+    // Variables for OSM feature splitting
+    let lastFetchedOsmGeoJson = null;
+    let lastFetchedOsmLayerName = '';
     
     // Panel Tracking
     let activeTableLayerKey = null; 
@@ -394,6 +409,51 @@
             if (typeof layer.mapLayer.bringToFront === 'function') layer.mapLayer.bringToFront();
         }
     };
+    
+    const clearAllPreviews = () => {
+        Object.values(previewLayers).forEach(layer => map.removeLayer(layer));
+        previewLayers = {};
+    };
+
+    // --- Map Preview Toggle Logic ---
+    const togglePreviewLayer = (layerId, isVisible) => {
+        if (!isVisible) {
+            if (previewLayers[layerId]) {
+                map.removeLayer(previewLayers[layerId]);
+                delete previewLayers[layerId];
+            }
+            return;
+        }
+
+        const meta = fetchedLayers.find(l => l.id === layerId);
+        if(!meta) return;
+
+        let mapLayer;
+
+        if (meta.geoJsonData) {
+            const customStyle = { type: 'single', fillColor: '#10b981', fillOpacity: 0.5, color: '#059669', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+            mapLayer = L.geoJSON(meta.geoJsonData, {
+                style: createGeoJsonStyleFunction(customStyle),
+                pointToLayer: createGeoJsonPointToLayer(customStyle),
+                onEachFeature: attachPopupsToFeatures
+            });
+        } else {
+            const baseUrl = currentServerUrl.split('?')[0];
+            if (currentServerType === 'WFS') {
+                mapLayer = L.tileLayer.wms(baseUrl, { layers: meta.id, format: 'image/png', transparent: true });
+            } else {
+                if (!baseUrl.toLowerCase().includes('featureserver')) {
+                    mapLayer = L.esri.dynamicMapLayer({ url: baseUrl, layers: [meta.id], opacity: 0.8 });
+                } else {
+                    const fUrl = baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`;
+                    mapLayer = L.esri.featureLayer({ url: fUrl });
+                }
+            }
+        }
+        
+        mapLayer.addTo(map);
+        previewLayers[layerId] = mapLayer;
+    };
 
     // --- UI Toggles ---
     document.getElementById('server-type').addEventListener('change', (e) => {
@@ -410,6 +470,10 @@
             document.getElementById('btn-fetch-text').textContent = 'Fetch Layers';
             document.getElementById('btn-save-server').disabled = false;
             document.getElementById('btn-save-server').classList.remove('opacity-50');
+            
+            // Hide OSM-specific tools when switching away from Overpass
+            document.getElementById('osm-available-tools').classList.add('hidden');
+            document.getElementById('osm-available-tools').classList.remove('flex');
         }
     });
 
@@ -634,25 +698,75 @@
         filterDataSearch.focus();
     });
 
+    // --- Available Tab Split Tool Logic ---
+    document.getElementById('btn-available-split').addEventListener('click', () => {
+        const splitCol = document.getElementById('available-split-col').value;
+        if(!splitCol) return showToast("Select an attribute column first.", true);
+        if(!lastFetchedOsmGeoJson) return;
+        
+        const uniqueVals = [...new Set(lastFetchedOsmGeoJson.features.map(f => f.properties[splitCol]))];
+        if (uniqueVals.length > 50 && !confirm(`This will unpack ${uniqueVals.length} layers into the list below. Proceed?`)) return;
+        
+        clearAllPreviews(); // Clear original un-split preview from map
+        fetchedLayers = []; 
+        
+        uniqueVals.forEach(val => {
+            const filteredFeats = lastFetchedOsmGeoJson.features.filter(f => f.properties[splitCol] === val);
+            if(filteredFeats.length === 0) return;
+            
+            const displayVal = (val === null || val === undefined) ? 'null' : val;
+            
+            fetchedLayers.push({
+                id: `osm_${Date.now()}_${Math.random().toString(36).substr(2,5)}`,
+                title: `${lastFetchedOsmLayerName} [${displayVal}]`,
+                geoJsonData: { type: "FeatureCollection", features: filteredFeats }
+            });
+        });
+        
+        renderAvailableLayers();
+        showToast(`Successfully unpacked into ${fetchedLayers.length} sub-layers!`);
+    });
+
     const addLayerToMap = (layerId, switchTabAfter = true) => {
         const meta = fetchedLayers.find(l => l.id === layerId);
         if(!meta) return;
 
-        const baseUrl = currentServerUrl.split('?')[0];
-        let mapLayer, exportUrl = '';
+        let mapLayer, exportUrl = null, isLocalGeoJSON = false, geoJsonData = null, customStyle = null;
 
-        if (currentServerType === 'WFS') {
-          mapLayer = L.tileLayer.wms(baseUrl, { layers: meta.id, format: 'image/png', transparent: true });
-          exportUrl = `${baseUrl}?service=WFS&version=1.1.0&request=GetFeature&typeName=${encodeURIComponent(meta.id)}&outputFormat=application%2Fjson&srsName=EPSG:4326`;
-        } else {
-          if (!baseUrl.toLowerCase().includes('featureserver')) {
-            mapLayer = L.esri.dynamicMapLayer({ url: baseUrl, layers: [meta.id], opacity: 0.8 });
-            exportUrl = `${baseUrl}/${meta.id}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
-          } else {
-            const fUrl = baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`;
-            mapLayer = L.esri.featureLayer({ url: fUrl });
-            exportUrl = `${fUrl}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
-          }
+        // Clean up temporary preview map layer before officially adding
+        if (previewLayers[layerId]) {
+            map.removeLayer(previewLayers[layerId]);
+            delete previewLayers[layerId];
+        }
+
+        // If the layer is pure GeoJSON (like OSM Data)
+        if (meta.geoJsonData) {
+            isLocalGeoJSON = true;
+            geoJsonData = meta.geoJsonData;
+            customStyle = { type: 'single', fillColor: '#10b981', fillOpacity: 0.5, color: '#059669', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+            
+            mapLayer = L.geoJSON(geoJsonData, {
+                style: createGeoJsonStyleFunction(customStyle),
+                pointToLayer: createGeoJsonPointToLayer(customStyle),
+                onEachFeature: attachPopupsToFeatures
+            });
+        } 
+        // If the layer is an external server (WFS / ESRI)
+        else {
+            const baseUrl = currentServerUrl.split('?')[0];
+            if (currentServerType === 'WFS') {
+              mapLayer = L.tileLayer.wms(baseUrl, { layers: meta.id, format: 'image/png', transparent: true });
+              exportUrl = `${baseUrl}?service=WFS&version=1.1.0&request=GetFeature&typeName=${encodeURIComponent(meta.id)}&outputFormat=application%2Fjson&srsName=EPSG:4326`;
+            } else {
+              if (!baseUrl.toLowerCase().includes('featureserver')) {
+                mapLayer = L.esri.dynamicMapLayer({ url: baseUrl, layers: [meta.id], opacity: 0.8 });
+                exportUrl = `${baseUrl}/${meta.id}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
+              } else {
+                const fUrl = baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`;
+                mapLayer = L.esri.featureLayer({ url: fUrl });
+                exportUrl = `${fUrl}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
+              }
+            }
         }
         
         mapLayer.addTo(map);
@@ -663,7 +777,9 @@
           displayName: meta.title, 
           mapLayer, 
           exportUrl, 
-          isLocalGeoJSON: false,
+          isLocalGeoJSON,
+          geoJsonData,
+          customStyle,
           isVisible: true 
         });
         
@@ -695,7 +811,7 @@
         
         div.innerHTML = `
           <div class="flex items-center h-5 mr-2 shrink-0">
-             <input id="cb-${layer.id}" type="checkbox" value="${layer.id}" class="w-4 h-4 layer-checkbox cursor-pointer accent-blue-600 dark:accent-blue-500">
+             <input id="cb-${layer.id}" type="checkbox" value="${layer.id}" class="w-4 h-4 layer-checkbox cursor-pointer accent-blue-600 dark:accent-blue-500" title="Preview on Map">
           </div>
           <div class="ml-1 text-sm flex-1 overflow-hidden pr-2 cursor-pointer">
             <label for="cb-${layer.id}" class="font-medium text-gray-700 dark:text-gray-200 block truncate cursor-pointer" title="${layer.title}">${layer.title}</label>
@@ -708,9 +824,21 @@
         availableLayerList.appendChild(div);
       });
       
+      // Bind Preview Checkbox logic
+      document.querySelectorAll('.layer-checkbox').forEach(cb => {
+          cb.addEventListener('change', (e) => {
+              togglePreviewLayer(e.target.value, e.target.checked);
+          });
+      });
+      
+      // Bind Single Add button
       document.querySelectorAll('.btn-add-single').forEach(btn => {
           btn.addEventListener('click', (e) => {
-              addLayerToMap(e.currentTarget.getAttribute('data-id'), true);
+              const layerId = e.currentTarget.getAttribute('data-id');
+              const cb = document.getElementById(`cb-${layerId}`);
+              if (cb) cb.checked = false;
+              togglePreviewLayer(layerId, false);
+              addLayerToMap(layerId, true);
           });
       });
       triggerSearch(); 
@@ -720,8 +848,9 @@
       const cbs = document.querySelectorAll('.layer-checkbox:checked');
       if (cbs.length === 0) return showToast("Select at least one layer to add.", true);
       cbs.forEach(cb => {
-        addLayerToMap(cb.value, false);
+        togglePreviewLayer(cb.value, false);
         cb.checked = false;
+        addLayerToMap(cb.value, false);
       });
       renderAddedLayers();
       switchTab('added');
@@ -1644,6 +1773,7 @@
     document.getElementById('btn-fetch').addEventListener('click', async () => {
       currentServerType = document.getElementById('server-type').value;
       
+      clearAllPreviews(); // Clear any previews currently lingering on the map
       document.getElementById('btn-fetch-spinner').classList.remove('hidden');
       document.getElementById('btn-fetch-text').textContent = 'Fetching...';
 
@@ -1751,39 +1881,47 @@
             if (!geoJson.features || geoJson.features.length === 0) {
                  throw new Error("No renderable geometry found.");
             }
-
-            const defaultStyle = { type: 'single', fillColor: '#10b981', fillOpacity: 0.5, color: '#059669', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
             
-            const newMapLayer = L.geoJSON(geoJson, {
-                style: createGeoJsonStyleFunction(defaultStyle),
-                pointToLayer: createGeoJsonPointToLayer(defaultStyle),
-                onEachFeature: attachPopupsToFeatures
-            });
-            
-            newMapLayer.addTo(map);
             if (loc || featName) {
-                map.fitBounds(newMapLayer.getBounds()); 
+                try {
+                    const tempLayer = L.geoJSON(geoJson);
+                    const bounds = tempLayer.getBounds();
+                    if(bounds.isValid()) map.fitBounds(bounds);
+                } catch(e) { console.error("Could not calculate bounds."); }
             }
 
             let layerName = `OSM: ${key}${val ? '='+val : ''}`;
             if (featName) layerName = `OSM: ${featName} (${key})`;
 
-            activeLayers.unshift({
-                uniqueKey: Math.random().toString(36).substr(2,9),
+            // Instead of adding immediately to map, we stage it in 'fetchedLayers' for the Available Tab
+            fetchedLayers = [{
                 id: `osm_${Date.now()}`,
-                displayName: layerName,
-                mapLayer: newMapLayer,
-                exportUrl: null,
-                isLocalGeoJSON: true,
-                geoJsonData: geoJson,
-                customStyle: defaultStyle,
-                isVisible: true 
+                title: layerName,
+                geoJsonData: geoJson
+            }];
+
+            // Reveal and populate the new Split feature in the Available Tab
+            lastFetchedOsmGeoJson = geoJson;
+            lastFetchedOsmLayerName = layerName;
+            
+            const toolsContainer = document.getElementById('osm-available-tools');
+            toolsContainer.classList.remove('hidden');
+            toolsContainer.classList.add('flex');
+
+            const cols = new Set();
+            geoJson.features.forEach(f => {
+                if(f.properties) Object.keys(f.properties).forEach(k => cols.add(k));
+            });
+            
+            const sel = document.getElementById('available-split-col');
+            sel.innerHTML = '<option value="" disabled selected>Select attribute...</option>';
+            Array.from(cols).sort().forEach(c => {
+                sel.innerHTML += `<option value="${c}">${c}</option>`;
             });
 
-            renderAddedLayers();
-            updateMapLayerOrder();
-            switchTab('added');
-            showToast(`Loaded ${geoJson.features.length} raw OSM features!`);
+            renderAvailableLayers();
+            switchTab('available');
+            showToast(`Fetched ${geoJson.features.length} OSM features for preview!`);
             return;
         }
 
@@ -1795,6 +1933,10 @@
         fetchedLayers = [];
         layerSearch.value = '';
         btnClearSearch.classList.add('hidden');
+
+        // Hide OSM-specific tools for WFS/ESRI
+        document.getElementById('osm-available-tools').classList.add('hidden');
+        document.getElementById('osm-available-tools').classList.remove('flex');
 
         let targetUrl = new URL(rawUrl);
         if (currentServerType === 'WFS') {
