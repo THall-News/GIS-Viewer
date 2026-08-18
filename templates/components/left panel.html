@@ -1,0 +1,249 @@
+<!-- Left Control Panel -->
+<div class="w-full md:w-[38%] lg:w-[35%] xl:w-[30%] h-full bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col p-4 shadow-sm z-10 min-w-[380px] transition-colors duration-200">
+  <h1 class="text-xl font-bold mb-3 text-slate-700 dark:text-slate-200 border-b border-gray-200 dark:border-gray-700 pb-2 shrink-0">GIS Layer Previewer</h1>
+  
+  <!-- Workspace Management Section -->
+  <div class="mb-3 shrink-0 bg-slate-50 dark:bg-gray-800/80 p-2 rounded-md border border-gray-200 dark:border-gray-700 shadow-sm">
+    <div class="flex justify-between items-center mb-2">
+        <span class="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider"><i class="fa-solid fa-floppy-disk mr-1"></i>Workspace Session</span>
+        <button id="btn-clear-workspace" class="text-[10px] text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 font-bold transition-colors" title="Clear active map layers">
+            <i class="fa-solid fa-rotate-left mr-1"></i>Reset
+        </button>
+    </div>
+    <div class="flex space-x-2">
+        <button id="btn-export-workspace" class="flex-1 bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:hover:bg-indigo-800 text-indigo-700 dark:text-indigo-300 font-bold py-1.5 px-2 rounded text-xs transition-colors shadow-sm flex items-center justify-center">
+            <i class="fa-solid fa-download mr-1.5"></i> Export
+        </button>
+        <label id="btn-import-workspace-label" class="flex-1 bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/40 dark:hover:bg-indigo-800 text-indigo-700 dark:text-indigo-300 font-bold py-1.5 px-2 rounded text-xs transition-colors shadow-sm flex items-center justify-center cursor-pointer">
+            <i class="fa-solid fa-upload mr-1.5"></i> Import
+            <input type="file" id="file-import-workspace" accept=".json" class="hidden">
+        </label>
+    </div>
+  </div>
+
+  <!-- Server Database UI -->
+  <div class="mb-3 shrink-0 bg-gray-50 dark:bg-gray-800/80 p-2 rounded-md border border-gray-200 dark:border-gray-700 transition-colors duration-200">
+    <div class="flex justify-between items-center mb-2">
+        <span class="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider"><i class="fa-solid fa-database mr-1"></i>Server Database</span>
+        <button id="btn-save-server" class="text-[10px] bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/40 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 font-bold py-1 px-2 rounded transition-colors shadow-sm flex items-center" title="Save URL below to database">
+            <i class="fa-solid fa-plus mr-1"></i> Save Current
+        </button>
+    </div>
+    <select id="saved-servers-select" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors duration-200">
+        <option value="" disabled selected>-- Load saved server --</option>
+    </select>
+  </div>
+
+  <!-- Server / Source Selection -->
+  <div class="mb-3 shrink-0">
+    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Source Type</label>
+    <select id="server-type" class="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-colors duration-200">
+      <option value="WFS">WFS (OGC)</option>
+      <option value="ESRI">ESRI (MapServer / FeatureServer)</option>
+      <option value="OVERPASS">OpenStreetMap (Overpass API)</option>
+    </select>
+  </div>
+
+  <!-- URL Input for WFS / ESRI -->
+  <div id="server-url-container" class="mb-3 shrink-0">
+    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Server URL</label>
+    <input type="url" id="server-url" placeholder="https://example.com/geoserver/wfs" 
+           class="w-full px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm transition-colors duration-200">
+  </div>
+
+  <!-- Query Builder for OpenStreetMap -->
+  <div id="overpass-builder" class="hidden shrink-0 mb-3 bg-indigo-50 dark:bg-gray-800/80 p-3 rounded-md border border-indigo-200 dark:border-indigo-800/50 shadow-inner">
+    <div class="text-[11px] font-bold text-indigo-700 dark:text-indigo-400 mb-3 uppercase tracking-wider"><i class="fa-solid fa-map-location-dot mr-1"></i> OSM Data Query</div>
+    
+    <div class="flex space-x-2 mb-3">
+      <div class="flex-1 relative">
+        <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+          Tag Key
+          <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Select a core category from the dropdown or type a custom one."><i class="fa-solid fa-circle-question"></i></span>
+        </label>
+        <input type="text" id="osm-key" list="osm-keys" placeholder="e.g. boundary" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+        <datalist id="osm-keys">
+          <option value="amenity"></option>
+          <option value="boundary"></option>
+          <option value="building"></option>
+          <option value="highway"></option>
+          <option value="landuse"></option>
+          <option value="leisure"></option>
+          <option value="natural"></option>
+          <option value="place"></option>
+          <option value="shop"></option>
+          <option value="tourism"></option>
+          <option value="waterway"></option>
+        </datalist>
+      </div>
+      <div class="flex-1 relative">
+        <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+          Tag Value
+          <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Select a common type or type a custom one. (Leave blank to get ALL values)"><i class="fa-solid fa-circle-question"></i></span>
+        </label>
+        <input type="text" id="osm-value" list="osm-values" placeholder="e.g. administrative" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+        <datalist id="osm-values">
+          <option value="yes"></option>
+          <option value="administrative"></option>
+        </datalist>
+      </div>
+    </div>
+
+    <div class="flex space-x-2 mb-3">
+      <div class="flex-1 relative">
+        <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+          Feature Name
+          <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Optional: Only return shapes specifically named this."><i class="fa-solid fa-circle-question"></i></span>
+        </label>
+        <input type="text" id="osm-name" placeholder="e.g. High Park" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+      </div>
+      <div class="flex-1 relative">
+        <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+          Geometry
+          <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Filter the types of shapes you want returned."><i class="fa-solid fa-circle-question"></i></span>
+        </label>
+        <select id="osm-geom" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+          <option value="lines_polygons">Lines & Polygons</option>
+          <option value="points">Points Only</option>
+          <option value="all">All Geometries</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="relative">
+      <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+        Search Area
+        <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Optional: Type a city, state, or country (e.g. 'Halifax, Nova Scotia'). Leave blank to search your current Map View."><i class="fa-solid fa-circle-question"></i></span>
+      </label>
+      <input type="text" id="osm-location" placeholder="e.g. Halifax, Nova Scotia" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
+    </div>
+  </div>
+
+  <button id="btn-fetch" class="w-full bg-blue-600 hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500 text-white font-medium py-2 px-4 rounded-md transition-colors flex items-center justify-center mb-3 shadow-sm shrink-0">
+    <span id="btn-fetch-text">Fetch Layers</span>
+    <svg id="btn-fetch-spinner" class="animate-spin ml-2 h-5 w-5 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+  </button>
+
+  <!-- Main Layer Management UI -->
+  <div class="flex-1 overflow-hidden flex flex-col min-h-0 border border-gray-200 dark:border-gray-700 rounded-md bg-gray-50 dark:bg-gray-900/50 mb-3 shadow-inner transition-colors duration-200">
+    <!-- Tabs -->
+    <div class="flex border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shrink-0 transition-colors duration-200">
+      <button id="tab-btn-available" class="flex-1 py-2 text-xs font-semibold text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400 uppercase tracking-wider transition-colors">Available</button>
+      <button id="tab-btn-added" class="flex-1 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 border-b-2 border-transparent hover:text-gray-700 dark:hover:text-gray-200 uppercase tracking-wider transition-colors">Added (0)</button>
+    </div>
+    
+    <!-- Tab: Available -->
+    <div id="tab-available" class="flex-1 flex flex-col overflow-hidden bg-white dark:bg-gray-800 min-h-0 transition-colors duration-200">
+      
+      <!-- OSM Available Tab Split Tools -->
+      <div id="osm-available-tools" class="hidden p-2 border-b border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-900/20 shrink-0 shadow-sm items-center justify-between transition-colors">
+        <span class="text-[10px] font-bold text-amber-800 dark:text-amber-400 mr-2 shrink-0 uppercase tracking-wider"><i class="fa-solid fa-layer-group mr-1"></i>Split Data</span>
+        <select id="available-split-col" class="flex-1 w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500 shadow-sm transition-colors">
+            <option value="" disabled selected>Select attribute...</option>
+        </select>
+        <button id="btn-available-split" class="ml-2 bg-amber-600 hover:bg-amber-700 text-white text-xs px-3 py-1 rounded transition-colors shadow-sm font-medium shrink-0">Split</button>
+      </div>
+
+      <div id="search-container" class="hidden p-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 shrink-0 shadow-sm">
+        <div class="relative">
+          <input type="text" id="layer-search" placeholder="Search available layers..." class="w-full pl-3 pr-8 py-1.5 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 transition-shadow">
+          <button id="btn-clear-search" class="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hidden transition-colors" title="Clear Search">
+            <i class="fa-solid fa-times"></i>
+          </button>
+        </div>
+      </div>
+      <div id="available-layer-list" class="flex-1 overflow-y-auto custom-scroll p-2 min-h-0 space-y-1">
+        <p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers fetched yet.</p>
+      </div>
+    </div>
+
+    <!-- Tab: Added -->
+    <div id="tab-added" class="flex-1 flex flex-col overflow-hidden hidden bg-white dark:bg-gray-800 relative min-h-0 transition-colors duration-200">
+      
+      <!-- Sticky Search Bar for Added Layers -->
+      <div id="added-search-container" class="hidden p-2 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 shrink-0 shadow-sm">
+        <div class="relative">
+          <input type="text" id="added-layer-search" placeholder="Search added layers..." class="w-full pl-3 pr-8 py-1.5 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 transition-shadow">
+          <button id="btn-clear-added-search" class="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hidden transition-colors" title="Clear Search">
+            <i class="fa-solid fa-times"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Top: Layer List -->
+      <div id="added-layer-list" class="flex-1 overflow-y-auto custom-scroll p-2 min-h-0">
+        <p class="text-sm text-gray-400 dark:text-gray-500 italic text-center mt-4">No layers currently added to map.</p>
+      </div>
+
+      <!-- Middle: Attribute Table Panel -->
+      <div id="attribute-table-container" class="hidden flex-col max-h-[60%] h-72 border-t border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-3 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200"></div>
+
+      <!-- Middle: Edit Panel -->
+      <div id="edit-panel-container" class="hidden flex-col max-h-[70%] border-t border-gray-300 dark:border-gray-600 bg-purple-50 dark:bg-gray-800 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200"></div>
+
+      <!-- Middle: Split Panel -->
+      <div id="split-panel-container" class="hidden flex-col max-h-[60%] border-t border-gray-300 dark:border-gray-600 bg-amber-50 dark:bg-gray-800 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200"></div>
+
+      <!-- Middle: Crop Filter Panel -->
+      <div id="crop-panel-container" class="hidden flex-col max-h-[60%] border-t border-gray-300 dark:border-gray-600 bg-teal-50 dark:bg-gray-800 p-3 shrink-0 min-h-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] transition-colors duration-200">
+        <div class="flex justify-between items-center mb-3 border-b border-teal-200 dark:border-teal-900/50 pb-2 shrink-0">
+            <h3 class="text-xs font-bold text-gray-700 dark:text-gray-200 uppercase tracking-wider">Filter / Crop Layer</h3>
+            <button onclick="window.closeAllPanels()" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"><i class="fa-solid fa-times"></i></button>
+        </div>
+        
+        <div class="overflow-y-auto custom-scroll flex-1 pr-1 flex flex-col">
+            <div class="flex space-x-2 mb-2 items-center shrink-0">
+              <select id="filter-type" class="flex-1 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded">
+                <option value="box">Crop Box</option>
+                <option value="radius">Radius from Point</option>
+                <option value="data">Filter by Data</option>
+              </select>
+              <input type="number" id="filter-radius" value="5" placeholder="Km" class="w-20 px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded hidden">
+            </div>
+
+            <div id="filter-data-container" class="hidden flex-col mb-2 space-y-2 flex-1 min-h-0">
+                <select id="filter-data-col" class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs shrink-0">
+                    <option value="" disabled selected>Select attribute column...</option>
+                </select>
+                
+                <div class="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-1 flex-1 flex flex-col min-h-0">
+                    <div class="flex justify-between items-center mb-1 px-1 border-b border-gray-200 dark:border-gray-600 pb-1 shrink-0">
+                        <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase">Select Values</span>
+                        <button id="btn-filter-select-all" class="text-[10px] text-teal-600 dark:text-teal-400 hover:text-teal-800 dark:hover:text-teal-300 font-bold transition-colors">Select All</button>
+                    </div>
+                    
+                    <!-- Search Filter Input -->
+                    <div class="px-1 pb-1 shrink-0">
+                        <div class="relative">
+                            <input type="text" id="filter-data-search" placeholder="Search values..." class="w-full pl-2 pr-6 py-1 text-xs border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 rounded focus:outline-none focus:ring-1 focus:ring-teal-500 transition-shadow">
+                            <button id="btn-clear-filter-search" class="absolute right-1.5 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hidden transition-colors" title="Clear Search">
+                                <i class="fa-solid fa-times text-[10px]"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="filter-data-values" class="flex-1 overflow-y-auto custom-scroll text-xs p-1 min-h-0">
+                        <p class="text-gray-400 dark:text-gray-500 italic text-center">Select a column first.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex space-x-2 mt-1 shrink-0 pt-2">
+              <button id="btn-draw" class="flex-1 bg-white dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 text-sm font-medium py-1 rounded transition-colors border border-gray-300 dark:border-gray-600">Draw Region</button>
+              <button id="btn-apply-filter" disabled class="flex-1 bg-teal-600 hover:bg-teal-700 dark:bg-teal-700 dark:hover:bg-teal-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 text-white text-sm font-medium py-1 rounded transition-colors flex justify-center items-center">
+                <span id="btn-filter-text">Apply</span>
+                <svg id="btn-filter-spinner" class="animate-spin ml-2 h-4 w-4 text-white hidden" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              </button>
+            </div>
+            <p id="draw-status" class="text-xs text-teal-700 dark:text-teal-400 mt-2 hidden font-medium text-center shrink-0">Click & drag on map to draw box.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Bulk Add Button (Visible only on Available tab) -->
+  <button id="btn-add" disabled class="w-full bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-700 dark:hover:bg-emerald-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-md transition-colors shadow-sm shrink-0">
+    Add Selected Layers to Map
+  </button>
+
+</div>
