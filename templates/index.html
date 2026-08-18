@@ -150,7 +150,7 @@
           <div class="flex-1 relative">
             <label class="block text-[10px] font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center">
               Feature Name
-              <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Optional: Only return shapes specifically named this. e.g. Toronto"><i class="fa-solid fa-circle-question"></i></span>
+              <span class="ml-1 text-gray-400 hover:text-indigo-500 cursor-help" title="Optional: Only return shapes specifically named this."><i class="fa-solid fa-circle-question"></i></span>
             </label>
             <input type="text" id="osm-name" placeholder="e.g. High Park" class="w-full px-2 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm">
           </div>
@@ -714,11 +714,17 @@
             const filteredFeats = lastFetchedOsmGeoJson.features.filter(f => f.properties[splitCol] === val);
             if(filteredFeats.length === 0) return;
             
-            const displayVal = (val === null || val === undefined) ? 'null' : val;
+            const displayVal = (val === null || val === undefined || val === '') ? 'null' : val;
+            
+            // Auto-append feature 'name' if this split bucket isolates exactly 1 named feature
+            let extraName = '';
+            if (filteredFeats.length === 1 && filteredFeats[0].properties.name && splitCol !== 'name') {
+                extraName = ` - ${filteredFeats[0].properties.name}`;
+            }
             
             fetchedLayers.push({
                 id: `osm_${Date.now()}_${Math.random().toString(36).substr(2,5)}`,
-                title: `${lastFetchedOsmLayerName} [${displayVal}]`,
+                title: `${lastFetchedOsmLayerName} [${splitCol}: ${displayVal}]${extraName}`,
                 geoJsonData: { type: "FeatureCollection", features: filteredFeats }
             });
         });
@@ -1394,7 +1400,12 @@
             if(!propName) return;
             
             let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties[propName]))];
-            uniqueVals = uniqueVals.filter(v => v !== null && v !== undefined).slice(0, 100);
+            uniqueVals = uniqueVals.filter(v => v !== null && v !== undefined);
+
+            // Safety check for massive datasets
+            if (uniqueVals.length > 200 && !confirm(`This will generate ${uniqueVals.length} color pickers. Proceed?`)) {
+    return;
+}
             
             if(uniqueVals.length === 0) {
                 catInnerList.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center">No unique values found.</p>';
@@ -1890,8 +1901,32 @@
                 } catch(e) { console.error("Could not calculate bounds."); }
             }
 
-            let layerName = `OSM: ${key}${val ? '='+val : ''}`;
-            if (featName) layerName = `OSM: ${featName} (${key})`;
+            // --- Enhanced Descriptive Naming Logic ---
+            let layerName = `OSM: ${key}${val ? '=' + val : ''}`;
+            
+            let autoCity = null;
+            if (!loc) {
+                const cities = {};
+                geoJson.features.forEach(f => {
+                    const c = f.properties['addr:city'] || f.properties['is_in:city'] || f.properties['is_in:municipality'];
+                    if (c) cities[c] = (cities[c] || 0) + 1;
+                });
+                autoCity = Object.keys(cities).sort((a,b) => cities[b] - cities[a])[0];
+            }
+
+            if (loc && featName) {
+                layerName = `OSM: ${featName}, ${loc} (${key})`;
+            } else if (featName) {
+                layerName = `OSM: ${featName} (${key})`;
+            } else if (loc) {
+                layerName = `OSM: ${loc} (${key}${val ? '=' + val : ''})`;
+            } else if (geoJson.features.length === 1 && geoJson.features[0].properties.name) {
+                layerName = `OSM: ${geoJson.features[0].properties.name} (${key}${val ? '=' + val : ''})`;
+            } else if (autoCity) {
+                layerName = `OSM: ${autoCity} (${key}${val ? '=' + val : ''})`;
+            } else {
+                layerName = `OSM: Map View (${key}${val ? '=' + val : ''})`;
+            }
 
             // Instead of adding immediately to map, we stage it in 'fetchedLayers' for the Available Tab
             fetchedLayers = [{
