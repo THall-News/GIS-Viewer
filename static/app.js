@@ -181,14 +181,18 @@ const openContextSubmenu = () => {
     getEl('context-resizer')?.classList.remove('hidden');
 };
 
-const closeAllPanels = () => {
+const closeTablePanel = () => {
     activeTableLayerKey = null;
+    attributeTableContainer?.classList.add('hidden'); 
+    attributeTableContainer?.classList.remove('flex');
+    if (activeLayers.length > 0) renderAddedLayers();
+};
+window.closeTablePanel = closeTablePanel;
+
+const closeSidebarPanels = () => {
     activeEditLayerKey = null;
     activeSplitLayerKey = null;
     activeCropLayerKey = null;
-    
-    attributeTableContainer?.classList.add('hidden'); 
-    attributeTableContainer?.classList.remove('flex');
     
     getEl('context-panel-wrapper')?.classList.add('hidden');
     getEl('context-panel-wrapper')?.classList.remove('flex');
@@ -211,6 +215,12 @@ const closeAllPanels = () => {
     map.getContainer().style.cursor = '';
     
     if (activeLayers.length > 0) renderAddedLayers();
+};
+window.closeSidebarPanels = closeSidebarPanels;
+
+const closeAllPanels = () => {
+    closeTablePanel();
+    closeSidebarPanels();
 };
 window.closeAllPanels = closeAllPanels;
 
@@ -646,9 +656,11 @@ const handleRemove = (e) => {
   map.removeLayer(activeLayers[idx].mapLayer);
   removePane(key); 
   activeLayers.splice(idx, 1);
-  if (activeTableLayerKey === key || activeEditLayerKey === key || activeSplitLayerKey === key || activeCropLayerKey === key) { 
-     closeAllPanels(); 
-  } else { renderAddedLayers(); }
+  
+  if (activeTableLayerKey === key) closeTablePanel();
+  if (activeEditLayerKey === key || activeSplitLayerKey === key || activeCropLayerKey === key) closeSidebarPanels();
+  
+  renderAddedLayers();
   autoSaveWorkspace();
 };
 
@@ -699,9 +711,9 @@ const handleToggleTable = async (e) => {
   const layer = activeLayers.find(l => l.uniqueKey === key);
   if (!layer) return;
 
-  if (activeTableLayerKey === key && e.currentTarget) { closeAllPanels(); return; }
+  if (activeTableLayerKey === key && e.currentTarget) { closeTablePanel(); return; }
 
-  closeAllPanels();
+  closeTablePanel();
   activeTableLayerKey = key;
   renderAddedLayers(); 
   
@@ -730,7 +742,7 @@ const handleToggleTable = async (e) => {
       attributeTableContainer.innerHTML = `
         <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
             <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
-            <button onclick="window.closeAllPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
+            <button onclick="window.closeTablePanel()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
         </div>
         <p class="text-xs text-gray-500 dark:text-gray-400 italic p-2 text-center">No attributes available.</p>`;
       return;
@@ -746,7 +758,7 @@ const handleToggleTable = async (e) => {
     let tableHtml = `
         <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
             <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
-            <button onclick="window.closeAllPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
+            <button onclick="window.closeTablePanel()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
         </div>
         <div class="flex-1 overflow-auto min-h-0 custom-scroll border border-gray-200 dark:border-gray-700 rounded">
             <table class="min-w-full text-xs text-left border-collapse bg-white dark:bg-gray-800">
@@ -774,7 +786,7 @@ const handleToggleTable = async (e) => {
     attributeTableContainer.innerHTML = `
       <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
           <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
-          <button onclick="window.closeAllPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
+          <button onclick="window.closeTablePanel()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
       </div>
       <p class="text-xs text-red-500 dark:text-red-400 italic p-2 text-center">Failed to load attribute data.</p>`;
   }
@@ -785,9 +797,9 @@ const handleToggleEdit = async (e) => {
     const layer = activeLayers.find(l => l.uniqueKey === key);
     if (!layer) return;
 
-    if (activeEditLayerKey === key && e.currentTarget) { closeAllPanels(); return; }
+    if (activeEditLayerKey === key && e.currentTarget) { closeSidebarPanels(); return; }
 
-    closeAllPanels();
+    closeSidebarPanels();
     activeEditLayerKey = key;
     renderAddedLayers();
     if (!editPanelContainer) return;
@@ -798,7 +810,7 @@ const handleToggleEdit = async (e) => {
     editPanelContainer.innerHTML = '<div class="flex justify-center p-3"><p class="text-xs italic animate-pulse text-gray-500 dark:text-gray-400">Preparing editable vector data...</p></div>';
 
     const success = await ensureGeoJSON(layer);
-    if (!success) { closeAllPanels(); return; }
+    if (!success) { closeSidebarPanels(); return; }
 
     const features = layer.geoJsonData.features || [];
     const colsSet = new Set();
@@ -821,7 +833,7 @@ const handleToggleEdit = async (e) => {
                 <div class="flex space-x-1 items-center">
                     <button id="btn-copy-style" class="text-[10px] bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-1.5 py-0.5 rounded transition-colors font-medium" title="Copy Style"><i class="fa-solid fa-copy"></i></button>
                     <button id="btn-paste-style" class="text-[10px] bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-1.5 py-0.5 rounded transition-colors font-medium ${pasteOpacity}" title="Paste Style" ${pasteDisabled}><i class="fa-solid fa-paste"></i></button>
-                    <button onclick="window.closeAllPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 ml-1"><i class="fa-solid fa-times text-xs"></i></button>
+                    <button onclick="window.closeSidebarPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 ml-1"><i class="fa-solid fa-times text-xs"></i></button>
                 </div>
             </div>
             
@@ -938,7 +950,6 @@ const handleToggleEdit = async (e) => {
 
     let activeScaleCurve = currentScaleCurve;
 
-    // Dynamically extract active style settings directly from current UI DOM state
     const extractStyleFromUI = () => {
         const shapeEl = getEl('edit-point-shape');
         const sizeEl = getEl('edit-point-size');
@@ -1188,7 +1199,6 @@ const handleToggleEdit = async (e) => {
             count++;
         });
 
-        // Re-render map layer with updated style
         map.removeLayer(layer.mapLayer);
         const paneName = 'pane-' + layer.uniqueKey;
         const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
@@ -1196,7 +1206,6 @@ const handleToggleEdit = async (e) => {
         layer.mapLayer = newMapLayer;
         updateMapLayerOrder();
 
-        // Refresh Attribute Table drawer if open for this layer
         if (activeTableLayerKey === layer.uniqueKey) {
             handleToggleTable(layer.uniqueKey);
         }
@@ -1210,9 +1219,9 @@ const handleToggleSplit = async (e) => {
     const layer = activeLayers.find(l => l.uniqueKey === key);
     if (!layer) return;
 
-    if (activeSplitLayerKey === key && e.currentTarget) { closeAllPanels(); return; }
+    if (activeSplitLayerKey === key && e.currentTarget) { closeSidebarPanels(); return; }
 
-    closeAllPanels();
+    closeSidebarPanels();
     activeSplitLayerKey = key;
     renderAddedLayers();
     if (!splitPanelContainer) return;
@@ -1223,7 +1232,7 @@ const handleToggleSplit = async (e) => {
     splitPanelContainer.innerHTML = '<div class="flex justify-center p-3"><p class="text-xs italic animate-pulse text-gray-500 dark:text-gray-400">Preparing vector data for split...</p></div>';
 
     const success = await ensureGeoJSON(layer);
-    if (!success) { closeAllPanels(); return; }
+    if (!success) { closeSidebarPanels(); return; }
 
     const features = layer.geoJsonData.features || [];
     const colsSet = new Set();
@@ -1234,7 +1243,7 @@ const handleToggleSplit = async (e) => {
         <div class="p-2 text-xs flex flex-col h-full min-h-0 bg-blue-50/50 dark:bg-transparent">
             <div class="flex justify-between items-center mb-2 pb-1 border-b border-blue-200 dark:border-blue-800 shrink-0">
                 <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-[11px] tracking-wider">Split Layer</h4>
-                <button onclick="window.closeAllPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"><i class="fa-solid fa-times text-xs"></i></button>
+                <button onclick="window.closeSidebarPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"><i class="fa-solid fa-times text-xs"></i></button>
             </div>
             <div class="flex-1 space-y-2 min-h-0">
                 <p class="text-[10px] text-gray-500 dark:text-gray-400 leading-tight">Select an attribute to duplicate this layer into multiple sub-layers based on unique data entries.</p>
@@ -1283,7 +1292,7 @@ const handleToggleSplit = async (e) => {
         layer.isVisible = false;
         map.removeLayer(layer.mapLayer);
         
-        closeAllPanels();
+        closeSidebarPanels();
         renderAddedLayers();
         updateMapLayerOrder();
         showToast(`Split into ${createdCount} new layers!`);
@@ -1309,7 +1318,6 @@ const triggerDataFilterSetup = async (layer) => {
     
     if (drawStatusEl) drawStatusEl.textContent = 'Select an attribute column.';
 
-    // Collect all unique property keys across ALL features
     const cols = new Set();
     (layer.geoJsonData?.features || []).forEach(f => {
         if (f.properties) Object.keys(f.properties).forEach(k => cols.add(k));
@@ -1335,9 +1343,9 @@ const handleToggleCrop = (e) => {
     const layer = activeLayers.find(l => l.uniqueKey === key);
     if (!layer) return;
 
-    if (activeCropLayerKey === key && e.currentTarget) { closeAllPanels(); return; }
+    if (activeCropLayerKey === key && e.currentTarget) { closeSidebarPanels(); return; }
 
-    closeAllPanels();
+    closeSidebarPanels();
     activeCropLayerKey = key;
     if (cropPanelContainer) {
         openContextSubmenu();
@@ -1928,7 +1936,6 @@ btnApplyFilter?.addEventListener('click', async () => {
             if (filterType?.value === 'box') {
                b = filterGeometryData;
                const turfBbox = turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
-               // Enforce strictly 'Within' instead of 'Intersects'
                finalFeatures = targetLayer.geoJsonData.features.filter(f => { try { return turf.booleanWithin(f, turfBbox); } catch(e) { return false; } });
             } else {
                const radKm = parseFloat(filterRadius?.value) || 5;
@@ -1941,7 +1948,6 @@ btnApplyFilter?.addEventListener('click', async () => {
             if (filterType?.value === 'box') b = filterGeometryData; 
             else b = filterGeometryData.toBounds((parseFloat(filterRadius?.value) || 5) * 1000); 
 
-            // Ask the server for the bounding box envelope first (adding esriSpatialRelWithin for servers that support it)
             if (queryUrl.includes('WFS') || queryUrl.includes('GetFeature')) queryUrl += `&bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()},EPSG:4326`;
             else queryUrl += `&geometry=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelWithin&inSR=4326`;
 
@@ -1949,7 +1955,6 @@ btnApplyFilter?.addEventListener('click', async () => {
             const rawGeojson = await res.json();
             let fetchedFeatures = rawGeojson.features || [];
 
-            // Strict client-side post-filtering to guarantee shapes are 'Within' (since standard WFS defaults to Intersect)
             if (filterType?.value === 'box') {
                 const turfBbox = turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
                 finalFeatures = fetchedFeatures.filter(f => { try { return turf.booleanWithin(f, turfBbox); } catch(e) { return false; } });
@@ -1977,7 +1982,7 @@ btnApplyFilter?.addEventListener('click', async () => {
 
     if (targetLayer.isVisible) { targetLayer.isVisible = false; map.removeLayer(targetLayer.mapLayer); }
 
-    closeAllPanels(); renderAddedLayers(); updateMapLayerOrder();
+    closeSidebarPanels(); renderAddedLayers(); updateMapLayerOrder();
     showToast(`Created new filtered layer with ${finalFeatures.length} features.`);
 
   } catch(err) {
