@@ -151,8 +151,53 @@ const commonOsmTags = {
 
 
 // ==========================================
-// 2. CORE UTILITIES
+// 2. CORE UTILITIES & HISTORY MANAGER
 // ==========================================
+let historyStack = [];
+let historyIndex = -1;
+let isRestoringHistory = false;
+const MAX_HISTORY = 10;
+
+const updateUndoRedoButtons = () => {
+    const btnUndo = getEl('btn-undo');
+    const btnRedo = getEl('btn-redo');
+    if (btnUndo) btnUndo.disabled = historyIndex <= 0;
+    if (btnRedo) btnRedo.disabled = historyIndex >= historyStack.length - 1;
+};
+
+const handleUndo = () => {
+    if (historyIndex > 0) {
+        historyIndex--;
+        isRestoringHistory = true;
+        try {
+            // Restore from completely isolated deep clone to wipe Leaflet IDs
+            restoreWorkspaceState(JSON.parse(JSON.stringify(historyStack[historyIndex])));
+        } finally {
+            isRestoringHistory = false;
+            updateUndoRedoButtons();
+        }
+        showToast("Action undone.");
+    }
+};
+
+const handleRedo = () => {
+    if (historyIndex < historyStack.length - 1) {
+        historyIndex++;
+        isRestoringHistory = true;
+        try {
+            // Restore from completely isolated deep clone to wipe Leaflet IDs
+            restoreWorkspaceState(JSON.parse(JSON.stringify(historyStack[historyIndex])));
+        } finally {
+            isRestoringHistory = false;
+            updateUndoRedoButtons();
+        }
+        showToast("Action redone.");
+    }
+};
+
+getEl('btn-undo')?.addEventListener('click', handleUndo);
+getEl('btn-redo')?.addEventListener('click', handleRedo);
+
 const showToast = (msg, isError=false) => {
   if (!toast) return;
   toast.className = `fixed bottom-6 right-6 px-4 py-3 rounded shadow-xl transform transition-all duration-300 z-50 max-w-sm ${isError ? 'bg-red-600 text-white' : 'bg-gray-800 dark:bg-gray-700 text-white'}`;
@@ -504,19 +549,56 @@ const serializeWorkspace = () => {
     const layersData = activeLayers.map(l => ({
         uniqueKey: l.uniqueKey, id: l.id, displayName: l.displayName, exportUrl: l.exportUrl,
         isLocalGeoJSON: l.isLocalGeoJSON, geoJsonData: l.geoJsonData, customStyle: l.customStyle, isVisible: l.isVisible,
-        isFolder: l.isFolder, parentId: l.parentId, isExpanded: l.isExpanded
+        isFolder: l.isFolder, parentId: l.parentId || null, isExpanded: l.isExpanded
     }));
-    return { version: "1.1", savedAt: new Date().toISOString(), mapState: { lat: center.lat, lng: center.lng, zoom }, activeLayers: layersData };
+    return { version: "1.2", savedAt: new Date().toISOString(), mapState: { lat: center.lat, lng: center.lng, zoom }, activeLayers: layersData };
 };
 
 const autoSaveWorkspace = () => {
-    try { localStorage.setItem('gis_previewer_auto_save', JSON.stringify(serializeWorkspace())); } catch (e) {}
+    try {
+        const state = serializeWorkspace();
+        const stateStr = JSON.stringify(state);
+        
+        // 1. Maintain isolated in-memory history safely away from LocalStorage Quotas
+        if (!isRestoringHistory) {
+            const deepState = JSON.parse(stateStr);
+            
+            // Deduplication Check
+            if (historyStack.length > 0 && historyIndex >= 0) {
+                const prevLayers = JSON.stringify(historyStack[historyIndex].activeLayers);
+                const newLayers = JSON.stringify(deepState.activeLayers);
+                if (prevLayers !== newLayers) {
+                    historyStack = historyStack.slice(0, historyIndex + 1);
+                    historyStack.push(deepState);
+                    if (historyStack.length > MAX_HISTORY) {
+                        historyStack.shift();
+                    } else {
+                        historyIndex++;
+                    }
+                }
+            } else {
+                historyStack.push(deepState);
+                historyIndex = 0;
+            }
+            updateUndoRedoButtons();
+        }
+
+        // 2. Safely attempt LocalStorage save (Fails gracefully if > 5MB quota)
+        try {
+            localStorage.setItem('gis_previewer_auto_save', stateStr);
+        } catch (storageErr) {
+            console.warn("Storage quota limit reached! Session saved to memory for Undo/Redo, but won't persist after refresh.");
+        }
+    } catch (e) {
+        console.error("Critical failure during workspace serialization:", e);
+    }
 };
 
 const restoreWorkspaceState = (data) => {
     closeAllPanels();
     clearAllPreviews();
 
+    // Clear existing map layers and destroy panes completely
     activeLayers.forEach(l => {
         if (!l.isFolder && l.mapLayer) map.removeLayer(l.mapLayer);
         removePane(l.uniqueKey);
@@ -528,8 +610,9 @@ const restoreWorkspaceState = (data) => {
     }
 
     if (data.activeLayers && Array.isArray(data.activeLayers)) {
+        // Enforce rigid uniqueKeys from history stack, DO NOT scramble.
         data.activeLayers.forEach(lData => {
-            const uniqueKey = lData.uniqueKey || Math.random().toString(36).substr(2,9);
+            const uniqueKey = lData.uniqueKey;
             
             if (lData.isFolder) {
                 activeLayers.push({
@@ -571,7 +654,10 @@ const restoreWorkspaceState = (data) => {
 
     if (activeLayers.length > 0) {
         renderAddedLayers();
-        updateMapLayerOrder();
+        updateMapLayerOrder(); // AutoSave inherently fires inside this function, but dedup catches it
+    } else {
+        renderAddedLayers();
+        autoSaveWorkspace();
     }
 };
 
@@ -722,7 +808,6 @@ const handleToggleVisibility = (e) => {
   }
   
   updateMapLayerOrder(); 
-  autoSaveWorkspace(); 
 };
 
 const handleRemove = (e) => {
@@ -842,7 +927,8 @@ const handleDuplicate = async (e) => {
     const success = await ensureGeoJSON(layer);
     if (!success) return;
 
-    const newGeoJson = JSON.parse(JSON.stringify(layer.geoJsonData));
+    // Use safe parsing structure so JSON serialization doesn't throw on duplicate pushes
+    const newGeoJson = layer.geoJsonData ? JSON.parse(JSON.stringify(layer.geoJsonData)) : null;
     const defaultStyle = { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
     const newStyleState = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : defaultStyle;
 
@@ -854,7 +940,7 @@ const handleDuplicate = async (e) => {
     activeLayers.unshift({
         uniqueKey: uniqueKey, id: `${layer.id}_copy`, displayName: `${layer.displayName} (Copy)`, mapLayer: newMapLayer,
         exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJson, customStyle: newStyleState, isVisible: true,
-        parentId: layer.parentId, isFolder: false
+        parentId: layer.parentId || null, isFolder: false
     });
 
     renderAddedLayers();
@@ -1437,7 +1523,7 @@ const handleToggleSplit = async (e) => {
             const filteredFeats = layer.geoJsonData.features.filter(f => f.properties && f.properties[splitCol] === val);
             if (filteredFeats.length === 0) return;
 
-            const newGeoJson = { type: "FeatureCollection", features: filteredFeats };
+            const newGeoJson = JSON.parse(JSON.stringify({ type: "FeatureCollection", features: filteredFeats }));
             const splitStyleState = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
 
             const uniqueKey = Math.random().toString(36).substr(2,9);
@@ -1675,11 +1761,8 @@ const renderAddedLayers = () => {
 
     if (activeLayers.length === 0) {
         addedLayerList.innerHTML = `<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center mt-3">No layers currently added to map.</p>`;
-        addedSearchContainer?.classList.add('hidden');
         return;
     }
-
-    addedSearchContainer?.classList.remove('hidden');
 
     const buildNodeHTML = (parentId) => {
         let html = '';
@@ -1847,7 +1930,7 @@ const addLayerToMap = (layerId, switchTabAfter = true) => {
 
     if (meta.geoJsonData) {
         isLocalGeoJSON = true;
-        geoJsonData = meta.geoJsonData;
+        geoJsonData = JSON.parse(JSON.stringify(meta.geoJsonData));
         customStyle = { type: 'single', fillColor: '#10b981', fillOpacity: 0.5, color: '#059669', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
         mapLayer = createCustomGeoJSONLayer(geoJsonData, customStyle, paneName);
     } else {
@@ -1950,7 +2033,15 @@ getEl('file-import-workspace')?.addEventListener('change', (e) => {
         try {
             const data = JSON.parse(evt.target.result);
             if (!data.activeLayers || !data.mapState) throw new Error("Invalid workspace file format.");
-            restoreWorkspaceState(data);
+            
+            isRestoringHistory = true;
+            try {
+                restoreWorkspaceState(data);
+            } finally {
+                isRestoringHistory = false;
+            }
+            autoSaveWorkspace();
+            
             switchTab('added');
             showToast("Workspace restored successfully!");
         } catch (err) { showToast("Failed to parse workspace JSON file.", true); } 
@@ -1964,8 +2055,9 @@ getEl('btn-clear-workspace')?.addEventListener('click', () => {
     if (confirm("Reset workspace? All added layers will be removed from the map.")) {
         closeAllPanels(); clearAllPreviews();
         activeLayers.forEach(l => { if (!l.isFolder) map.removeLayer(l.mapLayer); removePane(l.uniqueKey); });
-        activeLayers = []; localStorage.removeItem('gis_previewer_auto_save');
-        renderAddedLayers(); showToast("Workspace reset.");
+        activeLayers = []; 
+        autoSaveWorkspace();
+        renderAddedLayers(); showToast("Workspace reset. (You can undo this)");
     }
 });
 
@@ -2267,7 +2359,7 @@ btnApplyFilter?.addEventListener('click', async () => {
     map.fitBounds(newMapLayer.getBounds());
 
     const namePrefix = filterType?.value === 'data' ? '[Filtered]' : '[Cropped]';
-    activeLayers.unshift({ uniqueKey: uniqueKey, id: `${targetLayer.id}_filtered`, displayName: `${namePrefix} ${targetLayer.displayName}`, mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJsonData, customStyle: newStyleState, isVisible: true, parentId: targetLayer.parentId, isFolder: false });
+    activeLayers.unshift({ uniqueKey: uniqueKey, id: `${targetLayer.id}_filtered`, displayName: `${namePrefix} ${targetLayer.displayName}`, mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJsonData, customStyle: newStyleState, isVisible: true, parentId: targetLayer.parentId || null, isFolder: false });
 
     if (targetLayer.isVisible) { targetLayer.isVisible = false; map.removeLayer(targetLayer.mapLayer); }
 
@@ -2467,10 +2559,19 @@ try {
     const savedSession = localStorage.getItem('gis_previewer_auto_save');
     if (savedSession) {
         const data = JSON.parse(savedSession);
-        restoreWorkspaceState(data);
+        isRestoringHistory = true;
+        try {
+            restoreWorkspaceState(data);
+        } finally {
+            isRestoringHistory = false;
+        }
+        autoSaveWorkspace();
+    } else {
+        autoSaveWorkspace();
     }
 } catch(e) {
     console.warn("Could not auto-restore previous workspace.", e);
+    autoSaveWorkspace();
 }
 
 

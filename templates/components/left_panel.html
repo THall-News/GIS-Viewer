@@ -186,12 +186,18 @@
 
         <!-- Tab 2: Added Layers -->
         <div id="tab-added" class="hidden flex-col h-full p-2 min-h-0">
-            <div id="added-search-container" class="relative mb-1.5 shrink-0 hidden space-x-1">
+            <div id="added-search-container" class="relative mb-1.5 shrink-0 flex space-x-1">
                 <div class="relative flex-1">
                     <input type="text" id="added-layer-search" placeholder="Filter active layers..." class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded pl-7 pr-7 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none">
                     <i class="fa-solid fa-filter absolute left-2 top-1.5 text-gray-400 text-[10px]"></i>
                     <button id="btn-clear-added-search" class="absolute right-2 top-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hidden text-xs"><i class="fa-solid fa-times"></i></button>
                 </div>
+                <button id="btn-undo" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-2 rounded border border-gray-300 dark:border-gray-600 shadow-xs transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" title="Undo Action" disabled>
+                    <i class="fa-solid fa-rotate-left text-[11px]"></i>
+                </button>
+                <button id="btn-redo" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-2 rounded border border-gray-300 dark:border-gray-600 shadow-xs transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed" title="Redo Action" disabled>
+                    <i class="fa-solid fa-rotate-right text-[11px]"></i>
+                </button>
                 <button id="btn-create-folder" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-2 rounded border border-gray-300 dark:border-gray-600 shadow-xs transition-colors shrink-0" title="Create Folder Group">
                     <i class="fa-solid fa-folder-plus text-[11px]"></i>
                 </button>
