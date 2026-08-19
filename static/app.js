@@ -916,11 +916,13 @@ const rebuildActiveLayersFromDOM = () => {
 };
 
 const handleToggleVisibility = (e) => {
-  const key = e.target.getAttribute('data-key');
+  // Use currentTarget because we are clicking a button that contains an <i> tag
+  const key = e.currentTarget.getAttribute('data-key');
   const layer = activeLayers.find(l => l.uniqueKey === key);
   if (!layer) return;
   
-  const isVis = e.target.checked;
+  // Flip the visibility state manually since it's no longer a checkbox
+  const isVis = !layer.isVisible;
   layer.isVisible = isVis;
 
   if (layer.isFolder) {
@@ -936,12 +938,13 @@ const handleToggleVisibility = (e) => {
           });
       };
       setChildrenVis(key, isVis);
-      renderAddedLayers(); 
   } else {
       if (isVis) map.addLayer(layer.mapLayer); 
       else map.removeLayer(layer.mapLayer); 
   }
   
+  // Force a re-render to update the eye icons
+  renderAddedLayers(); 
   updateMapLayerOrder(); 
 };
 
@@ -2088,21 +2091,45 @@ const renderAddedLayers = () => {
         children.forEach(node => {
             if (node.isFolder) {
                 html += `
-                <div class="folder-item mb-1 border border-gray-300 dark:border-gray-600 rounded bg-gray-100 dark:bg-gray-800 shadow-xs" data-key="${node.uniqueKey}" data-search="${node.displayName.toLowerCase()}">
-                    <div class="flex items-center justify-between p-1.5 border-b border-transparent dark:border-gray-700 folder-header">
-                        <div class="flex items-center flex-1 overflow-hidden pr-2 space-x-1.5">
-                            <i class="fa-solid fa-grip-vertical text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-grab drag-handle px-0.5 shrink-0"></i>
-                            <button class="btn-toggle-folder text-gray-500 dark:text-gray-400 w-3 shrink-0 flex justify-center" data-key="${node.uniqueKey}">
-                                <i class="fa-solid ${node.isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'} text-[9px]"></i>
-                            </button>
-                            <button class="btn-solo shrink-0 flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold transition-colors ${currentSoloLayerKey === node.uniqueKey ? 'bg-yellow-400 text-yellow-900 border border-yellow-500 shadow-sm' : 'bg-gray-200 text-gray-500 hover:bg-yellow-100 hover:text-yellow-700 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-yellow-900/50'}" data-key="${node.uniqueKey}" title="${currentSoloLayerKey === node.uniqueKey ? 'Un-Solo' : 'Solo Folder (Ghost Mode)'}">S</button>
-                            <input type="checkbox" class="w-3.5 h-3.5 text-blue-600 rounded cursor-pointer btn-toggle-vis shrink-0" data-key="${node.uniqueKey}" ${node.isVisible ? 'checked' : ''} title="Toggle Folder Visibility">
-                            <i class="fa-solid fa-folder text-yellow-500 shrink-0"></i>
-                            <span class="text-xs font-bold text-gray-700 dark:text-gray-200 truncate outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable flex-1 cursor-text" data-key="${node.uniqueKey}" contenteditable="false" spellcheck="false" title="Double-click to rename">${node.displayName}</span>
+                <div class="folder-item mb-1 border border-gray-300 dark:border-gray-600 rounded bg-gray-100 dark:bg-gray-800 shadow-xs flex flex-col overflow-hidden" data-key="${node.uniqueKey}" data-search="${node.displayName.toLowerCase()}">
+                    <div class="flex items-stretch border-b border-transparent dark:border-gray-700 folder-header">
+                        
+                        <!-- 20px LEFT-EDGE DRAG HANDLE -->
+                        <div class="w-5 shrink-0 bg-gray-200/60 hover:bg-gray-300/80 dark:bg-gray-700/40 dark:hover:bg-gray-600/60 border-r border-gray-300/50 dark:border-gray-700/50 flex items-center justify-center cursor-grab drag-handle group" title="Drag to reorder folder">
+                            <i class="fa-solid fa-grip-vertical text-gray-400/40 group-hover:text-gray-500 dark:text-gray-500/40 dark:group-hover:text-gray-400 text-[10px] transition-colors"></i>
                         </div>
-                        <div class="flex space-x-2 shrink-0 pr-1 items-center">
-                            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-export-folder" data-key="${node.uniqueKey}" title="Export Folder as ZIP"><i class="fa-solid fa-download text-[10px]"></i></button>
-                            <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${node.uniqueKey}" title="Remove Folder"><i class="fa-solid fa-trash text-[10px]"></i></button>
+
+                        <!-- CONTENT BLOCK -->
+                        <div class="flex-1 flex flex-col p-1.5 min-w-0">
+                            
+                            <!-- TOP ROW: TITLE & ICONS -->
+                            <div class="flex items-center overflow-hidden pr-1 pb-1.5 space-x-1.5 pl-0.5">
+                                <!-- DYNAMIC FOLDER TOGGLE ICON -->
+                                <button class="btn-toggle-folder text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 shrink-0 flex justify-center transition-colors" data-key="${node.uniqueKey}" title="${node.isExpanded ? 'Collapse Folder' : 'Expand Folder'}">
+                                    <i class="fa-solid ${node.isExpanded ? 'fa-folder-open' : 'fa-folder'} text-[12px] w-4 text-center"></i>
+                                </button>
+                                <span class="text-xs font-bold text-gray-700 dark:text-gray-200 truncate outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable flex-1 cursor-text" data-key="${node.uniqueKey}" contenteditable="false" spellcheck="false" title="Double-click to rename">${node.displayName}</span>
+                            </div>
+                            
+                            <!-- BOTTOM ROW: ACTIONS -->
+                            <div class="flex items-center justify-between border-t border-gray-300/50 dark:border-gray-700 pt-1.5 text-gray-500 dark:text-gray-400 text-xs">
+                                
+                                <!-- LEFT ALIGNED: VISIBILITY & SOLO -->
+                                <div class="flex space-x-2 items-center pl-1">
+                                    <button class="transition-colors btn-toggle-vis shrink-0 ${node.isVisible ? 'text-blue-600 dark:text-blue-500' : 'text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-500'}" data-key="${node.uniqueKey}" title="${node.isVisible ? 'Hide Folder' : 'Show Folder'}">
+                                        <i class="fa-solid ${node.isVisible ? 'fa-eye' : 'fa-eye-slash'} text-[11px] w-3 text-center"></i>
+                                    </button>
+                                    <button class="transition-colors btn-solo shrink-0 ${currentSoloLayerKey === node.uniqueKey ? 'text-yellow-500 dark:text-yellow-400' : 'text-gray-400 dark:text-gray-500 hover:text-yellow-500 dark:hover:text-yellow-400'}" data-key="${node.uniqueKey}" title="${currentSoloLayerKey === node.uniqueKey ? 'Un-Solo' : 'Solo Folder (Ghost Mode)'}">
+                                        <span class="inline-block w-3 text-center text-[10px] font-black">S</span>
+                                    </button>
+                                </div>
+
+                                <!-- RIGHT ALIGNED: TOOLS -->
+                                <div class="flex space-x-2 justify-end pr-1">
+                                    <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-export-folder" data-key="${node.uniqueKey}" title="Export Folder as ZIP"><i class="fa-solid fa-download text-[10px]"></i></button>
+                                    <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${node.uniqueKey}" title="Remove Folder"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="folder-children pl-4 pr-1 py-1 min-h-[15px] space-y-1 ${node.isExpanded ? '' : 'hidden'}" data-parent="${node.uniqueKey}">
@@ -2121,28 +2148,45 @@ const renderAddedLayers = () => {
                 }
 
                 html += `
-                <div class="added-layer-item flex flex-col p-1.5 mb-1 rounded border transition-colors ${bgClass}" data-key="${node.uniqueKey}" data-search="${node.displayName.toLowerCase()} ${node.id.toLowerCase()}">
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center mr-2 shrink-0 space-x-1.5">
-                            <i class="fa-solid fa-grip-vertical text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-grab drag-handle px-0.5"></i>
-                            <button class="btn-solo shrink-0 flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold transition-colors ${currentSoloLayerKey === node.uniqueKey ? 'bg-yellow-400 text-yellow-900 border border-yellow-500 shadow-sm' : 'bg-gray-200 text-gray-500 hover:bg-yellow-100 hover:text-yellow-700 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-yellow-900/50'}" data-key="${node.uniqueKey}" title="${currentSoloLayerKey === node.uniqueKey ? 'Un-Solo' : 'Solo Layer (Ghost Mode)'}">S</button>
-                            <input type="checkbox" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 rounded cursor-pointer btn-toggle-vis accent-blue-600 dark:accent-blue-500" data-key="${node.uniqueKey}" ${node.isVisible ? 'checked' : ''} title="Toggle Visibility">
-                        </div>
-                        <div class="flex-1 overflow-hidden pr-1">
+                <div class="added-layer-item flex mb-1 rounded border transition-colors ${bgClass} overflow-hidden" data-key="${node.uniqueKey}" data-search="${node.displayName.toLowerCase()} ${node.id.toLowerCase()}">
+                    
+                    <!-- 20px LEFT-EDGE DRAG HANDLE -->
+                    <div class="w-5 shrink-0 bg-gray-100/80 hover:bg-gray-200/80 dark:bg-gray-800/40 dark:hover:bg-gray-700/60 border-r border-gray-200 dark:border-gray-700/60 flex items-center justify-center cursor-grab drag-handle group" title="Drag to reorder layer">
+                        <i class="fa-solid fa-grip-vertical text-gray-400/40 group-hover:text-gray-500 dark:text-gray-500/40 dark:group-hover:text-gray-400 text-[10px] transition-colors"></i>
+                    </div>
+
+                    <!-- CONTENT BLOCK -->
+                    <div class="flex-1 flex flex-col p-1.5 min-w-0">
+                        
+                        <!-- TOP ROW: TITLE & ID -->
+                        <div class="flex-1 overflow-hidden pr-1 pb-1.5">
                             <span class="text-xs font-semibold text-gray-800 dark:text-gray-200 truncate block outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable cursor-text" data-key="${node.uniqueKey}" contenteditable="false" spellcheck="false" title="Double-click to rename">${node.displayName}</span>
                             <span class="text-[9px] text-gray-400 dark:text-gray-500 block truncate px-1" title="${node.id}">ID: ${node.id}</span>
                         </div>
-                    </div>
-                    
-                    <div class="mt-1.5 flex justify-end border-t border-gray-200 dark:border-gray-700 pt-1.5 text-gray-500 dark:text-gray-400 text-xs">
-                        <div class="flex space-x-2 justify-end">
-                            <button class="transition-colors btn-table ${isTableActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Data Table"><i class="fa-solid fa-table"></i></button>
-                            <button class="transition-colors btn-edit ${isEditActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Edit Appearance"><i class="fa-solid fa-palette"></i></button>
-                            <button class="transition-colors btn-crop ${isCropActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Filter / Crop Layer"><i class="fa-solid fa-crop"></i></button>
-                            <button class="transition-colors btn-split ${isSplitActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Split Layer"><i class="fa-solid fa-object-ungroup"></i></button>
-                            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${node.uniqueKey}" title="Duplicate Layer"><i class="fa-solid fa-clone"></i></button>
-                            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-export" data-key="${node.uniqueKey}" title="Export Layer"><i class="fa-solid fa-download"></i></button>
-                            <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${node.uniqueKey}" title="Remove Layer"><i class="fa-solid fa-trash"></i></button>
+                        
+                        <!-- BOTTOM ROW: ACTIONS -->
+                        <div class="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-1.5 text-gray-500 dark:text-gray-400 text-xs">
+                            
+                            <!-- LEFT ALIGNED: VISIBILITY & SOLO -->
+                            <div class="flex space-x-2 items-center pl-1">
+                                <button class="transition-colors btn-toggle-vis shrink-0 ${node.isVisible ? 'text-blue-600 dark:text-blue-500' : 'text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-500'}" data-key="${node.uniqueKey}" title="${node.isVisible ? 'Hide Layer' : 'Show Layer'}">
+                                    <i class="fa-solid ${node.isVisible ? 'fa-eye' : 'fa-eye-slash'} text-[11px] w-3 text-center"></i>
+                                </button>
+                                <button class="transition-colors btn-solo shrink-0 ${currentSoloLayerKey === node.uniqueKey ? 'text-yellow-500 dark:text-yellow-400' : 'text-gray-400 dark:text-gray-500 hover:text-yellow-500 dark:hover:text-yellow-400'}" data-key="${node.uniqueKey}" title="${currentSoloLayerKey === node.uniqueKey ? 'Un-Solo' : 'Solo Layer (Ghost Mode)'}">
+                                    <span class="inline-block w-3 text-center text-[10px] font-black">S</span>
+                                </button>
+                            </div>
+
+                            <!-- RIGHT ALIGNED: TOOLS -->
+                            <div class="flex space-x-2 justify-end">
+                                <button class="transition-colors btn-table ${isTableActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Data Table"><i class="fa-solid fa-table"></i></button>
+                                <button class="transition-colors btn-edit ${isEditActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Edit Appearance"><i class="fa-solid fa-palette"></i></button>
+                                <button class="transition-colors btn-crop ${isCropActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Filter / Crop Layer"><i class="fa-solid fa-crop"></i></button>
+                                <button class="transition-colors btn-split ${isSplitActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Split Layer"><i class="fa-solid fa-object-ungroup"></i></button>
+                                <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${node.uniqueKey}" title="Duplicate Layer"><i class="fa-solid fa-clone"></i></button>
+                                <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-export" data-key="${node.uniqueKey}" title="Export Layer"><i class="fa-solid fa-download"></i></button>
+                                <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${node.uniqueKey}" title="Remove Layer"><i class="fa-solid fa-trash"></i></button>
+                            </div>
                         </div>
                     </div>
                 </div>`;
@@ -2197,7 +2241,7 @@ const renderAddedLayers = () => {
     document.querySelectorAll('.btn-export').forEach(btn => btn.addEventListener('click', handleExport));
     document.querySelectorAll('.btn-export-folder').forEach(btn => btn.addEventListener('click', handleExportFolder));
     document.querySelectorAll('.btn-remove').forEach(btn => btn.addEventListener('click', handleRemove));
-    document.querySelectorAll('.btn-toggle-vis').forEach(btn => btn.addEventListener('change', handleToggleVisibility));
+    document.querySelectorAll('.btn-toggle-vis').forEach(btn => btn.addEventListener('click', handleToggleVisibility)); 
     document.querySelectorAll('.btn-solo').forEach(btn => btn.addEventListener('click', handleToggleSolo));
     
     document.querySelectorAll('.btn-toggle-folder').forEach(btn => {
