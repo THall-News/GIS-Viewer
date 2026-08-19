@@ -1,17 +1,62 @@
 // ==========================================
-// 1. INITIALIZATION & VARIABLES
+// 1. INITIALIZATION & IMPORTS
 // ==========================================
 
 import { AppState } from './state.js';
 import { renderAddedLayers } from './uiRenderer.js';
-// Add this new line:
 import { 
     map, drawLayerGroup, previewRenderer, createCustomGeoJSONLayer, 
     removePane, clearAllPreviews, darkenHex, hexAlpha, interpolateColor,
-    createGeoJsonStyleFunction, createGeoJsonPointToLayer, attachPopupsToFeatures // <-- Added these
+    createGeoJsonStyleFunction, createGeoJsonPointToLayer, attachPopupsToFeatures
 } from './mapEngine.js';
+import { saveLayerToCache, deleteCachedLayer } from './db.js';
 
+// Sync layer state whenever a layer is added, cropped, or re-styled
+export const syncLayerCache = async (layerKey) => {
+    const layerObj = AppState.activeLayers.find(l => l.key === layerKey);
+    if (!layerObj) return;
 
+    await saveLayerToCache({
+        layerKey: layerObj.key,
+        name: layerObj.name,
+        type: layerObj.type,
+        geoJsonData: layerObj.geoJsonData,
+        style: layerObj.style,
+        visible: layerObj.visible,
+        lastUpdated: Date.now()
+    });
+};
+
+// Hook into layer removal
+export const removeLayerFromCache = async (layerKey) => {
+    await deleteCachedLayer(layerKey);
+};
+import { getCachedLayers } from './db.js';
+
+export const restoreCachedWorkspace = async () => {
+    try {
+        const cachedLayers = await getCachedLayers();
+        if (!cachedLayers || cachedLayers.length === 0) return;
+
+        cachedLayers.forEach(layer => {
+            // Restore to AppState array
+            AppState.activeLayers.push(layer);
+            
+            // Render GeoJSON back onto Leaflet canvas
+            createCustomGeoJSONLayer(layer.geoJsonData, layer.layerKey, layer.style);
+        });
+
+        // Refresh UI panel list
+        renderAddedLayers();
+    } catch (err) {
+        console.error("Error restoring cached layers:", err);
+    }
+};
+
+// Add to app startup initialization
+window.addEventListener('DOMContentLoaded', () => {
+    restoreCachedWorkspace();
+});
 
 // Inject Custom CSS to make the Drag-and-Drop Ghost look like a thick drop-line indicator
 const dndStyle = document.createElement('style');
@@ -117,81 +162,6 @@ const commonOsmTags = {
 };
 
 
-
-export const ensureGeoJSON = async (layer) => {
-    if (layer.isLocalGeoJSON) return true;
-    if (!layer.exportUrl) {
-        showToast("Cannot extract vector data for this specific layer.", true);
-        return false;
-    }
-    try {
-        let queryUrl = layer.exportUrl;
-        if (queryUrl.includes('WFS')) queryUrl += '&maxFeatures=5000'; 
-        
-        const res = await fetch(`/proxy?url=${encodeURIComponent(queryUrl)}`);
-        if (!res.ok) throw new Error("Server error");
-        const geoJson = await res.json();
-        if (!geoJson.features || geoJson.features.length === 0) throw new Error("Empty or Invalid GeoJSON");
-
-        map.removeLayer(layer.mapLayer);
-        
-        const paneName = 'pane-' + layer.uniqueKey;
-        const defaultStyle = { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
-        
-        const newMapLayer = createCustomGeoJSONLayer(geoJson, defaultStyle, paneName);
-        if (layer.isVisible) newMapLayer.addTo(map);
-
-        layer.mapLayer = newMapLayer;
-        layer.geoJsonData = geoJson;
-        layer.isLocalGeoJSON = true;
-        layer.exportUrl = null; 
-        layer.customStyle = defaultStyle; 
-        
-        autoSaveWorkspace();
-        return true;
-    } catch (err) {
-        console.error(err);
-        showToast("Failed to fetch vector data. Layer may be too large.", true);
-        return false;
-    }
-};
-
-export const togglePreviewLayer = (layerId, isVisible) => {
-    if (!isVisible) {
-        if (AppState.previewLayers[layerId]) { map.removeLayer(AppState.previewLayers[layerId]); delete AppState.previewLayers[layerId]; }
-        return;
-    }
-
-    const meta = AppState.fetchedLayers.find(l => l.id === layerId);
-    if(!meta) return;
-
-    let mapLayer;
-    const previewPaneName = 'previewPane';
-
-    if (meta.geoJsonData) {
-        const customStyle = { type: 'single', fillColor: '#10b981', fillOpacity: 0.5, color: '#059669', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
-        mapLayer = L.geoJSON(meta.geoJsonData, {
-            pane: previewPaneName,
-            renderer: previewRenderer,
-            style: createGeoJsonStyleFunction(customStyle),
-            pointToLayer: createGeoJsonPointToLayer(customStyle, previewPaneName, previewRenderer),
-        });
-    } else {
-        const baseUrl = AppState.currentServerUrl.split('?')[0];
-        if (AppState.currentServerType === 'WFS') {
-            mapLayer = L.tileLayer.wms(baseUrl, { pane: previewPaneName, layers: meta.id, format: 'image/png', transparent: true });
-        } else {
-            if (!baseUrl.toLowerCase().includes('featureserver')) {
-                mapLayer = L.esri.dynamicMapLayer({ pane: previewPaneName, url: baseUrl, layers: [meta.id], opacity: 0.8 });
-            } else {
-                const fUrl = baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`;
-                mapLayer = L.esri.featureLayer({ pane: previewPaneName, url: fUrl });
-            }
-        }
-    }
-    mapLayer.addTo(map);
-    AppState.previewLayers[layerId] = mapLayer;
-};
 // ==========================================
 // 2. CORE UTILITIES & HISTORY MANAGER
 // ==========================================
@@ -247,23 +217,20 @@ const showToast = (msg, isError=false) => {
   setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 5000);
 };
 
-
 const updateSoloView = () => {
     if (!AppState.currentSoloLayerKey) {
-        // Solo disabled: restore all layers to normal opacity and interaction
         AppState.activeLayers.forEach(l => {
             if (l.isFolder) return;
             const pane = map.getPane('pane-' + l.uniqueKey);
             if (pane) {
                 pane.style.transition = 'opacity 0.3s ease';
                 pane.style.opacity = '1';
-                pane.style.pointerEvents = 'auto'; // allow tooltips/clicks again
+                pane.style.pointerEvents = 'auto'; 
             }
         });
         return;
     }
 
-    // Determine allowed keys (the soloed layer, and if it's a folder, all its descendants)
     const allowedKeys = new Set();
     const collectKeys = (key) => {
         allowedKeys.add(key);
@@ -271,7 +238,6 @@ const updateSoloView = () => {
     };
     collectKeys(AppState.currentSoloLayerKey);
 
-    // Apply ghost styling to non-soloed layers
     AppState.activeLayers.forEach(l => {
         if (l.isFolder) return;
         const pane = map.getPane('pane-' + l.uniqueKey);
@@ -281,8 +247,8 @@ const updateSoloView = () => {
                 pane.style.opacity = '1';
                 pane.style.pointerEvents = 'auto'; 
             } else {
-                pane.style.opacity = '0'; // Drops opacity to 0% so they become completely invisible
-                pane.style.pointerEvents = 'none'; // Prevent popups/clicks on hidden layers
+                pane.style.opacity = '0'; 
+                pane.style.pointerEvents = 'none'; 
             }
         }
     });
@@ -290,20 +256,13 @@ const updateSoloView = () => {
 
 export const updateMapLayerOrder = () => {
     let zIndex = 1000;
-    
-    // Loop forwards: index 0 (top of the UI list) gets the highest zIndex (1000)
+    // Loop forwards so top of UI list gets highest zIndex
     for (let i = 0; i < AppState.activeLayers.length; i++) {
         const layer = AppState.activeLayers[i];
-        
-        // Skip folders and hidden layers
         if (layer.isFolder || !layer.isVisible) continue;
-        
         const pane = map.getPane('pane-' + layer.uniqueKey);
-        if (pane) {
-            pane.style.zIndex = zIndex--;
-        }
+        if (pane) pane.style.zIndex = zIndex--;
     }
-    
     updateSoloView(); 
     autoSaveWorkspace(); 
 };
@@ -330,7 +289,6 @@ const closeTablePanel = () => {
     attributeTableContainer?.classList.add('hidden'); 
     attributeTableContainer?.classList.remove('flex');
     
-    // Wipe map highlight if the table closes
     if (AppState.highlightLayer) {
         map.removeLayer(AppState.highlightLayer);
         AppState.highlightLayer = null;
@@ -406,9 +364,86 @@ const switchTab = (tabName) => {
   }
 };
 
+
 // ==========================================
-// 4. WORKSPACE PERSISTENCE
+// 3. MAP UTILITIES & PERSISTENCE
 // ==========================================
+export const ensureGeoJSON = async (layer) => {
+    if (layer.isLocalGeoJSON) return true;
+    if (!layer.exportUrl) {
+        showToast("Cannot extract vector data for this specific layer.", true);
+        return false;
+    }
+    try {
+        let queryUrl = layer.exportUrl;
+        if (queryUrl.includes('WFS')) queryUrl += '&maxFeatures=5000'; 
+        
+        const res = await fetch(`/proxy?url=${encodeURIComponent(queryUrl)}`);
+        if (!res.ok) throw new Error("Server error");
+        const geoJson = await res.json();
+        if (!geoJson.features || geoJson.features.length === 0) throw new Error("Empty or Invalid GeoJSON");
+
+        map.removeLayer(layer.mapLayer);
+        
+        const paneName = 'pane-' + layer.uniqueKey;
+        const defaultStyle = { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+        
+        const newMapLayer = createCustomGeoJSONLayer(geoJson, defaultStyle, paneName);
+        if (layer.isVisible) newMapLayer.addTo(map);
+
+        layer.mapLayer = newMapLayer;
+        layer.geoJsonData = geoJson;
+        layer.isLocalGeoJSON = true;
+        layer.exportUrl = null; 
+        layer.customStyle = defaultStyle; 
+        
+        autoSaveWorkspace();
+        return true;
+    } catch (err) {
+        console.error(err);
+        showToast("Failed to fetch vector data. Layer may be too large.", true);
+        return false;
+    }
+};
+
+export const togglePreviewLayer = (layerId, isVisible) => {
+    if (!isVisible) {
+        if (AppState.previewLayers[layerId]) { map.removeLayer(AppState.previewLayers[layerId]); delete AppState.previewLayers[layerId]; }
+        return;
+    }
+
+    const meta = AppState.fetchedLayers.find(l => l.id === layerId);
+    if(!meta) return;
+
+    let mapLayer;
+    const previewPaneName = 'previewPane';
+
+    if (meta.geoJsonData) {
+        const customStyle = { type: 'single', fillColor: '#10b981', fillOpacity: 0.5, color: '#059669', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+        mapLayer = L.geoJSON(meta.geoJsonData, {
+            pane: previewPaneName,
+            renderer: previewRenderer,
+            style: createGeoJsonStyleFunction(customStyle),
+            pointToLayer: createGeoJsonPointToLayer(customStyle, previewPaneName, previewRenderer)
+            // No popups attached to preview layer for performance
+        });
+    } else {
+        const baseUrl = AppState.currentServerUrl.split('?')[0];
+        if (AppState.currentServerType === 'WFS') {
+            mapLayer = L.tileLayer.wms(baseUrl, { pane: previewPaneName, layers: meta.id, format: 'image/png', transparent: true });
+        } else {
+            if (!baseUrl.toLowerCase().includes('featureserver')) {
+                mapLayer = L.esri.dynamicMapLayer({ pane: previewPaneName, url: baseUrl, layers: [meta.id], opacity: 0.8 });
+            } else {
+                const fUrl = baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`;
+                mapLayer = L.esri.featureLayer({ pane: previewPaneName, url: fUrl });
+            }
+        }
+    }
+    mapLayer.addTo(map);
+    AppState.previewLayers[layerId] = mapLayer;
+};
+
 const serializeWorkspace = () => {
     const center = map.getCenter();
     const zoom = map.getZoom();
@@ -423,6 +458,9 @@ const serializeWorkspace = () => {
 export const autoSaveWorkspace = () => {
     try {
         const state = serializeWorkspace();
+
+        persistStateToDB(state);
+
         const stateStr = JSON.stringify(state);
         
         if (!isRestoringHistory) {
@@ -515,7 +553,7 @@ const loadSavedServers = async () => {
 
 
 // ==========================================
-// 5. OSM INSPECT AREA TOOL
+// 4. OSM INSPECT AREA TOOL
 // ==========================================
 const executeOsmInspect = async (bounds) => {
     const container = getEl('osm-inspect-container');
@@ -578,7 +616,7 @@ const executeOsmInspect = async (bounds) => {
 
 
 // ==========================================
-// 6. EXPORTED ACTION HANDLERS
+// 5. LAYER ACTION HANDLERS
 // ==========================================
 
 export const handleToggleSolo = (e) => {
@@ -828,6 +866,48 @@ export const handleZoomToLayer = (e) => {
     else showToast("Cannot determine bounds for this layer.", true);
 };
 
+// ==========================================
+// 6. ATTRIBUTE TABLE RENDERING
+// ==========================================
+const attachTableResizer = () => {
+    if (attributeTableContainer) attributeTableContainer.style.position = 'relative';
+    
+    const resizer = attributeTableContainer?.querySelector('.table-resizer');
+    if (!resizer) return;
+    
+    let isResizing = false;
+    resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        isResizing = true;
+        document.body.classList.add('select-none', 'cursor-row-resize');
+
+        const startY = e.clientY;
+        const startHeight = attributeTableContainer.offsetHeight;
+
+        const doDrag = (moveEvt) => {
+            if (!isResizing) return;
+            const dy = startY - moveEvt.clientY;
+            const newHeight = Math.max(100, Math.min(window.innerHeight - 40, startHeight + dy));
+            
+            // FORCE OVERRIDE: Kill any Tailwind max-height classes on the HTML element
+            attributeTableContainer.style.maxHeight = 'none';
+            attributeTableContainer.style.height = `${newHeight}px`;
+        };
+
+        const stopDrag = () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.classList.remove('select-none', 'cursor-row-resize');
+                window.removeEventListener('mousemove', doDrag);
+                window.removeEventListener('mouseup', stopDrag);
+            }
+        };
+
+        window.addEventListener('mousemove', doDrag);
+        window.addEventListener('mouseup', stopDrag);
+    });
+};
+
 const renderTableContent = (layerName) => {
     let displayFeatures = [...AppState.currentTableFeatures].slice(0, 100);
     
@@ -844,7 +924,8 @@ const renderTableContent = (layerName) => {
     }
 
     let tableHtml = `
-        <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
+        <div class="table-resizer absolute top-0 left-0 w-full h-1.5 bg-gray-200 hover:bg-blue-400 dark:bg-gray-700 dark:hover:bg-blue-500 cursor-row-resize z-50 transition-colors" title="Drag to resize"></div>
+        <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1 pt-1.5">
             <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layerName} Data</div>
             <button onclick="window.closeTablePanel()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
         </div>
@@ -880,7 +961,9 @@ const renderTableContent = (layerName) => {
     if (AppState.currentTableFeatures.length >= 100 || AppState.currentTableFeatures.length > displayFeatures.length) {
        tableHtml += `<p class="text-[9px] text-gray-400 dark:text-gray-500 mt-1 italic text-center shrink-0">Showing up to 100 records for preview.</p>`;
     }
+    
     attributeTableContainer.innerHTML = tableHtml;
+    attachTableResizer();
 
     document.querySelectorAll('.tbl-header').forEach(th => {
         th.addEventListener('click', (e) => {
@@ -947,7 +1030,13 @@ export const handleToggleTable = async (e) => {
   if (!attributeTableContainer) return;
   attributeTableContainer.classList.remove('hidden');
   attributeTableContainer.classList.add('flex');
-  attributeTableContainer.innerHTML = '<div class="flex items-center justify-center h-full"><p class="text-xs text-gray-500 dark:text-gray-400 italic animate-pulse">Fetching attributes...</p></div>';
+  
+  attributeTableContainer.innerHTML = `
+    <div class="table-resizer absolute top-0 left-0 w-full h-1.5 bg-gray-200 hover:bg-blue-400 dark:bg-gray-700 dark:hover:bg-blue-500 cursor-row-resize z-50 transition-colors" title="Drag to resize"></div>
+    <div class="flex items-center justify-center h-full pt-2">
+        <p class="text-xs text-gray-500 dark:text-gray-400 italic animate-pulse">Fetching attributes...</p>
+    </div>`;
+  attachTableResizer();
 
   try {
     let features = [];
@@ -967,11 +1056,13 @@ export const handleToggleTable = async (e) => {
 
     if (features.length === 0 || !features[0].properties || Object.keys(features[0].properties).length === 0) {
       attributeTableContainer.innerHTML = `
-        <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
+        <div class="table-resizer absolute top-0 left-0 w-full h-1.5 bg-gray-200 hover:bg-blue-400 dark:bg-gray-700 dark:hover:bg-blue-500 cursor-row-resize z-50 transition-colors" title="Drag to resize"></div>
+        <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1 pt-1.5">
             <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
             <button onclick="window.closeTablePanel()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
         </div>
         <p class="text-xs text-gray-500 dark:text-gray-400 italic p-2 text-center">No attributes available.</p>`;
+      attachTableResizer();
       return;
     }
 
@@ -992,11 +1083,13 @@ export const handleToggleTable = async (e) => {
     renderTableContent(layer.displayName);
   } catch (err) {
     attributeTableContainer.innerHTML = `
-      <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
+      <div class="table-resizer absolute top-0 left-0 w-full h-1.5 bg-gray-200 hover:bg-blue-400 dark:bg-gray-700 dark:hover:bg-blue-500 cursor-row-resize z-50 transition-colors" title="Drag to resize"></div>
+      <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1 pt-1.5">
           <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
           <button onclick="window.closeTablePanel()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
       </div>
       <p class="text-xs text-red-500 dark:text-red-400 italic p-2 text-center">Failed to load attribute data.</p>`;
+    attachTableResizer();
   }
 };
 
@@ -1571,8 +1664,6 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
     });
 };
 
-
-
 export const handleToggleSplit = async (e) => {
     const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
     const layer = AppState.activeLayers.find(l => l.uniqueKey === key);
@@ -1662,6 +1753,25 @@ export const handleToggleSplit = async (e) => {
     });
 };
 
+export const handleToggleCrop = (e) => {
+    const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
+    const layer = AppState.activeLayers.find(l => l.uniqueKey === key);
+    if (!layer || layer.isFolder) return;
+
+    if (AppState.activeCropLayerKey === key && e.currentTarget) { closeSidebarPanels(); return; }
+
+    closeSidebarPanels();
+    AppState.activeCropLayerKey = key;
+    if (cropPanelContainer) {
+        openContextSubmenu();
+        cropPanelContainer.classList.remove('hidden');
+        cropPanelContainer.classList.add('flex');
+    }
+    renderAddedLayers();
+    
+    if (filterType?.value === 'data') triggerDataFilterSetup(layer);
+};
+
 const triggerDataFilterSetup = async (layer) => {
     const drawStatusEl = getEl('draw-status');
     if (drawStatusEl) { drawStatusEl.classList.remove('hidden'); drawStatusEl.textContent = 'Ensuring local data for filtering...'; }
@@ -1690,25 +1800,6 @@ const triggerDataFilterSetup = async (layer) => {
         valContainer.innerHTML = '<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center">Select a column first.</p>';
     }
     checkApplyButton();
-};
-
-export const handleToggleCrop = (e) => {
-    const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
-    const layer = AppState.activeLayers.find(l => l.uniqueKey === key);
-    if (!layer || layer.isFolder) return;
-
-    if (AppState.activeCropLayerKey === key && e.currentTarget) { closeSidebarPanels(); return; }
-
-    closeSidebarPanels();
-    AppState.activeCropLayerKey = key;
-    if (cropPanelContainer) {
-        openContextSubmenu();
-        cropPanelContainer.classList.remove('hidden');
-        cropPanelContainer.classList.add('flex');
-    }
-    renderAddedLayers();
-    
-    if (filterType?.value === 'data') triggerDataFilterSetup(layer);
 };
 
 const checkApplyButton = () => {
@@ -1837,10 +1928,6 @@ const triggerFilterDataSearch = () => {
     });
 };
 
-
-// ==========================================
-// 7. MAIN UI RENDERERS
-// ==========================================
 const renderAvailableLayers = () => {
   if (!availableLayerList) return;
   availableLayerList.innerHTML = '';
@@ -1933,9 +2020,161 @@ const addLayerToMap = (layerId, switchTabAfter = true) => {
     if (switchTabAfter) { renderAddedLayers(); switchTab('added'); showToast(`Added ${meta.title} to map!`); }
 };
 
+const handleFetchLayers = async () => {
+  const sType = getEl('server-type');
+  if (!sType) return;
+  AppState.currentServerType = sType.value;
+  clearAllPreviews(); 
+  
+  const fetchSpinner = getEl('btn-fetch-spinner') || getEl('btn-fetch-spinner-url');
+  const fetchText = getEl('btn-fetch-text') || getEl('btn-fetch-text-url');
+  fetchSpinner?.classList.remove('hidden'); 
+  if (fetchText) fetchText.textContent = 'Fetching...';
+
+  try {
+    if (AppState.currentServerType === 'OVERPASS') {
+        const key = getEl('osm-key')?.value.trim();
+        const val = getEl('osm-value')?.value.trim();
+        const featName = getEl('osm-name')?.value.trim();
+        const loc = getEl('osm-location')?.value.trim();
+        const geomType = getEl('osm-geom')?.value;
+
+        if (!key) throw new Error("Please enter a Tag Key.");
+
+        let query = `[out:json][timeout:50];\n`;
+        let tagFilter = val ? `["${key}"="${val}"]` : `["${key}"]`;
+        if (featName) tagFilter += `["name"~"${featName}",i]`;
+
+        if (loc) {
+            if (fetchText) fetchText.textContent = 'Locating Area...';
+            const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(loc)}&format=json&limit=1`);
+            const nomData = await nomRes.json();
+            if (nomData.length === 0) throw new Error(`Could not find the location: "${loc}"`);
+            
+            if (fetchText) fetchText.textContent = 'Fetching Data...';
+            const place = nomData[0];
+            
+            if (place.osm_type === 'relation' || place.osm_type === 'way') {
+                const areaId = (place.osm_type === 'relation' ? 3600000000 : 2400000000) + parseInt(place.osm_id);
+                query += `area(${areaId})->.searchArea;\n(\n`;
+                if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(area.searchArea);\n`;
+                if (geomType === 'all' || geomType === 'lines_polygons') { query += `  way${tagFilter}(area.searchArea);\n  relation${tagFilter}(area.searchArea);\n`; }
+                query += `);\n`;
+            } else {
+                const bb = place.boundingbox; const bbox = `${bb[0]},${bb[2]},${bb[1]},${bb[3]}`;
+                query += `(\n`;
+                if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(${bbox});\n`;
+                if (geomType === 'all' || geomType === 'lines_polygons') { query += `  way${tagFilter}(${bbox});\n  relation${tagFilter}(${bbox});\n`; }
+                query += `);\n`;
+            }
+        } else {
+            const b = map.getBounds(); const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+            query += `(\n`;
+            if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(${bbox});\n`;
+            if (geomType === 'all' || geomType === 'lines_polygons') { query += `  way${tagFilter}(${bbox});\n  relation${tagFilter}(${bbox});\n`; }
+            query += `);\n`;
+        }
+        
+        query += `out body;\n>;\nout skel qt;`;
+        const res = await fetch(`https://overpass-api.de/api/interpreter`, { method: 'POST', body: "data=" + encodeURIComponent(query), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+        
+        if (!res.ok) throw new Error("Overpass API failed. Query may be too large.");
+        const data = await res.json();
+        if (!data.elements || data.elements.length === 0) throw new Error("No data found for this query.");
+
+        const geoJson = osmtogeojson(data, { flatProperties: true });
+        geoJson.features.forEach(f => {
+            if (f.properties) { if (f.properties.id) f.properties.osm_id = f.properties.id; delete f.properties.id; delete f.properties['@id']; delete f.properties['@relations']; delete f.properties.meta; }
+        });
+        
+        if (geomType === 'lines_polygons') geoJson.features = geoJson.features.filter(f => !['Point', 'MultiPoint'].includes(f.geometry?.type));
+        else if (geomType === 'points') geoJson.features = geoJson.features.filter(f => ['Point', 'MultiPoint'].includes(f.geometry?.type));
+
+        if (!geoJson.features || geoJson.features.length === 0) throw new Error("No renderable geometry found.");
+        
+        if (loc || featName) { try { const tempLayer = L.geoJSON(geoJson); const bounds = tempLayer.getBounds(); if(bounds.isValid()) map.fitBounds(bounds); } catch(e) {} }
+
+        let layerName = `OSM: ${key}${val ? '=' + val : ''}`;
+        let autoCity = null;
+        if (!loc) {
+            const cities = {};
+            geoJson.features.forEach(f => { const c = f.properties ? (f.properties['addr:city'] || f.properties['is_in:city'] || f.properties['is_in:municipality']) : null; if (c) cities[c] = (cities[c] || 0) + 1; });
+            autoCity = Object.keys(cities).sort((a,b) => cities[b] - cities[a])[0];
+        }
+
+        if (loc && featName) layerName = `OSM: ${featName}, ${loc} (${key})`;
+        else if (featName) layerName = `OSM: ${featName} (${key})`;
+        else if (loc) layerName = `OSM: ${loc} (${key}${val ? '=' + val : ''})`;
+        else if (geoJson.features.length === 1 && geoJson.features[0].properties && geoJson.features[0].properties.name) layerName = `OSM: ${geoJson.features[0].properties.name} (${key}${val ? '=' + val : ''})`;
+        else if (autoCity) layerName = `OSM: ${autoCity} (${key}${val ? '=' + val : ''})`;
+        else layerName = `OSM: Map View (${key}${val ? '=' + val : ''})`;
+
+        AppState.fetchedLayers = [{ id: `osm_${Date.now()}`, title: layerName, geoJsonData: geoJson }];
+        AppState.lastFetchedOsmGeoJson = geoJson; AppState.lastFetchedOsmLayerName = layerName;
+        
+        const toolsContainer = getEl('osm-available-tools');
+        if (toolsContainer) { toolsContainer.classList.remove('hidden'); toolsContainer.classList.add('flex'); }
+
+        const cols = new Set();
+        geoJson.features.forEach(f => { if(f.properties) Object.keys(f.properties).forEach(k => cols.add(k)); });
+        
+        const sel = getEl('available-split-col');
+        if (sel) {
+            sel.innerHTML = '<option value="" disabled selected>Select attribute...</option>';
+            Array.from(cols).sort().forEach(c => { sel.innerHTML += `<option value="${c}">${c}</option>`; });
+        }
+
+        renderAvailableLayers(); switchTab('available'); showToast(`Fetched ${geoJson.features.length} OSM features for preview!`);
+        return;
+    }
+
+    const sUrl = getEl('server-url');
+    const rawUrl = sUrl ? sUrl.value.trim() : '';
+    if (!rawUrl) throw new Error("Enter URL.");
+    AppState.currentServerUrl = rawUrl; AppState.fetchedLayers = []; 
+    if (layerSearch) layerSearch.value = ''; 
+    btnClearSearch?.classList.add('hidden');
+    
+    const toolsContainer = getEl('osm-available-tools');
+    if (toolsContainer) { toolsContainer.classList.add('hidden'); toolsContainer.classList.remove('flex'); }
+
+    let targetUrl = new URL(rawUrl);
+    if (AppState.currentServerType === 'WFS') { targetUrl.searchParams.set('service', 'WFS'); targetUrl.searchParams.set('request', 'GetCapabilities'); } 
+    else { targetUrl.searchParams.set('f', 'json'); }
+
+    const proxyRes = await fetch(`/proxy?url=${encodeURIComponent(targetUrl.toString())}`);
+    if (!proxyRes.ok) throw new Error("Proxy error");
+
+    if (AppState.currentServerType === 'WFS') {
+      const xml = new DOMParser().parseFromString(await proxyRes.text(), 'text/xml');
+      Array.from(xml.getElementsByTagNameNS('*', 'FeatureType')).forEach(node => {
+        let name='', title='';
+        Array.from(node.children).forEach(c => { if(c.localName==='Name') name=c.textContent; if(c.localName==='Title') title=c.textContent; });
+        if(name) AppState.fetchedLayers.push({ id: name, title: title || name });
+      });
+    } else {
+      const json = await proxyRes.json();
+      if(json.layers) AppState.fetchedLayers = json.layers.map(l => ({ id: l.id.toString(), title: l.name }));
+      else AppState.fetchedLayers.push({ id: targetUrl.pathname.split('/').pop(), title: json.name || "Layer" });
+    }
+    renderAvailableLayers(); switchTab('available');
+
+  } catch(e) {
+    showToast(e.message || "Fetch failed. Check console.", true);
+    if (AppState.currentServerType !== 'OVERPASS' && availableLayerList) {
+        availableLayerList.innerHTML = `<p class="text-xs text-red-500 italic text-center mt-3">Failed to fetch. Check server URL.</p>`; searchContainer?.classList.add('hidden');
+    }
+  } finally {
+    fetchSpinner?.classList.add('hidden'); 
+    if (fetchText) fetchText.textContent = AppState.currentServerType === 'OVERPASS' ? 'Fetch OSM Data' : 'Fetch Layers';
+  }
+};
+
+document.querySelectorAll('.btn-trigger-fetch').forEach(btn => btn.addEventListener('click', handleFetchLayers));
+
 
 // ==========================================
-// 8. EVENT LISTENERS
+// 7. EVENT LISTENERS
 // ==========================================
 getEl('toggle-workspace')?.addEventListener('click', () => {
     getEl('content-workspace')?.classList.toggle('hidden');
@@ -2328,163 +2567,10 @@ btnApplyFilter?.addEventListener('click', async () => {
   }
 });
 
-const handleFetchLayers = async () => {
-  const sType = getEl('server-type');
-  if (!sType) return;
-  AppState.currentServerType = sType.value;
-  clearAllPreviews(); 
-  
-  const fetchSpinner = getEl('btn-fetch-spinner') || getEl('btn-fetch-spinner-url');
-  const fetchText = getEl('btn-fetch-text') || getEl('btn-fetch-text-url');
-  fetchSpinner?.classList.remove('hidden'); 
-  if (fetchText) fetchText.textContent = 'Fetching...';
-
-  try {
-    if (AppState.currentServerType === 'OVERPASS') {
-        const key = getEl('osm-key')?.value.trim();
-        const val = getEl('osm-value')?.value.trim();
-        const featName = getEl('osm-name')?.value.trim();
-        const loc = getEl('osm-location')?.value.trim();
-        const geomType = getEl('osm-geom')?.value;
-
-        if (!key) throw new Error("Please enter a Tag Key.");
-
-        let query = `[out:json][timeout:50];\n`;
-        let tagFilter = val ? `["${key}"="${val}"]` : `["${key}"]`;
-        if (featName) tagFilter += `["name"~"${featName}",i]`;
-
-        if (loc) {
-            if (fetchText) fetchText.textContent = 'Locating Area...';
-            const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(loc)}&format=json&limit=1`);
-            const nomData = await nomRes.json();
-            if (nomData.length === 0) throw new Error(`Could not find the location: "${loc}"`);
-            
-            if (fetchText) fetchText.textContent = 'Fetching Data...';
-            const place = nomData[0];
-            
-            if (place.osm_type === 'relation' || place.osm_type === 'way') {
-                const areaId = (place.osm_type === 'relation' ? 3600000000 : 2400000000) + parseInt(place.osm_id);
-                query += `area(${areaId})->.searchArea;\n(\n`;
-                if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(area.searchArea);\n`;
-                if (geomType === 'all' || geomType === 'lines_polygons') { query += `  way${tagFilter}(area.searchArea);\n  relation${tagFilter}(area.searchArea);\n`; }
-                query += `);\n`;
-            } else {
-                const bb = place.boundingbox; const bbox = `${bb[0]},${bb[2]},${bb[1]},${bb[3]}`;
-                query += `(\n`;
-                if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(${bbox});\n`;
-                if (geomType === 'all' || geomType === 'lines_polygons') { query += `  way${tagFilter}(${bbox});\n  relation${tagFilter}(${bbox});\n`; }
-                query += `);\n`;
-            }
-        } else {
-            const b = map.getBounds(); const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
-            query += `(\n`;
-            if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(${bbox});\n`;
-            if (geomType === 'all' || geomType === 'lines_polygons') { query += `  way${tagFilter}(${bbox});\n  relation${tagFilter}(${bbox});\n`; }
-            query += `);\n`;
-        }
-        
-        query += `out body;\n>;\nout skel qt;`;
-        const res = await fetch(`https://overpass-api.de/api/interpreter`, { method: 'POST', body: "data=" + encodeURIComponent(query), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-        
-        if (!res.ok) throw new Error("Overpass API failed. Query may be too large.");
-        const data = await res.json();
-        if (!data.elements || data.elements.length === 0) throw new Error("No data found for this query.");
-
-        const geoJson = osmtogeojson(data, { flatProperties: true });
-        geoJson.features.forEach(f => {
-            if (f.properties) { if (f.properties.id) f.properties.osm_id = f.properties.id; delete f.properties.id; delete f.properties['@id']; delete f.properties['@relations']; delete f.properties.meta; }
-        });
-        
-        if (geomType === 'lines_polygons') geoJson.features = geoJson.features.filter(f => !['Point', 'MultiPoint'].includes(f.geometry?.type));
-        else if (geomType === 'points') geoJson.features = geoJson.features.filter(f => ['Point', 'MultiPoint'].includes(f.geometry?.type));
-
-        if (!geoJson.features || geoJson.features.length === 0) throw new Error("No renderable geometry found.");
-        
-        if (loc || featName) { try { const tempLayer = L.geoJSON(geoJson); const bounds = tempLayer.getBounds(); if(bounds.isValid()) map.fitBounds(bounds); } catch(e) {} }
-
-        let layerName = `OSM: ${key}${val ? '=' + val : ''}`;
-        let autoCity = null;
-        if (!loc) {
-            const cities = {};
-            geoJson.features.forEach(f => { const c = f.properties ? (f.properties['addr:city'] || f.properties['is_in:city'] || f.properties['is_in:municipality']) : null; if (c) cities[c] = (cities[c] || 0) + 1; });
-            autoCity = Object.keys(cities).sort((a,b) => cities[b] - cities[a])[0];
-        }
-
-        if (loc && featName) layerName = `OSM: ${featName}, ${loc} (${key})`;
-        else if (featName) layerName = `OSM: ${featName} (${key})`;
-        else if (loc) layerName = `OSM: ${loc} (${key}${val ? '=' + val : ''})`;
-        else if (geoJson.features.length === 1 && geoJson.features[0].properties && geoJson.features[0].properties.name) layerName = `OSM: ${geoJson.features[0].properties.name} (${key}${val ? '=' + val : ''})`;
-        else if (autoCity) layerName = `OSM: ${autoCity} (${key}${val ? '=' + val : ''})`;
-        else layerName = `OSM: Map View (${key}${val ? '=' + val : ''})`;
-
-        AppState.fetchedLayers = [{ id: `osm_${Date.now()}`, title: layerName, geoJsonData: geoJson }];
-        AppState.lastFetchedOsmGeoJson = geoJson; AppState.lastFetchedOsmLayerName = layerName;
-        
-        const toolsContainer = getEl('osm-available-tools');
-        if (toolsContainer) { toolsContainer.classList.remove('hidden'); toolsContainer.classList.add('flex'); }
-
-        const cols = new Set();
-        geoJson.features.forEach(f => { if(f.properties) Object.keys(f.properties).forEach(k => cols.add(k)); });
-        
-        const sel = getEl('available-split-col');
-        if (sel) {
-            sel.innerHTML = '<option value="" disabled selected>Select attribute...</option>';
-            Array.from(cols).sort().forEach(c => { sel.innerHTML += `<option value="${c}">${c}</option>`; });
-        }
-
-        renderAvailableLayers(); switchTab('available'); showToast(`Fetched ${geoJson.features.length} OSM features for preview!`);
-        return;
-    }
-
-    const sUrl = getEl('server-url');
-    const rawUrl = sUrl ? sUrl.value.trim() : '';
-    if (!rawUrl) throw new Error("Enter URL.");
-    AppState.currentServerUrl = rawUrl; AppState.fetchedLayers = []; 
-    if (layerSearch) layerSearch.value = ''; 
-    btnClearSearch?.classList.add('hidden');
-    
-    const toolsContainer = getEl('osm-available-tools');
-    if (toolsContainer) { toolsContainer.classList.add('hidden'); toolsContainer.classList.remove('flex'); }
-
-    let targetUrl = new URL(rawUrl);
-    if (AppState.currentServerType === 'WFS') { targetUrl.searchParams.set('service', 'WFS'); targetUrl.searchParams.set('request', 'GetCapabilities'); } 
-    else { targetUrl.searchParams.set('f', 'json'); }
-
-    const proxyRes = await fetch(`/proxy?url=${encodeURIComponent(targetUrl.toString())}`);
-    if (!proxyRes.ok) throw new Error("Proxy error");
-
-    if (AppState.currentServerType === 'WFS') {
-      const xml = new DOMParser().parseFromString(await proxyRes.text(), 'text/xml');
-      Array.from(xml.getElementsByTagNameNS('*', 'FeatureType')).forEach(node => {
-        let name='', title='';
-        Array.from(node.children).forEach(c => { if(c.localName==='Name') name=c.textContent; if(c.localName==='Title') title=c.textContent; });
-        if(name) AppState.fetchedLayers.push({ id: name, title: title || name });
-      });
-    } else {
-      const json = await proxyRes.json();
-      if(json.layers) AppState.fetchedLayers = json.layers.map(l => ({ id: l.id.toString(), title: l.name }));
-      else AppState.fetchedLayers.push({ id: targetUrl.pathname.split('/').pop(), title: json.name || "Layer" });
-    }
-    renderAvailableLayers(); switchTab('available');
-
-  } catch(e) {
-    showToast(e.message || "Fetch failed. Check console.", true);
-    if (AppState.currentServerType !== 'OVERPASS' && availableLayerList) {
-        availableLayerList.innerHTML = `<p class="text-xs text-red-500 italic text-center mt-3">Failed to fetch. Check server URL.</p>`; searchContainer?.classList.add('hidden');
-    }
-  } finally {
-    fetchSpinner?.classList.add('hidden'); 
-    if (fetchText) fetchText.textContent = AppState.currentServerType === 'OVERPASS' ? 'Fetch OSM Data' : 'Fetch Layers';
-  }
-};
-
-document.querySelectorAll('.btn-trigger-fetch').forEach(btn => btn.addEventListener('click', handleFetchLayers));
-
 
 // ==========================================
-// 9. APP BOOTSTRAP
+// 8. APP BOOTSTRAP
 // ==========================================
-
 const btnUndoDom = getEl('btn-undo');
 const btnRedoDom = getEl('btn-redo');
 const addedSearchContainerDOM = getEl('added-search-container');
@@ -2533,7 +2619,7 @@ try {
 
 
 // ==========================================
-// 10. SIDEBAR HORIZONTAL RESIZER
+// 9. SIDEBAR HORIZONTAL RESIZER
 // ==========================================
 const initSidebarResizer = () => {
     const leftPanel = getEl('left-panel');
@@ -2569,12 +2655,11 @@ const initSidebarResizer = () => {
         window.addEventListener('mouseup', stopDrag);
     });
 };
-
 initSidebarResizer();
 
 
 // ==========================================
-// 11. SUBMENU VERTICAL RESIZER
+// 10. SUBMENU VERTICAL RESIZER
 // ==========================================
 const initContextPanelResizer = () => {
     const wrapper = getEl('context-panel-wrapper');
@@ -2611,11 +2696,10 @@ const initContextPanelResizer = () => {
         window.addEventListener('mouseup', stopDrag);
     });
 };
-
 initContextPanelResizer();
 
 // ==========================================
-// 12. MAP SEARCH GEOCODER CONTROL
+// 11. MAP SEARCH GEOCODER CONTROL
 // ==========================================
 const executeMapSearch = async () => {
     const input = getEl('map-search-input');
@@ -2694,3 +2778,47 @@ const searchNode = searchControlInstance.getContainer();
 if (searchNode && searchNode.parentNode) {
     searchNode.parentNode.insertBefore(searchNode, searchNode.parentNode.firstChild);
 }
+// --- OFFLINE CACHING: INDEXEDDB HELPERS ---
+const initWorkspaceDB = () => {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open("GIS_Workspace_DB", 1);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('workspace')) {
+                db.createObjectStore('workspace');
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+};
+
+const persistStateToDB = async (stateObj) => {
+    const db = await initWorkspaceDB();
+    const tx = db.transaction('workspace', 'readwrite');
+    tx.objectStore('workspace').put(stateObj, 'latest_state');
+};
+
+const loadStateFromDB = async () => {
+    const db = await initWorkspaceDB();
+    return new Promise((resolve) => {
+        const tx = db.transaction('workspace', 'readonly');
+        const req = tx.objectStore('workspace').get('latest_state');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+    });
+};
+// --- RESTORE ON REFRESH ---
+window.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const savedState = await loadStateFromDB();
+        if (savedState && savedState.activeLayers) {
+            console.log("Restoring workspace from IndexedDB...");
+            
+            // Your existing function that rebuilds the UI and map!
+            restoreWorkspaceState(savedState);
+        }
+    } catch (e) {
+        console.error("Failed to restore workspace", e);
+    }
+});
