@@ -40,7 +40,7 @@ export const restoreCachedWorkspace = async () => {
 
         cachedLayers.forEach(layer => {
             // Restore to AppState array
-            AppState.activeLayers.push(layer);
+            AppState.activeLayers = [...AppState.activeLayers, layer];
             
             // Render GeoJSON back onto Leaflet canvas
             createCustomGeoJSONLayer(layer.geoJsonData, layer.layerKey, layer.style);
@@ -467,11 +467,11 @@ const restoreWorkspaceState = (data) => {
     if (data.activeLayers && Array.isArray(data.activeLayers)) {
         data.activeLayers.forEach(lData => {
             const uniqueKey = lData.uniqueKey;
-            if (lData.isFolder) {
-                AppState.activeLayers.push({
+           if (lData.isFolder) {
+                AppState.activeLayers = [...AppState.activeLayers, {
                     isFolder: true, uniqueKey: uniqueKey, displayName: lData.displayName,
                     isVisible: lData.isVisible ?? true, isExpanded: lData.isExpanded ?? true, parentId: lData.parentId || null
-                });
+                }];
                 return;
             }
 
@@ -490,11 +490,11 @@ const restoreWorkspaceState = (data) => {
 
             if (mapLayer) {
                 if (lData.isVisible) mapLayer.addTo(map);
-                AppState.activeLayers.push({
-                    uniqueKey: uniqueKey, id: lData.id, displayName: lData.displayName, mapLayer: mapLayer,
-                    exportUrl: lData.exportUrl, isLocalGeoJSON: lData.isLocalGeoJSON, geoJsonData: lData.geoJsonData,
-                    customStyle: lData.customStyle, isVisible: lData.isVisible ?? true, parentId: lData.parentId || null, isFolder: false
-                });
+                AppState.activeLayers = [...AppState.activeLayers, {
+                    uniqueKey: uniqueKey, id: lData.id, displayName: lData.displayName, mapLayer: mapLayer, exportUrl: lData.exportUrl,
+                    isLocalGeoJSON: lData.isLocalGeoJSON, geoJsonData: lData.geoJsonData, customStyle: lData.customStyle,
+                    isVisible: lData.isVisible ?? true, parentId: lData.parentId || null, isFolder: false
+                }];
             }
         });
     }
@@ -678,14 +678,14 @@ export const handleRemove = (e) => {
                   removePane(k);
                   if (AppState.activeTableLayerKey === k) closeTablePanel();
                   if (AppState.activeEditLayerKey === k || AppState.activeSplitLayerKey === k || AppState.activeCropLayerKey === k) closeSidebarPanels();
-                  AppState.activeLayers.splice(i, 1);
+                  AppState.activeLayers = AppState.activeLayers.filter((_, index) => index !== i);
               }
           });
       } else { return; }
   } else {
       map.removeLayer(layer.mapLayer);
       removePane(key); 
-      AppState.activeLayers.splice(idx, 1);
+      AppState.activeLayers = AppState.activeLayers.filter((_, index) => index !== idx);
       if (AppState.activeTableLayerKey === key) closeTablePanel();
       if (AppState.activeEditLayerKey === key || AppState.activeSplitLayerKey === key || AppState.activeCropLayerKey === key) closeSidebarPanels();
   }
@@ -768,10 +768,10 @@ export const handleDuplicate = async (e) => {
         const displayNameSuffix = isRootCopy ? ' (Copy)' : ''; 
 
         if (nodeToCopy.isFolder) {
-            AppState.activeLayers.unshift({
+            AppState.activeLayers = [{
                 uniqueKey: newUniqueKey, id: `${nodeToCopy.id}_copy`, displayName: `${nodeToCopy.displayName}${displayNameSuffix}`,
                 isFolder: true, isExpanded: nodeToCopy.isExpanded, isVisible: nodeToCopy.isVisible, parentId: newParentId
-            });
+            }, ...AppState.activeLayers];
 
             const children = AppState.activeLayers.filter(l => l.parentId === nodeToCopy.uniqueKey);
             for (const child of children) await copyNode(child, newUniqueKey, false);
@@ -788,11 +788,11 @@ export const handleDuplicate = async (e) => {
 
             if (!nodeToCopy.isVisible) map.removeLayer(newMapLayer);
 
-            AppState.activeLayers.unshift({
+            AppState.activeLayers = [{
                 uniqueKey: newUniqueKey, id: `${nodeToCopy.id}_copy`, displayName: `${nodeToCopy.displayName}${displayNameSuffix}`, 
                 mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJson, customStyle: newStyleState, 
                 isVisible: nodeToCopy.isVisible, parentId: newParentId, isFolder: false
-            });
+            }, ...AppState.activeLayers];
         }
     };
 
@@ -1713,7 +1713,7 @@ export const handleToggleSplit = async (e) => {
             createdCount++;
         });
         
-        AppState.activeLayers.unshift(newFolder, ...newLayers);
+        AppState.activeLayers = [newFolder, ...newLayers, ...AppState.activeLayers];
         layer.isVisible = false;
         map.removeLayer(layer.mapLayer);
         
@@ -1980,10 +1980,10 @@ const addLayerToMap = (layerId, switchTabAfter = true) => {
     
     mapLayer.addTo(map);
     
-    AppState.activeLayers.unshift({ 
+    AppState.activeLayers = [{ 
       uniqueKey: uniqueKey, id: meta.id, displayName: meta.title, mapLayer, exportUrl, 
       isLocalGeoJSON, geoJsonData, customStyle, isVisible: true, parentId: null, isFolder: false
-    });
+    }, ...AppState.activeLayers];
     
     updateMapLayerOrder();
     if (switchTabAfter) { renderAddedLayers(); switchTab('added'); showToast(`Added ${meta.title} to map!`); }
@@ -2119,12 +2119,12 @@ const handleFetchLayers = async () => {
       Array.from(xml.getElementsByTagNameNS('*', 'FeatureType')).forEach(node => {
         let name='', title='';
         Array.from(node.children).forEach(c => { if(c.localName==='Name') name=c.textContent; if(c.localName==='Title') title=c.textContent; });
-        if(name) AppState.fetchedLayers.push({ id: name, title: title || name });
+        if(name) AppState.fetchedLayers = [...AppState.fetchedLayers, { id: name, title: title || name }];
       });
     } else {
       const json = await proxyRes.json();
       if(json.layers) AppState.fetchedLayers = json.layers.map(l => ({ id: l.id.toString(), title: l.name }));
-      else AppState.fetchedLayers.push({ id: targetUrl.pathname.split('/').pop(), title: json.name || "Layer" });
+      else AppState.fetchedLayers = [...AppState.fetchedLayers, { id: targetUrl.pathname.split('/').pop(), title: json.name || "Layer" }];
     }
     renderAvailableLayers(); switchTab('available');
 
@@ -2242,10 +2242,10 @@ getEl('btn-clear-workspace')?.addEventListener('click', async () => {
 
 getEl('btn-create-folder')?.addEventListener('click', () => {
     const folderKey = 'folder_' + Math.random().toString(36).substr(2,9);
-    AppState.activeLayers.unshift({
+    AppState.activeLayers = [{
         isFolder: true, uniqueKey: folderKey, displayName: "New Folder",
         isVisible: true, isExpanded: true, parentId: null
-    });
+    }, ...AppState.activeLayers];
     
     renderAddedLayers();
     autoSaveWorkspace();
@@ -2308,11 +2308,11 @@ getEl('btn-available-split')?.addEventListener('click', () => {
             extraName = ` - ${filteredFeats[0].properties.name}`;
         }
         
-        AppState.fetchedLayers.push({
+        AppState.fetchedLayers = [...AppState.fetchedLayers, {
             id: `osm_${Date.now()}_${Math.random().toString(36).substr(2,5)}`,
             title: `${AppState.lastFetchedOsmLayerName} [${splitCol}: ${displayVal}]${extraName}`,
             geoJsonData: { type: "FeatureCollection", features: filteredFeats }
-        });
+        }];
     });
     renderAvailableLayers();
     showToast(`Successfully unpacked into ${AppState.fetchedLayers.length} sub-layers!`);
@@ -2529,8 +2529,7 @@ btnApplyFilter?.addEventListener('click', async () => {
     map.fitBounds(newMapLayer.getBounds());
 
     const namePrefix = filterType?.value === 'data' ? '[Filtered]' : '[Cropped]';
-    AppState.activeLayers.unshift({ uniqueKey: uniqueKey, id: `${targetLayer.id}_filtered`, displayName: `${namePrefix} ${targetLayer.displayName}`, mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJsonData, customStyle: newStyleState, isVisible: true, parentId: targetLayer.parentId || null, isFolder: false });
-
+    AppState.activeLayers = [{ uniqueKey: uniqueKey, id: `${targetLayer.id}_filtered`, displayName: `${namePrefix} ${targetLayer.displayName}`, mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJsonData, customStyle: newStyleState, isVisible: true, parentId: targetLayer.parentId || null, isFolder: false }, ...AppState.activeLayers];
     if (targetLayer.isVisible) { targetLayer.isVisible = false; map.removeLayer(targetLayer.mapLayer); }
 
     closeSidebarPanels(); renderAddedLayers(); updateMapLayerOrder();
