@@ -70,6 +70,7 @@ let activeEditLayerKey = null;
 let activeSplitLayerKey = null;
 let activeCropLayerKey = null;
 let copiedStyle = null;
+let currentSoloLayerKey = null; // Tracks the currently Soloed layer/folder
 
 let drawingMode = null; 
 let drawStart = null;
@@ -244,7 +245,6 @@ const interpolateColor = (color1, color2, factor) => {
     let g = Math.round(g1 + factor * (g2 - g1));
     let b = Math.round(b1 + factor * (b2 - b1));
     
-    // Hard clamp to avoid out-of-bounds hex strings
     r = Math.max(0, Math.min(255, r || 0));
     g = Math.max(0, Math.min(255, g || 0));
     b = Math.max(0, Math.min(255, b || 0));
@@ -261,6 +261,46 @@ const removePane = (uniqueKey) => {
     }
 };
 
+const updateSoloView = () => {
+    if (!currentSoloLayerKey) {
+        // Solo disabled: restore all layers to normal opacity and interaction
+        activeLayers.forEach(l => {
+            if (l.isFolder) return;
+            const pane = map.getPane('pane-' + l.uniqueKey);
+            if (pane) {
+                pane.style.transition = 'opacity 0.3s ease';
+                pane.style.opacity = '1';
+                pane.style.pointerEvents = 'auto'; // allow tooltips/clicks again
+            }
+        });
+        return;
+    }
+
+    // Determine allowed keys (the soloed layer, and if it's a folder, all its descendants)
+    const allowedKeys = new Set();
+    const collectKeys = (key) => {
+        allowedKeys.add(key);
+        activeLayers.filter(l => l.parentId === key).forEach(child => collectKeys(child.uniqueKey));
+    };
+    collectKeys(currentSoloLayerKey);
+
+    // Apply ghost styling to non-soloed layers
+    activeLayers.forEach(l => {
+        if (l.isFolder) return;
+        const pane = map.getPane('pane-' + l.uniqueKey);
+        if (pane) {
+            pane.style.transition = 'opacity 0.3s ease';
+            if (allowedKeys.has(l.uniqueKey)) {
+                pane.style.opacity = '1';
+                pane.style.pointerEvents = 'auto'; 
+            } else {
+                pane.style.opacity = '0'; // Drops opacity to 0% so they become completely invisible
+                pane.style.pointerEvents = 'none'; // Prevent popups/clicks on hidden layers
+            }
+        }
+    });
+};
+
 const updateMapLayerOrder = () => {
     let zIndex = 1000;
     for (let i = activeLayers.length - 1; i >= 0; i--) {
@@ -269,6 +309,7 @@ const updateMapLayerOrder = () => {
         const pane = map.getPane('pane-' + layer.uniqueKey);
         if (pane) pane.style.zIndex = zIndex--;
     }
+    updateSoloView(); // Ensure ghosts are rendered correctly if layer order updates
     autoSaveWorkspace(); 
 };
 
@@ -340,7 +381,6 @@ window.closeAllPanels = closeAllPanels;
 const switchTab = (tabName) => {
   const isAvailable = (tabName === 'available');
   
-  // New UI Tab Strings
   const baseClasses = "flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200";
   const activeClasses = `${baseClasses} font-bold bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border-t-[3px] border-t-blue-600 dark:border-t-blue-400 border-b border-b-transparent opacity-100 z-10`;
   const inactiveClasses = `${baseClasses} font-medium bg-transparent text-gray-400 dark:text-gray-500 border-t-[3px] border-t-transparent border-b border-b-gray-200 dark:border-b-gray-700 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/80 opacity-60 hover:opacity-100 shadow-inner cursor-pointer`;
@@ -680,6 +720,7 @@ const autoSaveWorkspace = () => {
 const restoreWorkspaceState = (data) => {
     closeAllPanels();
     clearAllPreviews();
+    currentSoloLayerKey = null; // Wipe out Ghost state completely
 
     // Clear existing map layers and destroy panes completely
     activeLayers.forEach(l => {
@@ -838,6 +879,17 @@ const executeOsmInspect = async (bounds) => {
 // 6. MAIN LAYER ACTION HANDLERS
 // ==========================================
 
+const handleToggleSolo = (e) => {
+    const key = e.currentTarget.getAttribute('data-key');
+    if (currentSoloLayerKey === key) {
+        currentSoloLayerKey = null; // Turn off solo if clicking the same button
+    } else {
+        currentSoloLayerKey = key;
+    }
+    updateSoloView();
+    renderAddedLayers(); 
+};
+
 const rebuildActiveLayersFromDOM = () => {
     const newActiveLayers = [];
     const traverse = (listEl, currentParentId) => {
@@ -898,6 +950,11 @@ const handleRemove = (e) => {
   const idx = activeLayers.findIndex(l => l.uniqueKey === key);
   if (idx === -1) return;
   const layer = activeLayers[idx];
+
+  // If we delete a currently soloed layer, immediately kill Ghost mode
+  if (currentSoloLayerKey === key) {
+      currentSoloLayerKey = null;
+  }
 
   if (layer.isFolder) {
       if(confirm("Remove this folder and ALL items inside it?")) {
@@ -2038,6 +2095,7 @@ const renderAddedLayers = () => {
                             <button class="btn-toggle-folder text-gray-500 dark:text-gray-400 w-3 shrink-0 flex justify-center" data-key="${node.uniqueKey}">
                                 <i class="fa-solid ${node.isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'} text-[9px]"></i>
                             </button>
+                            <button class="btn-solo shrink-0 flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold transition-colors ${currentSoloLayerKey === node.uniqueKey ? 'bg-yellow-400 text-yellow-900 border border-yellow-500 shadow-sm' : 'bg-gray-200 text-gray-500 hover:bg-yellow-100 hover:text-yellow-700 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-yellow-900/50'}" data-key="${node.uniqueKey}" title="${currentSoloLayerKey === node.uniqueKey ? 'Un-Solo' : 'Solo Folder (Ghost Mode)'}">S</button>
                             <input type="checkbox" class="w-3.5 h-3.5 text-blue-600 rounded cursor-pointer btn-toggle-vis shrink-0" data-key="${node.uniqueKey}" ${node.isVisible ? 'checked' : ''} title="Toggle Folder Visibility">
                             <i class="fa-solid fa-folder text-yellow-500 shrink-0"></i>
                             <span class="text-xs font-bold text-gray-700 dark:text-gray-200 truncate outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable flex-1 cursor-text" data-key="${node.uniqueKey}" contenteditable="false" spellcheck="false" title="Double-click to rename">${node.displayName}</span>
@@ -2067,6 +2125,7 @@ const renderAddedLayers = () => {
                     <div class="flex items-center justify-between">
                         <div class="flex items-center mr-2 shrink-0 space-x-1.5">
                             <i class="fa-solid fa-grip-vertical text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-grab drag-handle px-0.5"></i>
+                            <button class="btn-solo shrink-0 flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold transition-colors ${currentSoloLayerKey === node.uniqueKey ? 'bg-yellow-400 text-yellow-900 border border-yellow-500 shadow-sm' : 'bg-gray-200 text-gray-500 hover:bg-yellow-100 hover:text-yellow-700 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-yellow-900/50'}" data-key="${node.uniqueKey}" title="${currentSoloLayerKey === node.uniqueKey ? 'Un-Solo' : 'Solo Layer (Ghost Mode)'}">S</button>
                             <input type="checkbox" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 rounded cursor-pointer btn-toggle-vis accent-blue-600 dark:accent-blue-500" data-key="${node.uniqueKey}" ${node.isVisible ? 'checked' : ''} title="Toggle Visibility">
                         </div>
                         <div class="flex-1 overflow-hidden pr-1">
@@ -2139,6 +2198,7 @@ const renderAddedLayers = () => {
     document.querySelectorAll('.btn-export-folder').forEach(btn => btn.addEventListener('click', handleExportFolder));
     document.querySelectorAll('.btn-remove').forEach(btn => btn.addEventListener('click', handleRemove));
     document.querySelectorAll('.btn-toggle-vis').forEach(btn => btn.addEventListener('change', handleToggleVisibility));
+    document.querySelectorAll('.btn-solo').forEach(btn => btn.addEventListener('click', handleToggleSolo));
     
     document.querySelectorAll('.btn-toggle-folder').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -2314,6 +2374,7 @@ getEl('btn-clear-workspace')?.addEventListener('click', () => {
     if (activeLayers.length === 0) return;
     if (confirm("Reset workspace? All added layers will be removed from the map.")) {
         closeAllPanels(); clearAllPreviews();
+        currentSoloLayerKey = null;
         activeLayers.forEach(l => { if (!l.isFolder) map.removeLayer(l.mapLayer); removePane(l.uniqueKey); });
         activeLayers = []; 
         autoSaveWorkspace();
@@ -2873,7 +2934,7 @@ const initSidebarResizer = () => {
             if (isResizing) {
                 isResizing = false;
                 document.body.classList.remove('select-none', 'cursor-col-resize');
-                window.removeEventListener('mousemove', doDrag); // Fixed typo here
+                window.removeEventListener('mousemove', doDrag);
                 window.removeEventListener('mouseup', stopDrag);
                 map.invalidateSize();
             }
@@ -2944,21 +3005,18 @@ const executeMapSearch = async () => {
     if (spinner) spinner.classList.remove('hidden');
 
     try {
-        // Query the free Nominatim API (same as we use for OSM fetching)
         const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(term)}&format=json&limit=1`);
         if (!res.ok) throw new Error("Search API failed");
         const data = await res.json();
         
         if (data && data.length > 0) {
             const place = data[0];
-            // If the search result has a bounding box (e.g. a city or country), fit the camera to it
             if (place.boundingbox) {
                 map.fitBounds([
                     [place.boundingbox[0], place.boundingbox[2]],
                     [place.boundingbox[1], place.boundingbox[3]]
                 ]);
             } else {
-                // Otherwise just jump the camera to the lat/lng point
                 map.setView([place.lat, place.lon], 13);
             }
             showToast(`Jumped to: ${place.display_name.split(',')[0]}`);
@@ -2973,14 +3031,10 @@ const executeMapSearch = async () => {
     }
 };
 
-// Create a custom Leaflet UI Control
 const GeoSearchControl = L.Control.extend({
-    options: { position: 'topleft' }, // Places it in the same corner as zoom controls
+    options: { position: 'topleft' }, 
     onAdd: function () {
-        // Create the container using Leaflet's DOM utility so it behaves like a map element
         const container = L.DomUtil.create('div', 'leaflet-control flex bg-white dark:bg-gray-800 rounded border border-gray-300 dark:border-gray-600 shadow-sm overflow-hidden cursor-auto');
-        
-        // Prevent clicking inside the text box from clicking the map underneath it
         L.DomEvent.disableClickPropagation(container);
 
         container.innerHTML = `
@@ -2994,7 +3048,6 @@ const GeoSearchControl = L.Control.extend({
             </div>
         `;
         
-        // Attach event listeners after a brief timeout to ensure HTML was successfully injected into the map DOM
         setTimeout(() => {
             getEl('map-search-btn')?.addEventListener('click', executeMapSearch);
             getEl('map-search-input')?.addEventListener('keydown', (e) => {
@@ -3009,11 +3062,9 @@ const GeoSearchControl = L.Control.extend({
     }
 });
 
-// Mount it to the map
 const searchControlInstance = new GeoSearchControl();
 map.addControl(searchControlInstance);
 
-// Force the search bar to physically sit above the default zoom controls in the DOM
 const searchNode = searchControlInstance.getContainer();
 if (searchNode && searchNode.parentNode) {
     searchNode.parentNode.insertBefore(searchNode, searchNode.parentNode.firstChild);
