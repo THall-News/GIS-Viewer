@@ -446,9 +446,6 @@ export const autoSaveWorkspace = () => {
             else historyIndex++;
             updateUndoRedoButtons();
         }
-
-        try { localStorage.setItem('gis_previewer_auto_save', stateStr); } 
-        catch (storageErr) { console.warn("Storage quota limit reached."); }
     } catch (e) { console.error("Critical failure during workspace serialization:", e); }
 };
 
@@ -2487,11 +2484,11 @@ btnApplyFilter?.addEventListener('click', async () => {
             if (filterType?.value === 'box') {
                b = AppState.filterGeometryData;
                const turfBbox = turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
-               finalFeatures = targetLayer.geoJsonData.features.filter(f => { try { return turf.booleanWithin(f, turfBbox); } catch(e) { return false; } });
+               finalFeatures = targetLayer.geoJsonData.features.filter(f => { try { return turf.booleanIntersects(f, turfBbox); } catch(e) { return false; } });
             } else {
                const radKm = parseFloat(filterRadius?.value) || 5;
                const turfCircle = turf.circle([AppState.filterGeometryData.lng, AppState.filterGeometryData.lat], radKm, {units: 'kilometers'});
-               finalFeatures = targetLayer.geoJsonData.features.filter(f => { try { return turf.booleanWithin(f, turfCircle); } catch(e) { return false; } });
+               finalFeatures = targetLayer.geoJsonData.features.filter(f => { try { return turf.booleanIntersects(f, turfCircle); } catch(e) { return false; } });
             }
         } else {
             let queryUrl = targetLayer.exportUrl;
@@ -2508,11 +2505,11 @@ btnApplyFilter?.addEventListener('click', async () => {
 
             if (filterType?.value === 'box') {
                 const turfBbox = turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
-                finalFeatures = fetchedFeatures.filter(f => { try { return turf.booleanWithin(f, turfBbox); } catch(e) { return false; } });
+                finalFeatures = fetchedFeatures.filter(f => { try { return turf.booleanIntersects(f, turfBbox); } catch(e) { return false; } });
             } else if (filterType?.value === 'radius') {
                 const radKm = parseFloat(filterRadius?.value) || 5;
                 const turfCircle = turf.circle([AppState.filterGeometryData.lng, AppState.filterGeometryData.lat], radKm, {units: 'kilometers'});
-                finalFeatures = fetchedFeatures.filter(f => { try { return turf.booleanWithin(f, turfCircle); } catch(e) { return false; } });
+                finalFeatures = fetchedFeatures.filter(f => { try { return turf.booleanIntersects(f, turfCircle); } catch(e) { return false; } });
             }
         }
     }
@@ -2756,7 +2753,7 @@ if (searchNode && searchNode.parentNode) {
     searchNode.parentNode.insertBefore(searchNode, searchNode.parentNode.firstChild);
 }
 // --- OFFLINE CACHING: INDEXEDDB HELPERS ---
-const initWorkspaceDB = () => {
+function initWorkspaceDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open("GIS_Workspace_DB", 1);
         request.onupgradeneeded = (e) => {
@@ -2768,15 +2765,15 @@ const initWorkspaceDB = () => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
     });
-};
+}
 
-const persistStateToDB = async (stateObj) => {
+async function persistStateToDB(stateObj) {
     const db = await initWorkspaceDB();
     const tx = db.transaction('workspace', 'readwrite');
     tx.objectStore('workspace').put(stateObj, 'latest_state');
-};
+}
 
-const loadStateFromDB = async () => {
+async function loadStateFromDB() {
     const db = await initWorkspaceDB();
     return new Promise((resolve) => {
         const tx = db.transaction('workspace', 'readonly');
@@ -2784,7 +2781,7 @@ const loadStateFromDB = async () => {
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => resolve(null);
     });
-};
+}
 // --- RESTORE ON REFRESH ---
 window.addEventListener('DOMContentLoaded', async () => {
     try {
@@ -2800,8 +2797,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-const clearWorkspaceDB = async () => {
+async function clearWorkspaceDB() {
     const db = await initWorkspaceDB();
     const tx = db.transaction('workspace', 'readwrite');
     tx.objectStore('workspace').clear();
-};
+}
