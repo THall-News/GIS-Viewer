@@ -342,3 +342,14 @@ export const renderAddedLayers = () => {
     
     triggerAddedSearch();
 };
+
+import { stateEvents } from './state.js';
+
+// Automatically re-render UI elements when specific state keys change
+stateEvents.addEventListener('stateChanged', (e) => {
+    const { property } = e.detail;
+    
+    if (property === 'activeLayers') {
+        renderAddedLayers();
+    }
+});
