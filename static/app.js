@@ -34,6 +34,17 @@ const ensureSortableLoaded = () => {
 };
 ensureSortableLoaded();
 
+// Ensure JSZip is loaded dynamically for folder exports
+const ensureJSZipLoaded = () => {
+    if (window.JSZip) return Promise.resolve();
+    return new Promise((resolve) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+        script.onload = resolve;
+        document.head.appendChild(script);
+    });
+};
+
 const map = L.map('map', { preferCanvas: true }).setView([0, 0], 2);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
@@ -206,7 +217,6 @@ const downloadBlob = (blob, name) => {
   a.click();
   document.body.removeChild(a);
   window.URL.revokeObjectURL(url);
-  showToast(`Exported successfully!`);
 };
 
 const openContextSubmenu = () => {
@@ -770,6 +780,57 @@ const handleExport = async (e) => {
     if (!res.ok) throw new Error("Server error");
     downloadBlob(await res.blob(), layer.displayName);
   } catch(err) { showToast("Export failed.", true); }
+};
+
+const handleExportFolder = async (e) => {
+    const folderKey = e.currentTarget.getAttribute('data-key');
+    const folder = activeLayers.find(l => l.uniqueKey === folderKey);
+    if (!folder) return;
+
+    showToast(`Preparing ZIP for ${folder.displayName}...`);
+    await ensureJSZipLoaded();
+    const zip = new JSZip();
+    let processedCount = 0;
+
+    const addLayersToZip = async (parentId, currentZipFolder) => {
+        const children = activeLayers.filter(l => l.parentId === parentId);
+        for (const child of children) {
+            if (child.isFolder) {
+                const safeName = child.displayName.replace(/[^a-z0-9 \-_]/gi, '').trim() || 'folder';
+                const subZip = currentZipFolder.folder(safeName);
+                await addLayersToZip(child.uniqueKey, subZip);
+            } else {
+                try {
+                    let geojsonDataToZip = null;
+                    if (child.isLocalGeoJSON) {
+                        geojsonDataToZip = child.geoJsonData;
+                    } else if (child.exportUrl) {
+                        const res = await fetch(`/proxy?url=${encodeURIComponent(child.exportUrl)}`);
+                        if (res.ok) geojsonDataToZip = await res.json();
+                    }
+
+                    if (geojsonDataToZip) {
+                        const safeName = child.displayName.replace(/[^a-z0-9 \-_]/gi, '').trim() || 'layer';
+                        currentZipFolder.file(safeName + '.geojson', JSON.stringify(geojsonDataToZip));
+                        processedCount++;
+                    }
+                } catch(err) {
+                    console.warn("Failed to process layer for zip: ", child.displayName);
+                }
+            }
+        }
+    };
+
+    await addLayersToZip(folderKey, zip);
+
+    if (processedCount === 0) {
+        return showToast("Folder is empty or failed to fetch layers.", true);
+    }
+
+    const content = await zip.generateAsync({ type: "blob" });
+    const zipName = (folder.displayName.replace(/[^a-z0-9 \-_]/gi, '').trim() || 'folder_export') + '.zip';
+    downloadBlob(content, zipName);
+    showToast(`Successfully exported ${processedCount} layers as ZIP!`);
 };
 
 const handleDuplicate = async (e) => {
@@ -1638,7 +1699,8 @@ const renderAddedLayers = () => {
                             <i class="fa-solid fa-folder text-yellow-500 shrink-0"></i>
                             <span class="text-xs font-bold text-gray-700 dark:text-gray-200 truncate outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable flex-1 cursor-text" data-key="${node.uniqueKey}" contenteditable="false" spellcheck="false" title="Double-click to rename">${node.displayName}</span>
                         </div>
-                        <div class="flex space-x-2 shrink-0 pr-1">
+                        <div class="flex space-x-2 shrink-0 pr-1 items-center">
+                            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-export-folder" data-key="${node.uniqueKey}" title="Export Folder as ZIP"><i class="fa-solid fa-download text-[10px]"></i></button>
                             <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${node.uniqueKey}" title="Remove Folder"><i class="fa-solid fa-trash text-[10px]"></i></button>
                         </div>
                     </div>
@@ -1731,6 +1793,7 @@ const renderAddedLayers = () => {
     document.querySelectorAll('.btn-crop').forEach(btn => btn.addEventListener('click', handleToggleCrop));
     document.querySelectorAll('.btn-duplicate').forEach(btn => btn.addEventListener('click', handleDuplicate));
     document.querySelectorAll('.btn-export').forEach(btn => btn.addEventListener('click', handleExport));
+    document.querySelectorAll('.btn-export-folder').forEach(btn => btn.addEventListener('click', handleExportFolder));
     document.querySelectorAll('.btn-remove').forEach(btn => btn.addEventListener('click', handleRemove));
     document.querySelectorAll('.btn-toggle-vis').forEach(btn => btn.addEventListener('change', handleToggleVisibility));
     
