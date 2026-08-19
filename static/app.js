@@ -33,30 +33,8 @@ export const removeLayerFromCache = async (layerKey) => {
 };
 import { getCachedLayers } from './db.js';
 
-export const restoreCachedWorkspace = async () => {
-    try {
-        const cachedLayers = await getCachedLayers();
-        if (!cachedLayers || cachedLayers.length === 0) return;
-
-        cachedLayers.forEach(layer => {
-            // Restore to AppState array
-            AppState.activeLayers = [...AppState.activeLayers, layer];
-            
-            // Render GeoJSON back onto Leaflet canvas
-            createCustomGeoJSONLayer(layer.geoJsonData, layer.layerKey, layer.style);
-        });
-
-        // Refresh UI panel list
-        renderAddedLayers();
-    } catch (err) {
-        console.error("Error restoring cached layers:", err);
-    }
-};
-
-// Add to app startup initialization
-window.addEventListener('DOMContentLoaded', () => {
-    restoreCachedWorkspace();
-});
+// DELETED: Legacy restoreCachedWorkspace and duplicate DOMContentLoaded listener.
+// Workspace initialization is handled asynchronously by loadStateFromDB at the bottom of this file.
 
 // Safely Query DOM Elements
 const getEl = (id) => document.getElementById(id);
@@ -413,14 +391,52 @@ export const togglePreviewLayer = (layerId, isVisible) => {
     AppState.previewLayers[layerId] = mapLayer;
 };
 
+// Helper to strip Leaflet internal properties & circular references before saving
+const sanitizeGeoJSON = (geoJson) => {
+    if (!geoJson) return null;
+    try {
+        return JSON.parse(JSON.stringify(geoJson, (key, value) => {
+            // Strip out Leaflet circular references and internal state flags
+            if (key.startsWith('_') || key === 'mapLayer') return undefined;
+            return value;
+        }));
+    } catch (e) {
+        console.warn("Failed to sanitize GeoJSON for storage:", e);
+        return null;
+    }
+};
+
 const serializeWorkspace = () => {
     const center = map.getCenter();
     const zoom = map.getZoom();
-    const layersData = AppState.activeLayers.map(l => ({
-        uniqueKey: l.uniqueKey, id: l.id, displayName: l.displayName, exportUrl: l.exportUrl,
-        isLocalGeoJSON: l.isLocalGeoJSON, geoJsonData: l.geoJsonData, customStyle: l.customStyle, isVisible: l.isVisible,
-        isFolder: l.isFolder, parentId: l.parentId || null, isExpanded: l.isExpanded
-    }));
+    const layersData = AppState.activeLayers.map(l => {
+        // Strip out Leaflet circular references before serializing
+        let cleanGeoJSON = null;
+        if (l.geoJsonData) {
+            try {
+                cleanGeoJSON = JSON.parse(JSON.stringify(l.geoJsonData, (key, value) => {
+                    if (key.startsWith('_') || key === 'mapLayer') return undefined;
+                    return value;
+                }));
+            } catch (err) {
+                cleanGeoJSON = l.geoJsonData;
+            }
+        }
+
+        return {
+            uniqueKey: l.uniqueKey,
+            id: l.id,
+            displayName: l.displayName,
+            exportUrl: l.exportUrl,
+            isLocalGeoJSON: l.isLocalGeoJSON ?? true,
+            geoJsonData: cleanGeoJSON,
+            customStyle: l.customStyle,
+            isVisible: l.isVisible,
+            isFolder: l.isFolder,
+            parentId: l.parentId || null,
+            isExpanded: l.isExpanded
+        };
+    });
     return { version: "1.2", savedAt: new Date().toISOString(), mapState: { lat: center.lat, lng: center.lng, zoom }, activeLayers: layersData };
 };
 
@@ -476,7 +492,8 @@ const restoreWorkspaceState = (data) => {
             const paneName = 'pane-' + uniqueKey;
             if (!map.getPane(paneName)) map.createPane(paneName);
             
-            if (lData.isLocalGeoJSON && lData.geoJsonData) {
+            // Rebuild layer if shape data exists regardless of flag
+            if (lData.geoJsonData) {
                 mapLayer = createCustomGeoJSONLayer(lData.geoJsonData, lData.customStyle, paneName);
             } else if (lData.exportUrl) {
                 const baseUrl = lData.exportUrl.split('?')[0];
@@ -2768,9 +2785,14 @@ function initWorkspaceDB() {
 }
 
 async function persistStateToDB(stateObj) {
-    const db = await initWorkspaceDB();
-    const tx = db.transaction('workspace', 'readwrite');
-    tx.objectStore('workspace').put(stateObj, 'latest_state');
+    try {
+        const cleanState = JSON.parse(JSON.stringify(stateObj));
+        const db = await initWorkspaceDB();
+        const tx = db.transaction('workspace', 'readwrite');
+        tx.objectStore('workspace').put(cleanState, 'latest_state');
+    } catch (e) {
+        console.error("IndexedDB write error:", e);
+    }
 }
 
 async function loadStateFromDB() {
@@ -2786,14 +2808,17 @@ async function loadStateFromDB() {
 window.addEventListener('DOMContentLoaded', async () => {
     try {
         const savedState = await loadStateFromDB();
-        if (savedState && savedState.activeLayers) {
+        if (savedState && savedState.activeLayers && savedState.activeLayers.length > 0) {
             console.log("Restoring workspace from IndexedDB...");
-            
-            // Your existing function that rebuilds the UI and map!
-            restoreWorkspaceState(savedState);
+            isRestoringHistory = true;
+            try {
+                restoreWorkspaceState(savedState);
+            } finally {
+                isRestoringHistory = false;
+            }
         }
     } catch (e) {
-        console.error("Failed to restore workspace", e);
+        console.error("Failed to restore workspace from IndexedDB:", e);
     }
 });
 
