@@ -1636,7 +1636,7 @@ const renderAddedLayers = () => {
                             </button>
                             <input type="checkbox" class="w-3.5 h-3.5 text-blue-600 rounded cursor-pointer btn-toggle-vis shrink-0" data-key="${node.uniqueKey}" ${node.isVisible ? 'checked' : ''} title="Toggle Folder Visibility">
                             <i class="fa-solid fa-folder text-yellow-500 shrink-0"></i>
-                            <span class="text-xs font-bold text-gray-700 dark:text-gray-200 truncate outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable flex-1" data-key="${node.uniqueKey}" contenteditable="true" spellcheck="false" title="Click to rename">${node.displayName}</span>
+                            <span class="text-xs font-bold text-gray-700 dark:text-gray-200 truncate outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable flex-1 cursor-text" data-key="${node.uniqueKey}" contenteditable="false" spellcheck="false" title="Double-click to rename">${node.displayName}</span>
                         </div>
                         <div class="flex space-x-2 shrink-0 pr-1">
                             <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${node.uniqueKey}" title="Remove Folder"><i class="fa-solid fa-trash text-[10px]"></i></button>
@@ -1665,7 +1665,7 @@ const renderAddedLayers = () => {
                             <input type="checkbox" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 rounded cursor-pointer btn-toggle-vis accent-blue-600 dark:accent-blue-500" data-key="${node.uniqueKey}" ${node.isVisible ? 'checked' : ''} title="Toggle Visibility">
                         </div>
                         <div class="flex-1 overflow-hidden pr-1">
-                            <span class="text-xs font-semibold text-gray-800 dark:text-gray-200 truncate block outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable" data-key="${node.uniqueKey}" contenteditable="true" spellcheck="false" title="Click to rename">${node.displayName}</span>
+                            <span class="text-xs font-semibold text-gray-800 dark:text-gray-200 truncate block outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable cursor-text" data-key="${node.uniqueKey}" contenteditable="false" spellcheck="false" title="Double-click to rename">${node.displayName}</span>
                             <span class="text-[9px] text-gray-400 dark:text-gray-500 block truncate px-1" title="${node.id}">ID: ${node.id}</span>
                         </div>
                     </div>
@@ -1677,7 +1677,6 @@ const renderAddedLayers = () => {
                             <button class="transition-colors btn-crop ${isCropActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Filter / Crop Layer"><i class="fa-solid fa-crop"></i></button>
                             <button class="transition-colors btn-split ${isSplitActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Split Layer"><i class="fa-solid fa-object-ungroup"></i></button>
                             <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${node.uniqueKey}" title="Duplicate Layer"><i class="fa-solid fa-clone"></i></button>
-                            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-rename" data-key="${node.uniqueKey}" title="Rename Layer"><i class="fa-solid fa-pen"></i></button>
                             <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-export" data-key="${node.uniqueKey}" title="Export Layer"><i class="fa-solid fa-download"></i></button>
                             <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${node.uniqueKey}" title="Remove Layer"><i class="fa-solid fa-trash"></i></button>
                         </div>
@@ -1690,24 +1689,21 @@ const renderAddedLayers = () => {
 
     addedLayerList.innerHTML = buildNodeHTML(null);
 
-    // Reattach inline edit logic
-    document.querySelectorAll('.btn-rename').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const key = e.currentTarget.getAttribute('data-key');
-            const span = document.querySelector(`.layer-name-editable[data-key="${key}"]`);
-            if (span) {
-                span.focus();
-                const selection = window.getSelection();
-                const range = document.createRange();
-                range.selectNodeContents(span);
-                selection.removeAllRanges();
-                selection.addRange(range);
-            }
-        });
-    });
-
+    // Attach inline double-click edit logic
     document.querySelectorAll('.layer-name-editable').forEach(span => {
+        span.addEventListener('dblclick', (e) => {
+            e.preventDefault();
+            span.setAttribute('contenteditable', 'true');
+            span.focus();
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(span);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        });
+
         span.addEventListener('blur', (e) => {
+            span.setAttribute('contenteditable', 'false');
             const key = e.target.getAttribute('data-key');
             const layer = activeLayers.find(l => l.uniqueKey === key);
             if (!layer) return;
@@ -1719,6 +1715,7 @@ const renderAddedLayers = () => {
                 e.target.textContent = layer.displayName;
             }
         });
+        
         span.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -1923,9 +1920,11 @@ getEl('btn-create-folder')?.addEventListener('click', () => {
     renderAddedLayers();
     autoSaveWorkspace();
     
+    // Automatically trigger edit mode for the newly created folder
     setTimeout(() => {
         const span = document.querySelector(`.layer-name-editable[data-key="${folderKey}"]`);
         if (span) {
+            span.setAttribute('contenteditable', 'true');
             span.focus();
             const selection = window.getSelection();
             const range = document.createRange();
