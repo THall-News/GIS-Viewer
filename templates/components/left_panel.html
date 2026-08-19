@@ -1,34 +1,6 @@
 <!-- Left Control Panel Container -->
 <div id="left-panel" class="w-80 sm:w-96 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col h-full z-20 shadow-lg shrink-0">
     
-    <!-- Workspace Session Header & Controls -->
-    <div class="p-2.5 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/40 shrink-0">
-        <div class="flex justify-between items-center cursor-pointer select-none" id="toggle-workspace">
-            <h3 class="font-bold text-[11px] uppercase tracking-wider text-gray-700 dark:text-gray-200 flex items-center space-x-1.5">
-                <i class="fa-solid fa-briefcase text-blue-600 dark:text-blue-400"></i>
-                <span>Workspace Session</span>
-            </h3>
-            <i class="fa-solid fa-chevron-down text-gray-400 text-[10px] transition-transform duration-200" id="icon-workspace"></i>
-        </div>
-        
-        <div id="content-workspace" class="mt-2 space-y-1.5">
-            <div class="flex items-center space-x-1.5">
-                <button id="btn-export-workspace" class="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs py-1 rounded font-medium transition-colors shadow-xs flex items-center justify-center space-x-1" title="Export current workspace state to JSON">
-                    <i class="fa-solid fa-download text-blue-600 dark:text-blue-400 text-[11px]"></i>
-                    <span>Export</span>
-                </button>
-                <label id="lbl-import-workspace" class="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs py-1 rounded font-medium cursor-pointer transition-colors shadow-xs flex items-center justify-center space-x-1" title="Import workspace session JSON">
-                    <i class="fa-solid fa-upload text-blue-600 dark:text-blue-400 text-[11px]"></i>
-                    <span>Import</span>
-                    <input type="file" id="file-import-workspace" accept=".json" class="hidden">
-                </label>
-                <button id="btn-clear-workspace" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs px-2.5 py-1 rounded font-medium transition-colors shadow-xs flex items-center justify-center" title="Reset Workspace">
-                    <i class="fa-solid fa-trash-can text-blue-600 dark:text-blue-400 text-[11px]"></i>
-                </button>
-            </div>
-        </div>
-    </div>
-
     <!-- Data Sources Config Section -->
     <div class="p-2.5 border-b border-gray-200 dark:border-gray-700 shrink-0">
         <div class="flex justify-between items-center cursor-pointer select-none mb-1.5" id="toggle-database">
@@ -146,7 +118,7 @@
         </div>
     </div>
 
-<!-- Navigation Tabs -->
+    <!-- Navigation Tabs -->
     <div class="flex shrink-0 bg-gray-100 dark:bg-gray-900/60 pt-1">
         <button id="tab-btn-available" class="flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200 font-bold bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border-t-[3px] border-t-blue-600 dark:border-t-blue-400 border-b border-b-transparent opacity-100 z-10">Available</button>
         <button id="tab-btn-added" class="flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200 font-medium bg-transparent text-gray-400 dark:text-gray-500 border-t-[3px] border-t-transparent border-b border-b-gray-200 dark:border-b-gray-700 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/80 opacity-60 hover:opacity-100 shadow-inner cursor-pointer">Added (0)</button>
@@ -272,4 +244,33 @@
             </div>
         </div>
     </div>
+
+    <!-- Workspace Session Header & Controls -->
+    <div class="p-2.5 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/40 shrink-0">
+        <div class="flex justify-between items-center cursor-pointer select-none" id="toggle-workspace">
+            <h3 class="font-bold text-[11px] uppercase tracking-wider text-gray-700 dark:text-gray-200 flex items-center space-x-1.5">
+                <i class="fa-solid fa-briefcase text-blue-600 dark:text-blue-400"></i>
+                <span>Workspace Session</span>
+            </h3>
+            <i class="fa-solid fa-chevron-down text-gray-400 text-[10px] transition-transform duration-200" id="icon-workspace"></i>
+        </div>
+        
+        <div id="content-workspace" class="mt-2 space-y-1.5">
+            <div class="flex items-center space-x-1.5">
+                <button id="btn-export-workspace" class="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs py-1 rounded font-medium transition-colors shadow-xs flex items-center justify-center space-x-1" title="Export current workspace state to JSON">
+                    <i class="fa-solid fa-download text-blue-600 dark:text-blue-400 text-[11px]"></i>
+                    <span>Export</span>
+                </button>
+                <label id="lbl-import-workspace" class="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs py-1 rounded font-medium cursor-pointer transition-colors shadow-xs flex items-center justify-center space-x-1" title="Import workspace session JSON">
+                    <i class="fa-solid fa-upload text-blue-600 dark:text-blue-400 text-[11px]"></i>
+                    <span>Import</span>
+                    <input type="file" id="file-import-workspace" accept=".json" class="hidden">
+                </label>
+                <button id="btn-clear-workspace" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs px-2.5 py-1 rounded font-medium transition-colors shadow-xs flex items-center justify-center" title="Reset Workspace">
+                    <i class="fa-solid fa-trash-can text-blue-600 dark:text-blue-400 text-[11px]"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
 </div>
