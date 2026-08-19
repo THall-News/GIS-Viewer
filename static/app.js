@@ -1,6 +1,39 @@
 // ==========================================
 // 1. INITIALIZATION & VARIABLES
 // ==========================================
+
+// Inject Custom CSS to make the Drag-and-Drop Ghost look like a thick drop-line indicator
+const dndStyle = document.createElement('style');
+dndStyle.textContent = `
+    .sortable-ghost {
+        opacity: 1 !important;
+        background-color: #3b82f6 !important;
+        height: 4px !important;
+        min-height: 4px !important;
+        padding: 0 !important;
+        margin: 4px 0 !important;
+        border: none !important;
+        border-radius: 4px !important;
+        overflow: hidden !important;
+    }
+    .sortable-ghost * {
+        display: none !important;
+    }
+`;
+document.head.appendChild(dndStyle);
+
+// Ensure SortableJS is loaded dynamically for folder drag-and-drop
+const ensureSortableLoaded = () => {
+    if (window.Sortable) return Promise.resolve();
+    return new Promise((resolve) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js';
+        script.onload = resolve;
+        document.head.appendChild(script);
+    });
+};
+ensureSortableLoaded();
+
 const map = L.map('map', { preferCanvas: true }).setView([0, 0], 2);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
@@ -81,7 +114,6 @@ const osmInspectStatus = getEl('osm-inspect-status');
 
 const toast = getEl('toast');
 
-// Popular OSM Tag Combo-Box Dictionary
 const commonOsmTags = {
   'boundary': ['administrative', 'aboriginal_lands', 'postal_code', 'protected_area', 'national_park', 'census', 'maritime'],
   'admin_level': ['2', '4', '6', '8', '9', '10'],
@@ -105,6 +137,7 @@ const commonOsmTags = {
   'office': ['company', 'government', 'estate_agent', 'lawyer', 'tech', 'insurance', 'educational_institution'],
   'emergency': ['fire_hydrant', 'defibrillator', 'ambulance_station', 'phone', 'fire_station']
 };
+
 
 // ==========================================
 // 2. CORE UTILITIES
@@ -149,11 +182,12 @@ const removePane = (uniqueKey) => {
 };
 
 const updateMapLayerOrder = () => {
+    let zIndex = 1000;
     for (let i = activeLayers.length - 1; i >= 0; i--) {
         const layer = activeLayers[i];
-        if (!layer.isVisible) continue;
+        if (layer.isFolder || !layer.isVisible) continue;
         const pane = map.getPane('pane-' + layer.uniqueKey);
-        if (pane) pane.style.zIndex = 1000 - i;
+        if (pane) pane.style.zIndex = zIndex--;
     }
     autoSaveWorkspace(); 
 };
@@ -459,9 +493,10 @@ const serializeWorkspace = () => {
     const zoom = map.getZoom();
     const layersData = activeLayers.map(l => ({
         uniqueKey: l.uniqueKey, id: l.id, displayName: l.displayName, exportUrl: l.exportUrl,
-        isLocalGeoJSON: l.isLocalGeoJSON, geoJsonData: l.geoJsonData, customStyle: l.customStyle, isVisible: l.isVisible
+        isLocalGeoJSON: l.isLocalGeoJSON, geoJsonData: l.geoJsonData, customStyle: l.customStyle, isVisible: l.isVisible,
+        isFolder: l.isFolder, parentId: l.parentId, isExpanded: l.isExpanded
     }));
-    return { version: "1.0", savedAt: new Date().toISOString(), mapState: { lat: center.lat, lng: center.lng, zoom }, activeLayers: layersData };
+    return { version: "1.1", savedAt: new Date().toISOString(), mapState: { lat: center.lat, lng: center.lng, zoom }, activeLayers: layersData };
 };
 
 const autoSaveWorkspace = () => {
@@ -473,7 +508,7 @@ const restoreWorkspaceState = (data) => {
     clearAllPreviews();
 
     activeLayers.forEach(l => {
-        if (l.mapLayer) map.removeLayer(l.mapLayer);
+        if (!l.isFolder && l.mapLayer) map.removeLayer(l.mapLayer);
         removePane(l.uniqueKey);
     });
     activeLayers = [];
@@ -484,10 +519,19 @@ const restoreWorkspaceState = (data) => {
 
     if (data.activeLayers && Array.isArray(data.activeLayers)) {
         data.activeLayers.forEach(lData => {
-            let mapLayer;
             const uniqueKey = lData.uniqueKey || Math.random().toString(36).substr(2,9);
-            const paneName = 'pane-' + uniqueKey;
             
+            if (lData.isFolder) {
+                activeLayers.push({
+                    isFolder: true, uniqueKey: uniqueKey, displayName: lData.displayName,
+                    isVisible: lData.isVisible ?? true, isExpanded: lData.isExpanded ?? true,
+                    parentId: lData.parentId || null
+                });
+                return;
+            }
+
+            let mapLayer;
+            const paneName = 'pane-' + uniqueKey;
             if (!map.getPane(paneName)) map.createPane(paneName);
             
             if (lData.isLocalGeoJSON && lData.geoJsonData) {
@@ -508,7 +552,8 @@ const restoreWorkspaceState = (data) => {
                 activeLayers.push({
                     uniqueKey: uniqueKey, id: lData.id, displayName: lData.displayName, mapLayer: mapLayer,
                     exportUrl: lData.exportUrl, isLocalGeoJSON: lData.isLocalGeoJSON, geoJsonData: lData.geoJsonData,
-                    customStyle: lData.customStyle, isVisible: lData.isVisible ?? true
+                    customStyle: lData.customStyle, isVisible: lData.isVisible ?? true,
+                    parentId: lData.parentId || null, isFolder: false
                 });
             }
         });
@@ -613,20 +658,29 @@ const executeOsmInspect = async (bounds) => {
 // ==========================================
 // 6. MAIN LAYER ACTION HANDLERS
 // ==========================================
-const handleReorder = (e) => {
-    const btn = e.currentTarget;
-    const key = btn.getAttribute('data-key');
-    const action = btn.getAttribute('data-action');
-    const idx = activeLayers.findIndex(l => l.uniqueKey === key);
-    if (idx === -1) return;
 
-    const layer = activeLayers.splice(idx, 1)[0];
-    if (action === 'top') { activeLayers.unshift(layer); } 
-    else if (action === 'up') { activeLayers.splice(Math.max(0, idx - 1), 0, layer); } 
-    else if (action === 'down') { activeLayers.splice(Math.min(activeLayers.length, idx + 1), 0, layer); } 
-    else if (action === 'bottom') { activeLayers.push(layer); }
-
-    renderAddedLayers();
+const rebuildActiveLayersFromDOM = () => {
+    const newActiveLayers = [];
+    const traverse = (listEl, currentParentId) => {
+        const items = listEl.children;
+        for(let item of items) {
+            if(item.id === 'added-search-empty-msg' || item.tagName === 'P') continue;
+            
+            const key = item.getAttribute('data-key');
+            const layerObj = activeLayers.find(l => l.uniqueKey === key);
+            if (layerObj) {
+                layerObj.parentId = currentParentId;
+                newActiveLayers.push(layerObj);
+                if (layerObj.isFolder) {
+                    const childList = item.querySelector('.folder-children');
+                    if (childList) traverse(childList, key);
+                }
+            }
+        }
+    };
+    
+    traverse(getEl('added-layer-list'), null);
+    activeLayers = newActiveLayers;
     updateMapLayerOrder();
 };
 
@@ -634,31 +688,69 @@ const handleToggleVisibility = (e) => {
   const key = e.target.getAttribute('data-key');
   const layer = activeLayers.find(l => l.uniqueKey === key);
   if (!layer) return;
-  layer.isVisible = e.target.checked;
-  if (layer.isVisible) { 
-    map.addLayer(layer.mapLayer); 
-    updateMapLayerOrder(); 
-  } else { 
-    map.removeLayer(layer.mapLayer); 
-    autoSaveWorkspace(); 
-  }
-};
+  
+  const isVis = e.target.checked;
+  layer.isVisible = isVis;
 
-const handleRename = (e) => {
-  const layer = activeLayers.find(l => l.uniqueKey === e.currentTarget.getAttribute('data-key'));
-  const newName = prompt("Enter new display name:", layer.displayName);
-  if (newName) { layer.displayName = newName.trim(); renderAddedLayers(); autoSaveWorkspace(); }
+  if (layer.isFolder) {
+      const setChildrenVis = (parentId, vis) => {
+          activeLayers.filter(l => l.parentId === parentId).forEach(child => {
+              child.isVisible = vis;
+              if (!child.isFolder) {
+                  if (vis) map.addLayer(child.mapLayer);
+                  else map.removeLayer(child.mapLayer);
+              } else {
+                  setChildrenVis(child.uniqueKey, vis);
+              }
+          });
+      };
+      setChildrenVis(key, isVis);
+      renderAddedLayers(); 
+  } else {
+      if (isVis) map.addLayer(layer.mapLayer); 
+      else map.removeLayer(layer.mapLayer); 
+  }
+  
+  updateMapLayerOrder(); 
+  autoSaveWorkspace(); 
 };
 
 const handleRemove = (e) => {
   const key = e.currentTarget.getAttribute('data-key');
   const idx = activeLayers.findIndex(l => l.uniqueKey === key);
-  map.removeLayer(activeLayers[idx].mapLayer);
-  removePane(key); 
-  activeLayers.splice(idx, 1);
-  
-  if (activeTableLayerKey === key) closeTablePanel();
-  if (activeEditLayerKey === key || activeSplitLayerKey === key || activeCropLayerKey === key) closeSidebarPanels();
+  if (idx === -1) return;
+  const layer = activeLayers[idx];
+
+  if (layer.isFolder) {
+      if(confirm("Remove this folder and ALL items inside it?")) {
+          const keysToRemove = [key];
+          const collectChildren = (parentId) => {
+              activeLayers.filter(l => l.parentId === parentId).forEach(child => {
+                  keysToRemove.push(child.uniqueKey);
+                  if(child.isFolder) collectChildren(child.uniqueKey);
+              });
+          };
+          collectChildren(key);
+          
+          keysToRemove.forEach(k => {
+              const i = activeLayers.findIndex(l => l.uniqueKey === k);
+              if(i !== -1) {
+                  const l = activeLayers[i];
+                  if(!l.isFolder && l.mapLayer) map.removeLayer(l.mapLayer);
+                  removePane(k);
+                  if (activeTableLayerKey === k) closeTablePanel();
+                  if (activeEditLayerKey === k || activeSplitLayerKey === k || activeCropLayerKey === k) closeSidebarPanels();
+                  activeLayers.splice(i, 1);
+              }
+          });
+      } else { return; }
+  } else {
+      map.removeLayer(layer.mapLayer);
+      removePane(key); 
+      activeLayers.splice(idx, 1);
+      if (activeTableLayerKey === key) closeTablePanel();
+      if (activeEditLayerKey === key || activeSplitLayerKey === key || activeCropLayerKey === key) closeSidebarPanels();
+  }
   
   renderAddedLayers();
   autoSaveWorkspace();
@@ -666,6 +758,7 @@ const handleRemove = (e) => {
 
 const handleExport = async (e) => {
   const layer = activeLayers.find(l => l.uniqueKey === e.currentTarget.getAttribute('data-key'));
+  if (layer.isFolder) return showToast("Cannot directly export folders.");
   if (layer.isLocalGeoJSON) {
     downloadBlob(new Blob([JSON.stringify(layer.geoJsonData)], {type: "application/json"}), layer.displayName);
     return;
@@ -682,6 +775,7 @@ const handleExport = async (e) => {
 const handleDuplicate = async (e) => {
     const key = e.currentTarget.getAttribute('data-key');
     const layer = activeLayers.find(l => l.uniqueKey === key);
+    if (layer.isFolder) return showToast("Cannot duplicate entire folders.");
     showToast(`Duplicating ${layer.displayName}...`);
     
     const success = await ensureGeoJSON(layer);
@@ -698,7 +792,8 @@ const handleDuplicate = async (e) => {
 
     activeLayers.unshift({
         uniqueKey: uniqueKey, id: `${layer.id}_copy`, displayName: `${layer.displayName} (Copy)`, mapLayer: newMapLayer,
-        exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJson, customStyle: newStyleState, isVisible: true 
+        exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJson, customStyle: newStyleState, isVisible: true,
+        parentId: layer.parentId, isFolder: false
     });
 
     renderAddedLayers();
@@ -709,7 +804,7 @@ const handleDuplicate = async (e) => {
 const handleToggleTable = async (e) => {
   const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
   const layer = activeLayers.find(l => l.uniqueKey === key);
-  if (!layer) return;
+  if (!layer || layer.isFolder) return;
 
   if (activeTableLayerKey === key && e.currentTarget) { closeTablePanel(); return; }
 
@@ -748,7 +843,6 @@ const handleToggleTable = async (e) => {
       return;
     }
 
-    // Collect all unique property keys across ALL features
     const headerSet = new Set();
     features.forEach(f => {
         if (f.properties) Object.keys(f.properties).forEach(k => headerSet.add(k));
@@ -795,7 +889,7 @@ const handleToggleTable = async (e) => {
 const handleToggleEdit = async (e) => {
     const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
     const layer = activeLayers.find(l => l.uniqueKey === key);
-    if (!layer) return;
+    if (!layer || layer.isFolder) return;
 
     if (activeEditLayerKey === key && e.currentTarget) { closeSidebarPanels(); return; }
 
@@ -1217,7 +1311,7 @@ const handleToggleEdit = async (e) => {
 const handleToggleSplit = async (e) => {
     const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
     const layer = activeLayers.find(l => l.uniqueKey === key);
-    if (!layer) return;
+    if (!layer || layer.isFolder) return;
 
     if (activeSplitLayerKey === key && e.currentTarget) { closeSidebarPanels(); return; }
 
@@ -1265,8 +1359,18 @@ const handleToggleSplit = async (e) => {
         const uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties ? f.properties[splitCol] : undefined))];
         if (uniqueVals.length > 50 && !confirm(`Create ${uniqueVals.length} layers?`)) return;
 
-        let createdCount = 0;
+        const folderKey = 'folder_' + Math.random().toString(36).substr(2,9);
+        const newFolder = {
+            isFolder: true,
+            uniqueKey: folderKey,
+            displayName: `Split: ${layer.displayName} [${splitCol}]`,
+            isVisible: true,
+            isExpanded: true,
+            parentId: layer.parentId || null
+        };
+        
         const newLayers = [];
+        let createdCount = 0;
 
         uniqueVals.forEach(val => {
             const filteredFeats = layer.geoJsonData.features.filter(f => f.properties && f.properties[splitCol] === val);
@@ -1283,19 +1387,19 @@ const handleToggleSplit = async (e) => {
             newLayers.push({
                 uniqueKey: uniqueKey, id: `${layer.id}_${val}`, displayName: `${layer.displayName} [${val}]`,
                 mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJson,
-                customStyle: splitStyleState, isVisible: true 
+                customStyle: splitStyleState, isVisible: true, parentId: folderKey, isFolder: false 
             });
             createdCount++;
         });
         
-        activeLayers = [...newLayers, ...activeLayers];
+        activeLayers.unshift(newFolder, ...newLayers);
         layer.isVisible = false;
         map.removeLayer(layer.mapLayer);
         
         closeSidebarPanels();
         renderAddedLayers();
         updateMapLayerOrder();
-        showToast(`Split into ${createdCount} new layers!`);
+        showToast(`Split into ${createdCount} new layers inside folder!`);
     });
 };
 
@@ -1341,7 +1445,7 @@ const triggerDataFilterSetup = async (layer) => {
 const handleToggleCrop = (e) => {
     const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
     const layer = activeLayers.find(l => l.uniqueKey === key);
-    if (!layer) return;
+    if (!layer || layer.isFolder) return;
 
     if (activeCropLayerKey === key && e.currentTarget) { closeSidebarPanels(); return; }
 
@@ -1420,7 +1524,7 @@ const triggerAddedSearch = () => {
   else btnClearAddedSearch?.classList.remove('hidden');
   
   let visibleCount = 0;
-  document.querySelectorAll('.added-layer-item').forEach(item => {
+  document.querySelectorAll('.added-layer-item, .folder-item').forEach(item => {
     if (item.getAttribute('data-search').includes(term)) { item.classList.remove('hidden'); visibleCount++; } 
     else { item.classList.add('hidden'); }
   });
@@ -1499,76 +1603,172 @@ const renderAvailableLayers = () => {
 };
 
 const renderAddedLayers = () => {
-  if (tabBtnAdded) tabBtnAdded.textContent = `Added (${activeLayers.length})`;
-  if (!addedLayerList) return;
-  addedLayerList.innerHTML = '';
-
-  if (activeLayers.length === 0) {
-    addedLayerList.innerHTML = `<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center mt-3">No layers currently added to map.</p>`;
-    addedSearchContainer?.classList.add('hidden');
-    return;
-  }
-
-  addedSearchContainer?.classList.remove('hidden');
-
-  activeLayers.forEach(layer => {
-    const isTableActive = (activeTableLayerKey === layer.uniqueKey);
-    const isEditActive = (activeEditLayerKey === layer.uniqueKey);
-    const isSplitActive = (activeSplitLayerKey === layer.uniqueKey);
-    const isCropActive = (activeCropLayerKey === layer.uniqueKey);
-    
-    let bgClass = 'bg-white border-gray-100 hover:bg-gray-50 shadow-xs dark:bg-gray-800 dark:border-gray-700 dark:hover:bg-gray-700';
-    if (isTableActive || isEditActive || isSplitActive || isCropActive) {
-        bgClass = 'bg-blue-50 border-blue-300 shadow-sm dark:bg-blue-900/30 dark:border-blue-600';
+    if (!window.Sortable) {
+        ensureSortableLoaded().then(() => renderAddedLayers());
+        return;
     }
 
-    const div = document.createElement('div');
-    div.className = `added-layer-item flex flex-col p-1.5 mb-1 rounded border transition-colors ${bgClass}`;
-    div.setAttribute('data-search', `${layer.displayName} ${layer.id}`.toLowerCase());
-    
-    div.innerHTML = `
-      <div class="flex items-center justify-between">
-        <div class="mr-2 shrink-0">
-           <input type="checkbox" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 rounded cursor-pointer btn-toggle-vis accent-blue-600 dark:accent-blue-500" data-key="${layer.uniqueKey}" ${layer.isVisible ? 'checked' : ''} title="Toggle Visibility">
-        </div>
-        <div class="flex-1 overflow-hidden pr-1">
-          <span class="text-xs font-semibold text-gray-800 dark:text-gray-200 truncate block" title="${layer.displayName}">${layer.displayName}</span>
-          <span class="text-[9px] text-gray-400 dark:text-gray-500 block truncate" title="${layer.id}">ID: ${layer.id}</span>
-        </div>
-      </div>
-      
-      <div class="mt-1.5 flex justify-between border-t border-gray-200 dark:border-gray-700 pt-1.5 text-gray-500 dark:text-gray-400 text-xs">
-        <div class="flex space-x-1">
-           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="top" title="Bring to Front"><i class="fa-solid fa-angles-up"></i></button>
-           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="up" title="Move Up"><i class="fa-solid fa-angle-up"></i></button>
-           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="down" title="Move Down"><i class="fa-solid fa-angle-down"></i></button>
-           <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-reorder" data-key="${layer.uniqueKey}" data-action="bottom" title="Send to Back"><i class="fa-solid fa-angles-down"></i></button>
-        </div>
-        <div class="flex space-x-2 justify-end">
-            <button class="transition-colors btn-table ${isTableActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${layer.uniqueKey}" title="Data Table"><i class="fa-solid fa-table"></i></button>
-            <button class="transition-colors btn-edit ${isEditActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${layer.uniqueKey}" title="Edit Appearance"><i class="fa-solid fa-palette"></i></button>
-            <button class="transition-colors btn-crop ${isCropActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${layer.uniqueKey}" title="Filter / Crop Layer"><i class="fa-solid fa-crop"></i></button>
-            <button class="transition-colors btn-split ${isSplitActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${layer.uniqueKey}" title="Split Layer"><i class="fa-solid fa-object-ungroup"></i></button>
-            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${layer.uniqueKey}" title="Duplicate Layer"><i class="fa-solid fa-clone"></i></button>
-            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-rename" data-key="${layer.uniqueKey}" title="Rename Layer"><i class="fa-solid fa-pen"></i></button>
-            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-export" data-key="${layer.uniqueKey}" title="Export Layer"><i class="fa-solid fa-download"></i></button>
-            <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${layer.uniqueKey}" title="Remove Layer"><i class="fa-solid fa-trash"></i></button>
-        </div>
-      </div>
-    `;
-    addedLayerList.appendChild(div);
-  });
+    if (tabBtnAdded) tabBtnAdded.textContent = `Added (${activeLayers.length})`;
+    if (!addedLayerList) return;
+    addedLayerList.innerHTML = '';
 
-  document.querySelectorAll('.btn-table').forEach(btn => btn.addEventListener('click', handleToggleTable));
-  document.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', handleToggleEdit));
-  document.querySelectorAll('.btn-split').forEach(btn => btn.addEventListener('click', handleToggleSplit));
-  document.querySelectorAll('.btn-crop').forEach(btn => btn.addEventListener('click', handleToggleCrop));
-  document.querySelectorAll('.btn-duplicate').forEach(btn => btn.addEventListener('click', handleDuplicate));
-  document.querySelectorAll('.btn-rename').forEach(btn => btn.addEventListener('click', handleRename));
-  document.querySelectorAll('.btn-export').forEach(btn => btn.addEventListener('click', handleExport));
-  document.querySelectorAll('.btn-remove').forEach(btn => btn.addEventListener('click', handleRemove));
-  document.querySelectorAll('.btn-toggle-vis').forEach(btn => btn.addEventListener('change', handleToggleVisibility));
-  document.querySelectorAll('.btn-reorder').forEach(btn => btn.addEventListener('click', handleReorder));
+    if (activeLayers.length === 0) {
+        addedLayerList.innerHTML = `<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center mt-3">No layers currently added to map.</p>`;
+        addedSearchContainer?.classList.add('hidden');
+        return;
+    }
+
+    addedSearchContainer?.classList.remove('hidden');
+
+    const buildNodeHTML = (parentId) => {
+        let html = '';
+        const children = activeLayers.filter(l => l.parentId === parentId);
+        
+        children.forEach(node => {
+            if (node.isFolder) {
+                html += `
+                <div class="folder-item mb-1 border border-gray-300 dark:border-gray-600 rounded bg-gray-100 dark:bg-gray-800 shadow-xs" data-key="${node.uniqueKey}" data-search="${node.displayName.toLowerCase()}">
+                    <div class="flex items-center justify-between p-1.5 border-b border-transparent dark:border-gray-700 folder-header">
+                        <div class="flex items-center flex-1 overflow-hidden pr-2 space-x-1.5">
+                            <i class="fa-solid fa-grip-vertical text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-grab drag-handle px-0.5 shrink-0"></i>
+                            <button class="btn-toggle-folder text-gray-500 dark:text-gray-400 w-3 shrink-0 flex justify-center" data-key="${node.uniqueKey}">
+                                <i class="fa-solid ${node.isExpanded ? 'fa-chevron-down' : 'fa-chevron-right'} text-[9px]"></i>
+                            </button>
+                            <input type="checkbox" class="w-3.5 h-3.5 text-blue-600 rounded cursor-pointer btn-toggle-vis shrink-0" data-key="${node.uniqueKey}" ${node.isVisible ? 'checked' : ''} title="Toggle Folder Visibility">
+                            <i class="fa-solid fa-folder text-yellow-500 shrink-0"></i>
+                            <span class="text-xs font-bold text-gray-700 dark:text-gray-200 truncate outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable flex-1" data-key="${node.uniqueKey}" contenteditable="true" spellcheck="false" title="Click to rename">${node.displayName}</span>
+                        </div>
+                        <div class="flex space-x-2 shrink-0 pr-1">
+                            <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${node.uniqueKey}" title="Remove Folder"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                        </div>
+                    </div>
+                    <div class="folder-children pl-4 pr-1 py-1 min-h-[15px] space-y-1 ${node.isExpanded ? '' : 'hidden'}" data-parent="${node.uniqueKey}">
+                        ${buildNodeHTML(node.uniqueKey)}
+                    </div>
+                </div>`;
+            } else {
+                const isTableActive = (activeTableLayerKey === node.uniqueKey);
+                const isEditActive = (activeEditLayerKey === node.uniqueKey);
+                const isSplitActive = (activeSplitLayerKey === node.uniqueKey);
+                const isCropActive = (activeCropLayerKey === node.uniqueKey);
+                
+                let bgClass = 'bg-white border-gray-100 hover:bg-gray-50 shadow-xs dark:bg-gray-800 dark:border-gray-700 dark:hover:bg-gray-700';
+                if (isTableActive || isEditActive || isSplitActive || isCropActive) {
+                    bgClass = 'bg-blue-50 border-blue-300 shadow-sm dark:bg-blue-900/30 dark:border-blue-600';
+                }
+
+                html += `
+                <div class="added-layer-item flex flex-col p-1.5 mb-1 rounded border transition-colors ${bgClass}" data-key="${node.uniqueKey}" data-search="${node.displayName.toLowerCase()} ${node.id.toLowerCase()}">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center mr-2 shrink-0 space-x-1.5">
+                            <i class="fa-solid fa-grip-vertical text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-grab drag-handle px-0.5"></i>
+                            <input type="checkbox" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 rounded cursor-pointer btn-toggle-vis accent-blue-600 dark:accent-blue-500" data-key="${node.uniqueKey}" ${node.isVisible ? 'checked' : ''} title="Toggle Visibility">
+                        </div>
+                        <div class="flex-1 overflow-hidden pr-1">
+                            <span class="text-xs font-semibold text-gray-800 dark:text-gray-200 truncate block outline-none focus:bg-white dark:focus:bg-gray-600 focus:ring-1 focus:ring-blue-500 rounded px-1 layer-name-editable" data-key="${node.uniqueKey}" contenteditable="true" spellcheck="false" title="Click to rename">${node.displayName}</span>
+                            <span class="text-[9px] text-gray-400 dark:text-gray-500 block truncate px-1" title="${node.id}">ID: ${node.id}</span>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-1.5 flex justify-end border-t border-gray-200 dark:border-gray-700 pt-1.5 text-gray-500 dark:text-gray-400 text-xs">
+                        <div class="flex space-x-2 justify-end">
+                            <button class="transition-colors btn-table ${isTableActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Data Table"><i class="fa-solid fa-table"></i></button>
+                            <button class="transition-colors btn-edit ${isEditActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Edit Appearance"><i class="fa-solid fa-palette"></i></button>
+                            <button class="transition-colors btn-crop ${isCropActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Filter / Crop Layer"><i class="fa-solid fa-crop"></i></button>
+                            <button class="transition-colors btn-split ${isSplitActive ? 'text-blue-600 dark:text-blue-400' : 'hover:text-blue-600 dark:hover:text-blue-400'}" data-key="${node.uniqueKey}" title="Split Layer"><i class="fa-solid fa-object-ungroup"></i></button>
+                            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-duplicate" data-key="${node.uniqueKey}" title="Duplicate Layer"><i class="fa-solid fa-clone"></i></button>
+                            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-rename" data-key="${node.uniqueKey}" title="Rename Layer"><i class="fa-solid fa-pen"></i></button>
+                            <button class="hover:text-blue-600 dark:hover:text-blue-400 transition-colors btn-export" data-key="${node.uniqueKey}" title="Export Layer"><i class="fa-solid fa-download"></i></button>
+                            <button class="hover:text-red-500 dark:hover:text-red-400 transition-colors btn-remove" data-key="${node.uniqueKey}" title="Remove Layer"><i class="fa-solid fa-trash"></i></button>
+                        </div>
+                    </div>
+                </div>`;
+            }
+        });
+        return html;
+    };
+
+    addedLayerList.innerHTML = buildNodeHTML(null);
+
+    // Reattach inline edit logic
+    document.querySelectorAll('.btn-rename').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const key = e.currentTarget.getAttribute('data-key');
+            const span = document.querySelector(`.layer-name-editable[data-key="${key}"]`);
+            if (span) {
+                span.focus();
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(span);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+        });
+    });
+
+    document.querySelectorAll('.layer-name-editable').forEach(span => {
+        span.addEventListener('blur', (e) => {
+            const key = e.target.getAttribute('data-key');
+            const layer = activeLayers.find(l => l.uniqueKey === key);
+            if (!layer) return;
+            const newName = e.target.textContent.trim();
+            if (newName && newName !== layer.displayName) {
+                layer.displayName = newName;
+                autoSaveWorkspace();
+            } else {
+                e.target.textContent = layer.displayName;
+            }
+        });
+        span.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                e.target.blur();
+            }
+        });
+    });
+
+    // Reattach Action Listeners
+    document.querySelectorAll('.btn-table').forEach(btn => btn.addEventListener('click', handleToggleTable));
+    document.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', handleToggleEdit));
+    document.querySelectorAll('.btn-split').forEach(btn => btn.addEventListener('click', handleToggleSplit));
+    document.querySelectorAll('.btn-crop').forEach(btn => btn.addEventListener('click', handleToggleCrop));
+    document.querySelectorAll('.btn-duplicate').forEach(btn => btn.addEventListener('click', handleDuplicate));
+    document.querySelectorAll('.btn-export').forEach(btn => btn.addEventListener('click', handleExport));
+    document.querySelectorAll('.btn-remove').forEach(btn => btn.addEventListener('click', handleRemove));
+    document.querySelectorAll('.btn-toggle-vis').forEach(btn => btn.addEventListener('change', handleToggleVisibility));
+    
+    document.querySelectorAll('.btn-toggle-folder').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const key = e.currentTarget.getAttribute('data-key');
+            const folder = activeLayers.find(l => l.uniqueKey === key);
+            if (folder) {
+                folder.isExpanded = !folder.isExpanded;
+                renderAddedLayers();
+                autoSaveWorkspace();
+            }
+        });
+    });
+
+    // Mount Sortable.js onto Root list and all Folder Sub-lists
+    const searchActive = addedLayerSearch && addedLayerSearch.value.trim() !== '';
+    const attachSortable = (el) => {
+        new Sortable(el, {
+            group: 'nested',
+            animation: 150,
+            fallbackOnBody: true,
+            swapThreshold: 0.65,
+            handle: '.drag-handle',
+            disabled: searchActive,
+            onEnd: function (evt) {
+                rebuildActiveLayersFromDOM();
+            }
+        });
+    };
+    
+    attachSortable(addedLayerList);
+    document.querySelectorAll('.folder-children').forEach(attachSortable);
+    
+    triggerAddedSearch();
 };
 
 const addLayerToMap = (layerId, switchTabAfter = true) => {
@@ -1612,7 +1812,7 @@ const addLayerToMap = (layerId, switchTabAfter = true) => {
     
     activeLayers.unshift({ 
       uniqueKey: uniqueKey, id: meta.id, displayName: meta.title, mapLayer, exportUrl, 
-      isLocalGeoJSON, geoJsonData, customStyle, isVisible: true 
+      isLocalGeoJSON, geoJsonData, customStyle, isVisible: true, parentId: null, isFolder: false
     });
     
     updateMapLayerOrder();
@@ -1703,10 +1903,37 @@ getEl('btn-clear-workspace')?.addEventListener('click', () => {
     if (activeLayers.length === 0) return;
     if (confirm("Reset workspace? All added layers will be removed from the map.")) {
         closeAllPanels(); clearAllPreviews();
-        activeLayers.forEach(l => { map.removeLayer(l.mapLayer); removePane(l.uniqueKey); });
+        activeLayers.forEach(l => { if (!l.isFolder) map.removeLayer(l.mapLayer); removePane(l.uniqueKey); });
         activeLayers = []; localStorage.removeItem('gis_previewer_auto_save');
         renderAddedLayers(); showToast("Workspace reset.");
     }
+});
+
+getEl('btn-create-folder')?.addEventListener('click', () => {
+    const folderKey = 'folder_' + Math.random().toString(36).substr(2,9);
+    activeLayers.unshift({
+        isFolder: true,
+        uniqueKey: folderKey,
+        displayName: "New Folder",
+        isVisible: true,
+        isExpanded: true,
+        parentId: null
+    });
+    
+    renderAddedLayers();
+    autoSaveWorkspace();
+    
+    setTimeout(() => {
+        const span = document.querySelector(`.layer-name-editable[data-key="${folderKey}"]`);
+        if (span) {
+            span.focus();
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(span);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+    }, 50);
 });
 
 getEl('server-type')?.addEventListener('change', (e) => {
@@ -1978,7 +2205,7 @@ btnApplyFilter?.addEventListener('click', async () => {
     map.fitBounds(newMapLayer.getBounds());
 
     const namePrefix = filterType?.value === 'data' ? '[Filtered]' : '[Cropped]';
-    activeLayers.unshift({ uniqueKey: uniqueKey, id: `${targetLayer.id}_filtered`, displayName: `${namePrefix} ${targetLayer.displayName}`, mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJsonData, customStyle: newStyleState, isVisible: true });
+    activeLayers.unshift({ uniqueKey: uniqueKey, id: `${targetLayer.id}_filtered`, displayName: `${namePrefix} ${targetLayer.displayName}`, mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJsonData, customStyle: newStyleState, isVisible: true, parentId: targetLayer.parentId, isFolder: false });
 
     if (targetLayer.isVisible) { targetLayer.isVisible = false; map.removeLayer(targetLayer.mapLayer); }
 
