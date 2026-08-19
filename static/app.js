@@ -2250,15 +2250,24 @@ getEl('file-import-workspace')?.addEventListener('change', (e) => {
     reader.readAsText(file);
 });
 
-getEl('btn-clear-workspace')?.addEventListener('click', () => {
+getEl('btn-clear-workspace')?.addEventListener('click', async () => {
     if (AppState.activeLayers.length === 0) return;
     if (confirm("Reset workspace? All added layers will be removed from the map.")) {
         closeAllPanels(); clearAllPreviews();
         AppState.currentSoloLayerKey = null;
-        AppState.activeLayers.forEach(l => { if (!l.isFolder) map.removeLayer(l.mapLayer); removePane(l.uniqueKey); });
+        
+        AppState.activeLayers.forEach(l => { 
+            if (!l.isFolder) map.removeLayer(l.mapLayer); 
+            removePane(l.uniqueKey); 
+        });
         AppState.activeLayers = []; 
+        
+        // NEW: Wipe the offline IndexedDB cache
+        await clearWorkspaceDB();
+        
         autoSaveWorkspace();
-        renderAddedLayers(); showToast("Workspace reset. (You can undo this)");
+        renderAddedLayers(); 
+        showToast("Workspace reset. (You can undo this)");
     }
 });
 
@@ -2822,3 +2831,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         console.error("Failed to restore workspace", e);
     }
 });
+
+const clearWorkspaceDB = async () => {
+    const db = await initWorkspaceDB();
+    const tx = db.transaction('workspace', 'readwrite');
+    tx.objectStore('workspace').clear();
+};
