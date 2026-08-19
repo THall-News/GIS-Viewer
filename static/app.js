@@ -170,7 +170,6 @@ const handleUndo = () => {
         historyIndex--;
         isRestoringHistory = true;
         try {
-            // Restore from completely isolated deep clone to wipe Leaflet IDs
             restoreWorkspaceState(JSON.parse(JSON.stringify(historyStack[historyIndex])));
         } finally {
             isRestoringHistory = false;
@@ -185,7 +184,6 @@ const handleRedo = () => {
         historyIndex++;
         isRestoringHistory = true;
         try {
-            // Restore from completely isolated deep clone to wipe Leaflet IDs
             restoreWorkspaceState(JSON.parse(JSON.stringify(historyStack[historyIndex])));
         } finally {
             isRestoringHistory = false;
@@ -226,6 +224,32 @@ const hexAlpha = (hex = '#2563eb', alpha = 1.0) => {
     const validAlpha = Math.max(0, Math.min(1, isNaN(parseFloat(alpha)) ? 1.0 : parseFloat(alpha)));
     const a = Math.round(validAlpha * 255).toString(16).padStart(2, '0');
     return (`#${hex}${a}`).toUpperCase();
+};
+
+const interpolateColor = (color1, color2, factor) => {
+    if (typeof factor !== 'number' || isNaN(factor)) factor = 0.5;
+    let c1 = (color1 || '#ffeda0').toString().replace('#', '');
+    let c2 = (color2 || '#f03b20').toString().replace('#', '');
+    if (c1.length === 3) c1 = c1.split('').map(c => c + c).join('');
+    if (c2.length === 3) c2 = c2.split('').map(c => c + c).join('');
+    
+    const r1 = parseInt(c1.substring(0, 2), 16) || 0;
+    const g1 = parseInt(c1.substring(2, 4), 16) || 0;
+    const b1 = parseInt(c1.substring(4, 6), 16) || 0;
+    const r2 = parseInt(c2.substring(0, 2), 16) || 0;
+    const g2 = parseInt(c2.substring(2, 4), 16) || 0;
+    const b2 = parseInt(c2.substring(4, 6), 16) || 0;
+    
+    let r = Math.round(r1 + factor * (r2 - r1));
+    let g = Math.round(g1 + factor * (g2 - g1));
+    let b = Math.round(b1 + factor * (b2 - b1));
+    
+    // Hard clamp to avoid out-of-bounds hex strings
+    r = Math.max(0, Math.min(255, r || 0));
+    g = Math.max(0, Math.min(255, g || 0));
+    b = Math.max(0, Math.min(255, b || 0));
+    
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 };
 
 const removePane = (uniqueKey) => {
@@ -322,10 +346,22 @@ const switchTab = (tabName) => {
     tabAvailable?.classList.replace('hidden', 'flex');
     tabAdded?.classList.replace('flex', 'hidden');
     btnAddBulk?.classList.remove('hidden');
+    
+    // Hide UI tools when browsing available layers
+    getEl('context-panel-wrapper')?.classList.add('hidden');
+    getEl('context-panel-wrapper')?.classList.remove('flex');
+    getEl('context-resizer')?.classList.add('hidden');
   } else {
     tabAdded?.classList.replace('hidden', 'flex');
     tabAvailable?.classList.replace('flex', 'hidden');
     btnAddBulk?.classList.add('hidden');
+    
+    // Re-show UI tools if one was active
+    if (activeEditLayerKey || activeSplitLayerKey || activeCropLayerKey) {
+        getEl('context-panel-wrapper')?.classList.remove('hidden');
+        getEl('context-panel-wrapper')?.classList.add('flex');
+        getEl('context-resizer')?.classList.remove('hidden');
+    }
   }
 };
 
@@ -348,6 +384,30 @@ const createGeoJsonStyleFunction = (styleState) => {
                 opacity: cat ? cat.opacity : (styleState.defaultOpacity ?? 1.0),
                 weight: 2
             };
+        } else if (styleState && styleState.type === 'graduated') {
+            const rawVal = parseFloat(feature.properties[styleState.property]);
+            if (!isNaN(rawVal)) {
+                const min = typeof styleState.graduatedMinVal === 'number' && !isNaN(styleState.graduatedMinVal) ? styleState.graduatedMinVal : 0;
+                const max = typeof styleState.graduatedMaxVal === 'number' && !isNaN(styleState.graduatedMaxVal) ? styleState.graduatedMaxVal : 1;
+                let t = (max > min) ? (rawVal - min) / (max - min) : 0.5;
+                t = Math.max(0, Math.min(1, isNaN(t) ? 0.5 : t)); 
+                
+                return {
+                    fillColor: interpolateColor(styleState.graduatedMinColor, styleState.graduatedMaxColor, t),
+                    fillOpacity: styleState.graduatedFillOpacity ?? 0.7,
+                    color: interpolateColor(styleState.graduatedMinStroke, styleState.graduatedMaxStroke, t),
+                    opacity: styleState.graduatedStrokeOpacity ?? 1.0,
+                    weight: 2
+                };
+            } else {
+                return {
+                    fillColor: styleState.defaultFill || '#cccccc',
+                    fillOpacity: styleState.defaultFillOpacity ?? 0.5,
+                    color: styleState.defaultColor || '#999999',
+                    opacity: styleState.defaultOpacity ?? 1.0,
+                    weight: 2
+                };
+            }
         } else {
             return {
                 fillColor: styleState ? (styleState.fillColor || '#2563eb') : '#2563eb',
@@ -363,6 +423,7 @@ const createGeoJsonStyleFunction = (styleState) => {
 const createGeoJsonPointToLayer = (styleState, paneName, customRenderer) => {
     return function(feature, latlng) {
         let fColor = '#2563eb', sColor = '#2563eb', fOp = 0.5, sOp = 1.0;
+        
         if (styleState && styleState.type === 'categorical' && feature.properties) {
             const rawVal = feature.properties[styleState.property];
             const strVal = String(rawVal);
@@ -371,6 +432,24 @@ const createGeoJsonPointToLayer = (styleState, paneName, customRenderer) => {
             sColor = cat ? cat.color : (styleState.defaultColor || '#999999');
             fOp = cat ? cat.fillOpacity : (styleState.defaultFillOpacity ?? 0.5);
             sOp = cat ? cat.opacity : (styleState.defaultOpacity ?? 1.0);
+        } else if (styleState && styleState.type === 'graduated' && feature.properties) {
+            const rawVal = parseFloat(feature.properties[styleState.property]);
+            if (!isNaN(rawVal)) {
+                const min = typeof styleState.graduatedMinVal === 'number' && !isNaN(styleState.graduatedMinVal) ? styleState.graduatedMinVal : 0;
+                const max = typeof styleState.graduatedMaxVal === 'number' && !isNaN(styleState.graduatedMaxVal) ? styleState.graduatedMaxVal : 1;
+                let t = (max > min) ? (rawVal - min) / (max - min) : 0.5;
+                t = Math.max(0, Math.min(1, isNaN(t) ? 0.5 : t)); 
+                
+                fColor = interpolateColor(styleState.graduatedMinColor, styleState.graduatedMaxColor, t);
+                sColor = interpolateColor(styleState.graduatedMinStroke, styleState.graduatedMaxStroke, t);
+                fOp = styleState.graduatedFillOpacity ?? 0.7;
+                sOp = styleState.graduatedStrokeOpacity ?? 1.0;
+            } else {
+                fColor = styleState.defaultFill || '#cccccc';
+                sColor = styleState.defaultColor || '#999999';
+                fOp = styleState.defaultFillOpacity ?? 0.5;
+                sOp = styleState.defaultOpacity ?? 1.0;
+            }
         } else if (styleState) {
             fColor = styleState.fillColor || '#2563eb';
             sColor = styleState.color || '#2563eb';
@@ -559,7 +638,7 @@ const autoSaveWorkspace = () => {
         const state = serializeWorkspace();
         const stateStr = JSON.stringify(state);
         
-        // 1. Maintain isolated in-memory history safely away from LocalStorage Quotas
+        // Push to history ONLY if the user caused the action naturally
         if (!isRestoringHistory) {
             const deepState = JSON.parse(stateStr);
             
@@ -567,23 +646,21 @@ const autoSaveWorkspace = () => {
             if (historyStack.length > 0 && historyIndex >= 0) {
                 const prevLayers = JSON.stringify(historyStack[historyIndex].activeLayers);
                 const newLayers = JSON.stringify(deepState.activeLayers);
-                if (prevLayers !== newLayers) {
-                    historyStack = historyStack.slice(0, historyIndex + 1);
-                    historyStack.push(deepState);
-                    if (historyStack.length > MAX_HISTORY) {
-                        historyStack.shift();
-                    } else {
-                        historyIndex++;
-                    }
+                if (prevLayers === newLayers) {
+                    return; 
                 }
+            }
+            
+            historyStack = historyStack.slice(0, historyIndex + 1);
+            historyStack.push(deepState);
+            if (historyStack.length > MAX_HISTORY) {
+                historyStack.shift();
             } else {
-                historyStack.push(deepState);
-                historyIndex = 0;
+                historyIndex++;
             }
             updateUndoRedoButtons();
         }
 
-        // 2. Safely attempt LocalStorage save (Fails gracefully if > 5MB quota)
         try {
             localStorage.setItem('gis_previewer_auto_save', stateStr);
         } catch (storageErr) {
@@ -654,7 +731,7 @@ const restoreWorkspaceState = (data) => {
 
     if (activeLayers.length > 0) {
         renderAddedLayers();
-        updateMapLayerOrder(); // AutoSave inherently fires inside this function, but dedup catches it
+        updateMapLayerOrder(); 
     } else {
         renderAddedLayers();
         autoSaveWorkspace();
@@ -994,7 +1071,12 @@ const handleToggleTable = async (e) => {
     features.forEach(f => {
         if (f.properties) Object.keys(f.properties).forEach(k => headerSet.add(k));
     });
-    const headers = Array.from(headerSet);
+    
+    let headers = Array.from(headerSet);
+    
+    // Explicitly force baked color columns to the end of the table rendering
+    const bakedCols = ['COLOR_FILL', 'COLOR_OUTLINE'];
+    headers = headers.filter(h => !bakedCols.includes(h)).concat(headers.filter(h => bakedCols.includes(h)));
 
     let tableHtml = `
         <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
@@ -1033,12 +1115,12 @@ const handleToggleTable = async (e) => {
   }
 };
 
-const handleToggleEdit = async (e) => {
-    const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
+const handleToggleEdit = async (e, forceStyle = null) => {
+    const key = typeof e === 'string' ? e : (e.currentTarget ? e.currentTarget.getAttribute('data-key') : e);
     const layer = activeLayers.find(l => l.uniqueKey === key);
     if (!layer || layer.isFolder) return;
 
-    if (activeEditLayerKey === key && e.currentTarget) { closeSidebarPanels(); return; }
+    if (activeEditLayerKey === key && e && e.currentTarget) { closeSidebarPanels(); return; }
 
     closeSidebarPanels();
     activeEditLayerKey = key;
@@ -1058,9 +1140,19 @@ const handleToggleEdit = async (e) => {
     features.forEach(f => { if (f.properties) Object.keys(f.properties).forEach(k => colsSet.add(k)); });
     const cols = Array.from(colsSet).sort();
 
+    const numericCols = cols.filter(c => {
+        return features.some(f => {
+            const v = f.properties ? f.properties[c] : undefined;
+            return (v !== undefined && v !== null && v !== '' && !isNaN(Number(v)));
+        });
+    });
+
     const hasPoints = features.some(f => f.geometry && (f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint'));
-    const cs = layer.customStyle || { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
-    const isCat = (cs.type === 'categorical');
+    
+    // Inject pasted style into UI if provided, otherwise default to layer
+    const cs = forceStyle ? JSON.parse(JSON.stringify(forceStyle)) : (layer.customStyle || { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 });
+    
+    const activeStyleType = cs.type || 'single';
     const pasteDisabled = copiedStyle ? '' : 'disabled';
     const pasteOpacity = copiedStyle ? '' : 'opacity-50 cursor-not-allowed';
 
@@ -1068,19 +1160,24 @@ const handleToggleEdit = async (e) => {
     const currentScaleCurve = cs.pointScaleCurve || 'linear';
 
     editPanelContainer.innerHTML = `
-        <div class="p-2 text-xs flex flex-col h-full min-h-0 bg-blue-50/50 dark:bg-transparent overflow-y-auto custom-scroll">
+        <div class="p-2 text-xs flex flex-col h-full min-h-0 bg-blue-50/50 dark:bg-transparent">
+            
+            <!-- HEADER -->
             <div class="flex justify-between items-center mb-2 pb-1 border-b border-blue-200 dark:border-blue-800 shrink-0">
                 <h4 class="font-bold text-gray-700 dark:text-gray-200 uppercase text-[11px] tracking-wider">Edit Appearance</h4>
                 <div class="flex space-x-1 items-center">
                     <button id="btn-copy-style" class="text-[10px] bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-1.5 py-0.5 rounded transition-colors font-medium" title="Copy Style"><i class="fa-solid fa-copy"></i></button>
-                    <button id="btn-paste-style" class="text-[10px] bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-1.5 py-0.5 rounded transition-colors font-medium ${pasteOpacity}" title="Paste Style" ${pasteDisabled}><i class="fa-solid fa-paste"></i></button>
+                    <button id="btn-paste-style" class="text-[10px] bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-1.5 py-0.5 rounded transition-colors font-medium ${pasteOpacity}" title="Paste Style into UI" ${pasteDisabled}><i class="fa-solid fa-paste"></i></button>
                     <button onclick="window.closeSidebarPanels()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 ml-1"><i class="fa-solid fa-times text-xs"></i></button>
                 </div>
             </div>
             
-            <div class="space-y-2 flex-1 min-h-0">
+            <!-- FLEXIBLE CONFIG BODY -->
+            <div class="flex-1 min-h-0 flex flex-col">
+                
+                <!-- POINT STYLE OPTIONS -->
                 ${hasPoints ? `
-                <div id="point-style-container" class="flex flex-col space-y-2 bg-white dark:bg-gray-800 p-2 rounded border border-blue-100 dark:border-blue-800">
+                <div id="point-style-container" class="shrink-0 flex flex-col space-y-2 bg-white dark:bg-gray-800 p-2 rounded border border-blue-100 dark:border-blue-800 mb-2">
                     <h5 class="text-[9px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">Point Markers</h5>
                     <div class="flex items-center space-x-2 w-full">
                         <label class="text-[11px] text-gray-600 dark:text-gray-300 font-bold w-10 shrink-0">Shape:</label>
@@ -1107,7 +1204,7 @@ const handleToggleEdit = async (e) => {
                             <label class="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase w-12 shrink-0">Column:</label>
                             <select id="point-scale-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
                                 <option value="" disabled ${!cs.pointScaleProp ? 'selected' : ''}>Select numeric attribute...</option>
-                                ${cols.map(c => `<option value="${c}" ${(useDataScale && cs.pointScaleProp === c) ? 'selected' : ''}>${c}</option>`).join('')}
+                                ${numericCols.map(c => `<option value="${c}" ${(useDataScale && cs.pointScaleProp === c) ? 'selected' : ''}>${c}</option>`).join('')}
                             </select>
                         </div>
 
@@ -1146,16 +1243,18 @@ const handleToggleEdit = async (e) => {
                 </div>
                 ` : ''}
 
-                <div class="flex items-center space-x-1.5 bg-white dark:bg-gray-800 p-1.5 border border-blue-100 dark:border-blue-800 rounded">
-                    <input type="checkbox" id="use-data-style" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 rounded cursor-pointer accent-blue-600 dark:accent-blue-500" ${isCat ? 'checked' : ''}>
-                    <label for="use-data-style" class="text-[11px] font-semibold text-gray-700 dark:text-gray-300 shrink-0">Use Data Colors</label>
-                    <select id="style-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs" ${isCat ? '' : 'disabled'}>
-                        <option value="" disabled ${!isCat ? 'selected' : ''}>Select attribute...</option>
-                        ${cols.map(c => `<option value="${c}" ${(isCat && cs.property === c) ? 'selected' : ''}>${c}</option>`).join('')}
+                <!-- STYLE TYPE SELECTOR -->
+                <div class="shrink-0 flex items-center space-x-1.5 bg-white dark:bg-gray-800 p-1.5 border border-blue-100 dark:border-blue-800 rounded mb-2">
+                    <label class="text-[11px] font-semibold text-gray-700 dark:text-gray-300 shrink-0 px-1">Style Type:</label>
+                    <select id="edit-style-type" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs focus:ring-1 focus:ring-blue-500 font-medium">
+                        <option value="single" ${activeStyleType === 'single' ? 'selected' : ''}>Single Color</option>
+                        <option value="categorical" ${activeStyleType === 'categorical' ? 'selected' : ''}>Categorical (Text)</option>
+                        <option value="graduated" ${activeStyleType === 'graduated' ? 'selected' : ''}>Graduated Choropleth (Numeric)</option>
                     </select>
                 </div>
 
-                <div id="single-style-container" class="${isCat ? 'hidden' : 'flex'} flex-col space-y-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700">
+                <!-- 1. SINGLE STYLE (SHRINK-0) -->
+                <div id="single-style-container" class="${activeStyleType === 'single' ? 'flex' : 'hidden'} shrink-0 flex-col space-y-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700">
                     <div class="flex items-center space-x-2 w-full">
                         <label class="text-[11px] text-gray-600 dark:text-gray-300 font-bold w-10 shrink-0">Fill:</label>
                         <input type="color" id="edit-fill-color" value="${cs.fillColor || '#2563eb'}" class="w-6 h-6 p-0 border-0 rounded cursor-pointer shrink-0 bg-transparent">
@@ -1168,22 +1267,85 @@ const handleToggleEdit = async (e) => {
                     </div>
                 </div>
 
-                <div id="categorical-style-list" class="${isCat ? 'flex' : 'hidden'} flex-col border border-gray-200 dark:border-gray-700 rounded p-1.5 bg-white dark:bg-gray-800">
-                    <div id="cat-inner-list" class="max-h-36 overflow-y-auto custom-scroll">
-                        <p class="text-xs text-gray-400 dark:text-gray-500 italic text-center py-1">Select an attribute column to generate colors.</p>
+                <!-- 2. CATEGORICAL STYLE (FLEX-1 MIN-H-[100px]) -->
+                <div id="categorical-style-container" class="${activeStyleType === 'categorical' ? 'flex' : 'hidden'} flex-1 flex-col min-h-[100px] border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800">
+                    <div class="shrink-0 p-1.5 border-b border-gray-100 dark:border-gray-700 flex items-center space-x-1.5">
+                        <label class="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase w-12 shrink-0">Column:</label>
+                        <select id="cat-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
+                            <option value="" disabled ${!cs.property ? 'selected' : ''}>Select attribute...</option>
+                            ${cols.map(c => `<option value="${c}" ${(activeStyleType === 'categorical' && cs.property === c) ? 'selected' : ''}>${c}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div id="cat-inner-list" class="flex-1 overflow-y-auto custom-scroll p-1.5">
+                        <p class="text-xs text-gray-400 dark:text-gray-500 italic text-center py-1 mt-2">Select an attribute column to map colors.</p>
                     </div>
                 </div>
-            </div>
 
-            <div class="flex justify-between pt-2 border-t border-blue-100 dark:border-blue-800 shrink-0 mt-1">
+                <!-- 3. GRADUATED STYLE (FLEX-1 MIN-H-[100px]) -->
+                <div id="graduated-style-container" class="${activeStyleType === 'graduated' ? 'flex' : 'hidden'} flex-1 flex-col min-h-[100px] border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800">
+                    <div class="shrink-0 p-1.5 border-b border-gray-100 dark:border-gray-700 flex items-center space-x-1.5">
+                        <label class="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase w-12 shrink-0">Numeric:</label>
+                        <select id="graduated-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
+                            <option value="" disabled ${!cs.property ? 'selected' : ''}>Select numeric attribute...</option>
+                            ${numericCols.map(c => `<option value="${c}" ${(activeStyleType === 'graduated' && cs.property === c) ? 'selected' : ''}>${c}</option>`).join('')}
+                        </select>
+                    </div>
+                    
+                    <div class="flex-1 overflow-y-auto custom-scroll p-1.5 space-y-2">
+                        <!-- Min config -->
+                        <div class="p-1.5 bg-gray-50 dark:bg-gray-900/50 rounded border border-gray-200 dark:border-gray-700">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase">Low Value</span>
+                                <input type="text" id="graduated-min-val" readonly value="${cs.graduatedMinVal ?? 'N/A'}" class="w-20 bg-transparent text-right font-mono text-[10px] text-gray-500">
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <span class="text-[9px] font-bold text-gray-400 w-10">Fill:</span>
+                                <input type="color" id="graduated-min-fill" value="${cs.graduatedMinColor || '#ffeda0'}" class="w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent">
+                                <span class="text-[9px] font-bold text-gray-400 ml-2">Outline:</span>
+                                <input type="color" id="graduated-min-stroke" value="${cs.graduatedMinStroke || '#feb24c'}" class="w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent">
+                            </div>
+                        </div>
+                        
+                        <!-- Max config -->
+                        <div class="p-1.5 bg-gray-50 dark:bg-gray-900/50 rounded border border-gray-200 dark:border-gray-700">
+                            <div class="flex justify-between items-center mb-1">
+                                <span class="text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase">High Value</span>
+                                <input type="text" id="graduated-max-val" readonly value="${cs.graduatedMaxVal ?? 'N/A'}" class="w-20 bg-transparent text-right font-mono text-[10px] text-gray-500">
+                            </div>
+                            <div class="flex items-center space-x-2">
+                                <span class="text-[9px] font-bold text-gray-400 w-10">Fill:</span>
+                                <input type="color" id="graduated-max-fill" value="${cs.graduatedMaxColor || '#f03b20'}" class="w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent">
+                                <span class="text-[9px] font-bold text-gray-400 ml-2">Outline:</span>
+                                <input type="color" id="graduated-max-stroke" value="${cs.graduatedMaxStroke || '#bd0026'}" class="w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent">
+                            </div>
+                        </div>
+                        
+                        <!-- Opacities -->
+                        <div class="pt-1">
+                            <div class="flex items-center space-x-2 w-full mb-1">
+                                <span class="text-[9px] font-bold text-gray-500 dark:text-gray-400 w-12">Fill Op:</span>
+                                <input type="range" id="graduated-fill-opacity" min="0" max="1" step="0.05" value="${cs.graduatedFillOpacity ?? 0.7}" class="flex-1 cursor-pointer accent-blue-600">
+                            </div>
+                            <div class="flex items-center space-x-2 w-full">
+                                <span class="text-[9px] font-bold text-gray-500 dark:text-gray-400 w-12">Stroke Op:</span>
+                                <input type="range" id="graduated-stroke-opacity" min="0" max="1" step="0.05" value="${cs.graduatedStrokeOpacity ?? 1.0}" class="flex-1 cursor-pointer accent-blue-600">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div> <!-- END FLEX BODY -->
+
+            <!-- FOOTER -->
+            <div class="flex justify-between items-center pt-2 border-t border-blue-100 dark:border-blue-800 shrink-0 mt-2">
                 <button id="btn-bake-colors" class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-1 rounded transition-colors font-medium border border-gray-300 dark:border-gray-600">
                     <i class="fa-solid fa-database mr-1"></i>Bake to Table
                 </button>
-                <div class="flex space-x-1.5">
-                    <button id="btn-refresh-colors" class="${isCat ? '' : 'hidden'} bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-1 rounded transition-colors font-medium border border-gray-300 dark:border-gray-600">
+                <div class="flex space-x-1.5 items-center">
+                    <button id="btn-refresh-colors" class="${activeStyleType === 'categorical' ? '' : 'hidden'} bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-1 rounded transition-colors font-medium border border-gray-300 dark:border-gray-600">
                         <i class="fa-solid fa-arrows-rotate mr-1"></i> Refresh
                     </button>
-                    <button id="btn-apply-edit" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded transition-colors font-medium">Apply Style</button>
+                    <button id="btn-apply-edit" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded transition-colors font-semibold shadow-xs">Apply Style</button>
                 </div>
             </div>
         </div>
@@ -1200,10 +1362,11 @@ const handleToggleEdit = async (e) => {
         const chkDataScale = getEl('use-data-scale');
         const isScaleData = chkDataScale ? chkDataScale.checked : false;
         const pScaleCol = isScaleData ? getEl('point-scale-col-select')?.value : null;
-        const pMinData = isScaleData ? parseFloat(getEl('point-scale-min-data')?.value) : null;
-        const pMaxData = isScaleData ? parseFloat(getEl('point-scale-max-data')?.value) : null;
-        const pMinTarget = isScaleData ? parseFloat(getEl('point-scale-min-target')?.value) : 4;
-        const pMaxTarget = isScaleData ? parseFloat(getEl('point-scale-max-target')?.value) : 24;
+        
+        let pMinData = parseFloat(getEl('point-scale-min-data')?.value);
+        let pMaxData = parseFloat(getEl('point-scale-max-data')?.value);
+        let pMinTarget = parseFloat(getEl('point-scale-min-target')?.value);
+        let pMaxTarget = parseFloat(getEl('point-scale-max-target')?.value);
 
         const scaleStateObj = {
             usePointScaleData: isScaleData,
@@ -1215,11 +1378,10 @@ const handleToggleEdit = async (e) => {
             pointScaleCurve: activeScaleCurve || 'linear'
         };
 
-        const chkUseData = getEl('use-data-style');
-        const selCol = getEl('style-col-select');
+        const activeType = getEl('edit-style-type')?.value || 'single';
 
-        if (chkUseData?.checked) {
-            const prop = selCol?.value;
+        if (activeType === 'categorical') {
+            const prop = getEl('cat-col-select')?.value;
             if (!prop) return null;
             const newCategories = {};
             document.querySelectorAll('.cat-row').forEach(row => {
@@ -1242,6 +1404,26 @@ const handleToggleEdit = async (e) => {
                 pointShape: pShape, pointSize: pSize,
                 ...scaleStateObj
             };
+        } else if (activeType === 'graduated') {
+            const prop = getEl('graduated-col-select')?.value;
+            if (!prop) return null;
+            
+            let minData = parseFloat(getEl('graduated-min-val')?.value);
+            let maxData = parseFloat(getEl('graduated-max-val')?.value);
+            
+            return {
+                type: 'graduated', property: prop,
+                graduatedMinVal: isNaN(minData) ? 0 : minData,
+                graduatedMaxVal: isNaN(maxData) ? 1 : maxData,
+                graduatedMinColor: getEl('graduated-min-fill')?.value || '#ffeda0',
+                graduatedMaxColor: getEl('graduated-max-fill')?.value || '#f03b20',
+                graduatedMinStroke: getEl('graduated-min-stroke')?.value || '#feb24c',
+                graduatedMaxStroke: getEl('graduated-max-stroke')?.value || '#bd0026',
+                graduatedFillOpacity: parseFloat(getEl('graduated-fill-opacity')?.value ?? 0.7),
+                graduatedStrokeOpacity: parseFloat(getEl('graduated-stroke-opacity')?.value ?? 1.0),
+                pointShape: pShape, pointSize: pSize,
+                ...scaleStateObj
+            };
         } else {
             return { 
                 type: 'single', 
@@ -1255,6 +1437,7 @@ const handleToggleEdit = async (e) => {
         }
     };
 
+    // Point Marker Listeners
     if (hasPoints) {
         const chkDataScale = getEl('use-data-scale');
         const constantScaleContainer = getEl('constant-scale-container');
@@ -1279,13 +1462,23 @@ const handleToggleEdit = async (e) => {
         });
 
         const updateMinMaxDataValues = () => {
-            if (!pointScaleColSelect) return;
+            if (!pointScaleColSelect || !pointScaleColSelect.value) return;
             const col = pointScaleColSelect.value;
-            if (!col) return;
-            const nums = layer.geoJsonData.features.map(f => parseFloat(f.properties ? f.properties[col] : NaN)).filter(n => !isNaN(n));
-            if (nums.length > 0) {
-                if (inputMinData) inputMinData.value = Math.min(...nums);
-                if (inputMaxData) inputMaxData.value = Math.max(...nums);
+            
+            // Loop safely instead of Math.min(...array) to prevent call stack size limits on large layers
+            let min = Infinity, max = -Infinity;
+            layer.geoJsonData.features.forEach(f => {
+                if (!f.properties) return;
+                const v = parseFloat(f.properties[col]);
+                if (!isNaN(v)) {
+                    if (v < min) min = v;
+                    if (v > max) max = v;
+                }
+            });
+
+            if (min !== Infinity) {
+                if (inputMinData) inputMinData.value = min.toFixed(2).replace(/\.00$/, '');
+                if (inputMaxData) inputMaxData.value = max.toFixed(2).replace(/\.00$/, '');
             } else {
                 if (inputMinData) inputMinData.value = 'N/A';
                 if (inputMaxData) inputMaxData.value = 'N/A';
@@ -1306,27 +1499,53 @@ const handleToggleEdit = async (e) => {
         });
     }
 
-    const chkUseData = getEl('use-data-style');
-    const selCol = getEl('style-col-select');
+    // Style Panel Listeners
+    const styleTypeSelect = getEl('edit-style-type');
     const singleContainer = getEl('single-style-container');
-    const catListWrapper = getEl('categorical-style-list');
-    const catInnerList = getEl('cat-inner-list');
+    const catContainer = getEl('categorical-style-container');
+    const gradContainer = getEl('graduated-style-container');
     const btnRefreshColors = getEl('btn-refresh-colors');
 
+    styleTypeSelect?.addEventListener('change', (e) => {
+        const val = e.target.value;
+        singleContainer?.classList.replace('flex', 'hidden');
+        catContainer?.classList.replace('flex', 'hidden');
+        gradContainer?.classList.replace('flex', 'hidden');
+        btnRefreshColors?.classList.add('hidden');
+
+        if (val === 'single') {
+            singleContainer?.classList.replace('hidden', 'flex');
+        } else if (val === 'categorical') {
+            catContainer?.classList.replace('hidden', 'flex');
+            btnRefreshColors?.classList.remove('hidden');
+        } else if (val === 'graduated') {
+            gradContainer?.classList.replace('hidden', 'flex');
+            // Auto-select first numeric column if none is currently selected to avoid N/A empty states
+            const gradColSelect = getEl('graduated-col-select');
+            if (gradColSelect && !gradColSelect.value && gradColSelect.options.length > 1) {
+                gradColSelect.selectedIndex = 1; 
+                gradColSelect.dispatchEvent(new Event('change'));
+            }
+        }
+    });
+
+    // Categorical Logic
+    const catColSelect = getEl('cat-col-select');
+    const catInnerList = getEl('cat-inner-list');
+
     const renderCategoryPickers = () => {
-        if (!selCol) return;
-        const propName = selCol.value;
-        if (!propName) return;
+        if (!catColSelect || !catColSelect.value) return;
+        const propName = catColSelect.value;
         let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties ? f.properties[propName] : undefined))].filter(v => v !== null && v !== undefined);
         if (uniqueVals.length > 200 && !confirm(`Generate color pickers for ${uniqueVals.length} unique values?`)) return;
         if (!catInnerList) return;
-        if (uniqueVals.length === 0) { catInnerList.innerHTML = '<p class="text-xs text-gray-400 italic text-center py-1">No unique values.</p>'; return; }
+        if (uniqueVals.length === 0) { catInnerList.innerHTML = '<p class="text-xs text-gray-400 italic text-center py-1 mt-2">No unique values.</p>'; return; }
 
         let html = '';
         uniqueVals.forEach(val => {
             let fCol = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
             let sCol = darkenHex(fCol, 0.3), fOp = 0.5, sOp = 1.0;
-            if (isCat && cs.property === propName && cs.categories) {
+            if (activeStyleType === 'categorical' && cs.property === propName && cs.categories) {
                 const cat = cs.categories[val] || cs.categories[String(val)];
                 if (cat) {
                     fCol = cat.fillColor; sCol = cat.color;
@@ -1350,19 +1569,8 @@ const handleToggleEdit = async (e) => {
         catInnerList.innerHTML = html;
     };
 
-    chkUseData?.addEventListener('change', (e) => {
-        if (e.target.checked) {
-            if (selCol) selCol.disabled = false; singleContainer?.classList.add('hidden'); singleContainer?.classList.remove('flex');
-            catListWrapper?.classList.remove('hidden'); catListWrapper?.classList.add('flex'); btnRefreshColors?.classList.remove('hidden');
-            if (selCol?.value) renderCategoryPickers();
-        } else {
-            if (selCol) selCol.disabled = true; singleContainer?.classList.remove('hidden'); singleContainer?.classList.add('flex');
-            catListWrapper?.classList.add('hidden'); catListWrapper?.classList.remove('flex'); btnRefreshColors?.classList.add('hidden');
-        }
-    });
-
-    selCol?.addEventListener('change', renderCategoryPickers);
-    if (isCat && cs.property) renderCategoryPickers();
+    catColSelect?.addEventListener('change', renderCategoryPickers);
+    if (activeStyleType === 'categorical' && cs.property) renderCategoryPickers();
 
     btnRefreshColors?.addEventListener('click', () => {
         document.querySelectorAll('.cat-row').forEach(row => {
@@ -1374,6 +1582,39 @@ const handleToggleEdit = async (e) => {
         });
     });
 
+    // Graduated Logic
+    const gradColSelect = getEl('graduated-col-select');
+    const updateGraduatedMinMax = () => {
+        const col = gradColSelect?.value;
+        if (!col) return;
+        
+        // Safely evaluate min/max without exceeding call stack
+        let min = Infinity, max = -Infinity;
+        layer.geoJsonData.features.forEach(f => {
+            if (!f.properties) return;
+            const v = parseFloat(f.properties[col]);
+            if (!isNaN(v)) {
+                if (v < min) min = v;
+                if (v > max) max = v;
+            }
+        });
+
+        const minInp = getEl('graduated-min-val');
+        const maxInp = getEl('graduated-max-val');
+        if (min !== Infinity) {
+            minInp.value = min.toFixed(2).replace(/\.00$/, '');
+            maxInp.value = max.toFixed(2).replace(/\.00$/, '');
+        } else {
+            minInp.value = 'N/A';
+            maxInp.value = 'N/A';
+        }
+    };
+
+    gradColSelect?.addEventListener('change', updateGraduatedMinMax);
+    if (activeStyleType === 'graduated' && cs.property) updateGraduatedMinMax();
+
+
+    // Application Buttons
     getEl('btn-copy-style')?.addEventListener('click', () => {
         copiedStyle = extractStyleFromUI() || layer.customStyle;
         showToast("Style copied to clipboard!");
@@ -1383,20 +1624,14 @@ const handleToggleEdit = async (e) => {
 
     getEl('btn-paste-style')?.addEventListener('click', () => {
         if (!copiedStyle) return;
-        layer.customStyle = JSON.parse(JSON.stringify(copiedStyle));
-        map.removeLayer(layer.mapLayer);
-        const paneName = 'pane-' + layer.uniqueKey;
-        const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
-        if (layer.isVisible) newMapLayer.addTo(map);
-        layer.mapLayer = newMapLayer;
-        updateMapLayerOrder();
-        showToast("Style pasted and applied!");
-        activeEditLayerKey = null; handleToggleEdit(key); 
+        showToast("Style pasted into UI! Click 'Apply Style' to update map.");
+        // Rerender the panel injected with the copied style, but DO NOT save or redraw map yet
+        handleToggleEdit(key, copiedStyle); 
     });
 
     getEl('btn-apply-edit')?.addEventListener('click', () => {
         const newStyle = extractStyleFromUI();
-        if (!newStyle) return showToast("Select an attribute column for data styling.", true);
+        if (!newStyle) return showToast("Please configure valid style mapping.", true);
         
         layer.customStyle = newStyle;
         map.removeLayer(layer.mapLayer);
@@ -1428,6 +1663,25 @@ const handleToggleEdit = async (e) => {
                 sColor = cat ? cat.color : (currentStyle.defaultColor || '#999999');
                 fOp = cat ? cat.fillOpacity : (currentStyle.defaultFillOpacity ?? 0.5);
                 sOp = cat ? cat.opacity : (currentStyle.defaultOpacity ?? 1.0);
+                
+            } else if (currentStyle.type === 'graduated') {
+                const rawVal = parseFloat(f.properties[currentStyle.property]);
+                if (!isNaN(rawVal)) {
+                    const min = typeof currentStyle.graduatedMinVal === 'number' && !isNaN(currentStyle.graduatedMinVal) ? currentStyle.graduatedMinVal : 0;
+                    const max = typeof currentStyle.graduatedMaxVal === 'number' && !isNaN(currentStyle.graduatedMaxVal) ? currentStyle.graduatedMaxVal : 1;
+                    let t = (max > min) ? (rawVal - min) / (max - min) : 0.5;
+                    t = Math.max(0, Math.min(1, isNaN(t) ? 0.5 : t)); 
+                    
+                    fColor = interpolateColor(currentStyle.graduatedMinColor || '#ffeda0', currentStyle.graduatedMaxColor || '#f03b20', t);
+                    sColor = interpolateColor(currentStyle.graduatedMinStroke || '#feb24c', currentStyle.graduatedMaxStroke || '#bd0026', t);
+                    fOp = currentStyle.graduatedFillOpacity ?? 0.7;
+                    sOp = currentStyle.graduatedStrokeOpacity ?? 1.0;
+                } else {
+                    fColor = currentStyle.defaultFill || '#cccccc';
+                    sColor = currentStyle.defaultColor || '#999999';
+                    fOp = currentStyle.defaultFillOpacity ?? 0.5;
+                    sOp = currentStyle.defaultOpacity ?? 1.0;
+                }
             } else {
                 fColor = currentStyle.fillColor || '#2563eb';
                 sColor = currentStyle.color || '#2563eb';
@@ -2532,6 +2786,17 @@ document.querySelectorAll('.btn-trigger-fetch').forEach(btn => btn.addEventListe
 // ==========================================
 // 9. APP BOOTSTRAP
 // ==========================================
+
+// Dynamically move the Undo/Redo buttons to the left of the Added Layers search bar
+const btnUndo = getEl('btn-undo');
+const btnRedo = getEl('btn-redo');
+const addedSearchContainerDOM = getEl('added-search-container');
+const searchInputDiv = getEl('added-layer-search')?.parentElement;
+if (addedSearchContainerDOM && btnUndo && btnRedo && searchInputDiv) {
+    addedSearchContainerDOM.insertBefore(btnRedo, searchInputDiv);
+    addedSearchContainerDOM.insertBefore(btnUndo, btnRedo);
+}
+
 const initOsmDatalists = () => {
     const keysList = getEl('osm-keys');
     const valuesList = getEl('osm-values');
@@ -2602,7 +2867,7 @@ const initSidebarResizer = () => {
             if (isResizing) {
                 isResizing = false;
                 document.body.classList.remove('select-none', 'cursor-col-resize');
-                window.removeEventListener('mousemove', doDrag);
+                window.removeEventListener('mousemove', doDrag); // Fixed typo here
                 window.removeEventListener('mouseup', stopDrag);
                 map.invalidateSize();
             }
