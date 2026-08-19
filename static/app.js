@@ -78,17 +78,6 @@ dndStyle.textContent = `
 `;
 document.head.appendChild(dndStyle);
 
-// Ensure JSZip is loaded dynamically for folder exports
-const ensureJSZipLoaded = () => {
-    if (window.JSZip) return Promise.resolve();
-    return new Promise((resolve) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-        script.onload = resolve;
-        document.head.appendChild(script);
-    });
-};
-
 // Safely Query DOM Elements
 const getEl = (id) => document.getElementById(id);
 
@@ -747,8 +736,8 @@ export const handleExportFolder = async (e) => {
     if (!folder) return;
 
     showToast(`Preparing ZIP for ${folder.displayName}...`);
-    await ensureJSZipLoaded();
-    const zip = new JSZip();
+
+    const zip = new JSZip(); // JSZip is now globally available from head.html
     let processedCount = 0;
 
     const addLayersToZip = async (parentId, currentZipFolder) => {

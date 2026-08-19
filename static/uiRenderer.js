@@ -8,25 +8,10 @@ import {
     autoSaveWorkspace, rebuildActiveLayersFromDOM, triggerAddedSearch 
 } from './app.js';
 
-export const ensureSortableLoaded = () => {
-    if (window.Sortable) return Promise.resolve();
-    return new Promise((resolve) => {
-        const script = document.createElement('script');
-        script.src = 'https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js';
-        script.onload = resolve;
-        document.head.appendChild(script);
-    });
-};
-
 export const renderAddedLayers = () => {
     const addedLayerList = document.getElementById('added-layer-list');
     const tabBtnAdded = document.getElementById('tab-btn-added');
     const addedLayerSearch = document.getElementById('added-layer-search');
-
-    if (!window.Sortable) {
-        ensureSortableLoaded().then(() => renderAddedLayers());
-        return;
-    }
 
     if (tabBtnAdded) tabBtnAdded.textContent = `Added (${AppState.activeLayers.length})`;
     if (!addedLayerList) return;
