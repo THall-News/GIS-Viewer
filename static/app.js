@@ -1987,15 +1987,59 @@ const triggerSearch = () => {
 const triggerAddedSearch = () => {
   if (!addedLayerSearch) return;
   const term = addedLayerSearch.value.toLowerCase();
-  if (term === '') btnClearAddedSearch?.classList.add('hidden');
-  else btnClearAddedSearch?.classList.remove('hidden');
   
-  let visibleCount = 0;
-  document.querySelectorAll('.added-layer-item, .folder-item').forEach(item => {
-    if (item.getAttribute('data-search').includes(term)) { item.classList.remove('hidden'); visibleCount++; } 
-    else { item.classList.add('hidden'); }
-  });
+  if (term === '') {
+      btnClearAddedSearch?.classList.add('hidden');
+      
+      // Clear search: Restore normal visibility
+      document.querySelectorAll('.added-layer-item, .folder-item').forEach(item => item.classList.remove('hidden'));
+      
+      // Restore normal expanded/collapsed states based on folder data
+      activeLayers.forEach(l => {
+          if (l.isFolder) {
+              const childContainer = document.querySelector(`.folder-children[data-parent="${l.uniqueKey}"]`);
+              if (childContainer) {
+                  if (l.isExpanded) childContainer.classList.remove('hidden');
+                  else childContainer.classList.add('hidden');
+              }
+          }
+      });
+  } else {
+      btnClearAddedSearch?.classList.remove('hidden');
+      
+      // 1. Hide everything initially
+      document.querySelectorAll('.added-layer-item, .folder-item').forEach(item => item.classList.add('hidden'));
+
+      // 2. Find matches and walk UP the tree to reveal parent folders
+      document.querySelectorAll('.added-layer-item, .folder-item').forEach(item => {
+        if (item.getAttribute('data-search').includes(term)) { 
+            item.classList.remove('hidden'); 
+            
+            // Force parent folders to be visible and expand their children container
+            let parentFolderBlock = item.parentElement.closest('.folder-item');
+            while (parentFolderBlock) {
+                parentFolderBlock.classList.remove('hidden');
+                const childrenContainer = parentFolderBlock.querySelector('.folder-children');
+                if (childrenContainer) childrenContainer.classList.remove('hidden');
+                
+                // Move up to the next nested parent (if any)
+                parentFolderBlock = parentFolderBlock.parentElement.closest('.folder-item');
+            }
+        } 
+      });
+
+      // 3. If a folder matched by its own name, reveal ALL its contents
+      document.querySelectorAll('.folder-item:not(.hidden)').forEach(folder => {
+          if (folder.getAttribute('data-search').includes(term)) {
+              folder.querySelectorAll('.added-layer-item, .folder-item, .folder-children').forEach(el => {
+                  el.classList.remove('hidden');
+              });
+          }
+      });
+  }
   
+  // Recalculate visible count for empty state message
+  const visibleCount = document.querySelectorAll('.added-layer-item:not(.hidden), .folder-item:not(.hidden)').length;
   let emptyMsg = getEl('added-search-empty-msg');
   if (visibleCount === 0 && activeLayers.length > 0) {
     if (!emptyMsg && addedLayerList) {
@@ -2003,9 +2047,10 @@ const triggerAddedSearch = () => {
       addedLayerList.appendChild(emptyMsg);
     }
     emptyMsg?.classList.remove('hidden');
-  } else if (emptyMsg) { emptyMsg.classList.add('hidden'); }
+  } else if (emptyMsg) { 
+    emptyMsg.classList.add('hidden'); 
+  }
 };
-
 const triggerFilterDataSearch = () => {
     if (!filterDataSearch) return;
     const term = filterDataSearch.value.toLowerCase();
@@ -2069,6 +2114,47 @@ const renderAvailableLayers = () => {
   triggerSearch(); 
 };
 
+const handleZoomToLayer = (e) => {
+    const key = e.currentTarget.getAttribute('data-key');
+    const layer = activeLayers.find(l => l.uniqueKey === key);
+    if (!layer) return;
+
+    let bounds = null;
+
+    // Helper to safely extract bounds from a Leaflet mapLayer
+    const extendBoundsFromLayer = (l) => {
+        if (!l.isFolder && l.mapLayer && typeof l.mapLayer.getBounds === 'function') {
+            try {
+                const b = l.mapLayer.getBounds();
+                if (b && b.isValid()) {
+                    if (!bounds) bounds = L.latLngBounds(b);
+                    else bounds.extend(b);
+                }
+            } catch (err) {}
+        }
+    };
+
+    if (layer.isFolder) {
+        // If it's a folder, recursively collect the bounds of all its children
+        const collectChildren = (parentId) => {
+            activeLayers.filter(l => l.parentId === parentId).forEach(child => {
+                extendBoundsFromLayer(child);
+                if (child.isFolder) collectChildren(child.uniqueKey);
+            });
+        };
+        collectChildren(layer.uniqueKey);
+    } else {
+        // Just grab the single layer's bounds
+        extendBoundsFromLayer(layer);
+    }
+
+    if (bounds && bounds.isValid()) {
+        map.flyToBounds(bounds, { padding: [30, 30], duration: 0.5 });
+    } else {
+        showToast("Cannot determine bounds for this layer.", true);
+    }
+};
+
 const renderAddedLayers = () => {
     if (!window.Sortable) {
         ensureSortableLoaded().then(() => renderAddedLayers());
@@ -2114,13 +2200,16 @@ const renderAddedLayers = () => {
                             <!-- BOTTOM ROW: ACTIONS -->
                             <div class="flex items-center justify-between border-t border-gray-300/50 dark:border-gray-700 pt-1.5 text-gray-500 dark:text-gray-400 text-xs">
                                 
-                                <!-- LEFT ALIGNED: VISIBILITY & SOLO -->
+                                <!-- LEFT ALIGNED: VISIBILITY, SOLO & ZOOM -->
                                 <div class="flex space-x-2 items-center pl-1">
                                     <button class="transition-colors btn-toggle-vis shrink-0 ${node.isVisible ? 'text-blue-600 dark:text-blue-500' : 'text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-500'}" data-key="${node.uniqueKey}" title="${node.isVisible ? 'Hide Folder' : 'Show Folder'}">
                                         <i class="fa-solid ${node.isVisible ? 'fa-eye' : 'fa-eye-slash'} text-[11px] w-3 text-center"></i>
                                     </button>
                                     <button class="transition-colors btn-solo shrink-0 ${currentSoloLayerKey === node.uniqueKey ? 'text-yellow-500 dark:text-yellow-400' : 'text-gray-400 dark:text-gray-500 hover:text-yellow-500 dark:hover:text-yellow-400'}" data-key="${node.uniqueKey}" title="${currentSoloLayerKey === node.uniqueKey ? 'Un-Solo' : 'Solo Folder (Ghost Mode)'}">
                                         <span class="inline-block w-3 text-center text-[10px] font-black">S</span>
+                                    </button>
+                                    <button class="transition-colors btn-zoom shrink-0 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400" data-key="${node.uniqueKey}" title="Zoom to Folder Extent">
+                                        <i class="fa-solid fa-bullseye text-[11px] w-3 text-center"></i>
                                     </button>
                                 </div>
 
@@ -2167,13 +2256,16 @@ const renderAddedLayers = () => {
                         <!-- BOTTOM ROW: ACTIONS -->
                         <div class="flex items-center justify-between border-t border-gray-200 dark:border-gray-700 pt-1.5 text-gray-500 dark:text-gray-400 text-xs">
                             
-                            <!-- LEFT ALIGNED: VISIBILITY & SOLO -->
+                            <!-- LEFT ALIGNED: VISIBILITY, SOLO & ZOOM -->
                             <div class="flex space-x-2 items-center pl-1">
                                 <button class="transition-colors btn-toggle-vis shrink-0 ${node.isVisible ? 'text-blue-600 dark:text-blue-500' : 'text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-500'}" data-key="${node.uniqueKey}" title="${node.isVisible ? 'Hide Layer' : 'Show Layer'}">
                                     <i class="fa-solid ${node.isVisible ? 'fa-eye' : 'fa-eye-slash'} text-[11px] w-3 text-center"></i>
                                 </button>
                                 <button class="transition-colors btn-solo shrink-0 ${currentSoloLayerKey === node.uniqueKey ? 'text-yellow-500 dark:text-yellow-400' : 'text-gray-400 dark:text-gray-500 hover:text-yellow-500 dark:hover:text-yellow-400'}" data-key="${node.uniqueKey}" title="${currentSoloLayerKey === node.uniqueKey ? 'Un-Solo' : 'Solo Layer (Ghost Mode)'}">
                                     <span class="inline-block w-3 text-center text-[10px] font-black">S</span>
+                                </button>
+                                <button class="transition-colors btn-zoom shrink-0 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400" data-key="${node.uniqueKey}" title="Zoom to Layer">
+                                    <i class="fa-solid fa-bullseye text-[11px] w-3 text-center"></i>
                                 </button>
                             </div>
 
@@ -2243,6 +2335,7 @@ const renderAddedLayers = () => {
     document.querySelectorAll('.btn-remove').forEach(btn => btn.addEventListener('click', handleRemove));
     document.querySelectorAll('.btn-toggle-vis').forEach(btn => btn.addEventListener('click', handleToggleVisibility)); 
     document.querySelectorAll('.btn-solo').forEach(btn => btn.addEventListener('click', handleToggleSolo));
+    document.querySelectorAll('.btn-zoom').forEach(btn => btn.addEventListener('click', handleZoomToLayer));
     
     document.querySelectorAll('.btn-toggle-folder').forEach(btn => {
         btn.addEventListener('click', (e) => {
