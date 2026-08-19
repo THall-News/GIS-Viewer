@@ -58,26 +58,6 @@ window.addEventListener('DOMContentLoaded', () => {
     restoreCachedWorkspace();
 });
 
-// Inject Custom CSS to make the Drag-and-Drop Ghost look like a thick drop-line indicator
-const dndStyle = document.createElement('style');
-dndStyle.textContent = `
-    .sortable-ghost {
-        opacity: 1 !important;
-        background-color: #3b82f6 !important;
-        height: 4px !important;
-        min-height: 4px !important;
-        padding: 0 !important;
-        margin: 4px 0 !important;
-        border: none !important;
-        border-radius: 4px !important;
-        overflow: hidden !important;
-    }
-    .sortable-ghost * {
-        display: none !important;
-    }
-`;
-document.head.appendChild(dndStyle);
-
 // Safely Query DOM Elements
 const getEl = (id) => document.getElementById(id);
 
