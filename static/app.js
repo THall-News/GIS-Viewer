@@ -335,10 +335,24 @@ const openContextSubmenu = () => {
     getEl('context-resizer')?.classList.remove('hidden');
 };
 
+// --- NEW TABLE STATE VARIABLES ---
+let currentTableFeatures = [];
+let currentTableHeaders = [];
+let tableSortCol = null;
+let tableSortAsc = true;
+let highlightLayer = null; 
+
 const closeTablePanel = () => {
     activeTableLayerKey = null;
     attributeTableContainer?.classList.add('hidden'); 
     attributeTableContainer?.classList.remove('flex');
+    
+    // Wipe map highlight if the table closes
+    if (highlightLayer) {
+        map.removeLayer(highlightLayer);
+        highlightLayer = null;
+    }
+    
     if (activeLayers.length > 0) renderAddedLayers();
 };
 window.closeTablePanel = closeTablePanel;
@@ -1091,6 +1105,139 @@ const handleDuplicate = async (e) => {
     showToast("Layer duplicated successfully!");
 };
 
+const renderTableContent = (layerName) => {
+    let displayFeatures = [...currentTableFeatures].slice(0, 100);
+    
+    // 1. Smart Sorting Logic (Handles text, numbers, and text with numbers in it)
+    if (tableSortCol) {
+        displayFeatures.sort((a, b) => {
+            let valA = a.properties ? a.properties[tableSortCol] : '';
+            let valB = b.properties ? b.properties[tableSortCol] : '';
+            
+            if (valA === null || valA === undefined) valA = '';
+            if (valB === null || valB === undefined) valB = '';
+            
+            let cmp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
+            return tableSortAsc ? cmp : -cmp;
+        });
+    }
+
+    // 2. Build the HTML
+    let tableHtml = `
+        <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
+            <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layerName} Data</div>
+            <button onclick="window.closeTablePanel()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
+        </div>
+        <div class="flex-1 overflow-auto min-h-0 custom-scroll border border-gray-200 dark:border-gray-700 rounded">
+            <table class="min-w-full text-xs text-left border-collapse bg-white dark:bg-gray-800">
+                <thead class="bg-gray-100 dark:bg-gray-700 sticky top-0 shadow-xs z-10"><tr>`;
+    
+    // Inject Sort Headers
+    currentTableHeaders.forEach(h => { 
+        let sortIcon = '<i class="fa-solid fa-sort ml-1 text-gray-400 opacity-40"></i>';
+        if (tableSortCol === h) {
+            sortIcon = tableSortAsc 
+                ? '<i class="fa-solid fa-sort-up ml-1 text-blue-600 dark:text-blue-400"></i>' 
+                : '<i class="fa-solid fa-sort-down ml-1 text-blue-600 dark:text-blue-400"></i>';
+        }
+        tableHtml += `<th class="px-2 py-1 border border-gray-200 dark:border-gray-600 font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors select-none tbl-header" data-col="${h}">${h} ${sortIcon}</th>`; 
+    });
+    tableHtml += '</tr></thead><tbody>';
+
+    // Inject Rows & Highlight State
+    displayFeatures.forEach(f => {
+        const isHighlighted = highlightLayer && highlightLayer._row_id === f.__row_id;
+        const rowClass = isHighlighted 
+            ? 'bg-cyan-100 dark:bg-cyan-900/40' 
+            : 'hover:bg-blue-50 dark:hover:bg-blue-900/30';
+
+        tableHtml += `<tr class="tbl-row cursor-pointer transition-colors ${rowClass}" data-id="${f.__row_id}">`;
+        currentTableHeaders.forEach(h => {
+            const val = f.properties ? f.properties[h] : '';
+            const displayVal = (val !== null && val !== undefined) ? val : '';
+            tableHtml += `<td class="px-2 py-0.5 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-300 whitespace-nowrap max-w-[200px] truncate" title="${displayVal}">${displayVal}</td>`;
+        });
+        tableHtml += '</tr>';
+    });
+
+    tableHtml += '</tbody></table></div>';
+    if (currentTableFeatures.length >= 100 || currentTableFeatures.length > displayFeatures.length) {
+       tableHtml += `<p class="text-[9px] text-gray-400 dark:text-gray-500 mt-1 italic text-center shrink-0">Showing up to 100 records for preview.</p>`;
+    }
+    attributeTableContainer.innerHTML = tableHtml;
+
+    // 3. Attach Listeners for Sorting
+    document.querySelectorAll('.tbl-header').forEach(th => {
+        th.addEventListener('click', (e) => {
+            const col = e.currentTarget.getAttribute('data-col');
+            if (tableSortCol === col) tableSortAsc = !tableSortAsc;
+            else { tableSortCol = col; tableSortAsc = true; }
+            renderTableContent(layerName); // Trigger full re-render only for sorting
+        });
+    });
+
+    // 4. Attach Listeners for Row Highlighting (DOM update only)
+    document.querySelectorAll('.tbl-row').forEach(tr => {
+        tr.addEventListener('click', (e) => {
+            const rowId = parseInt(e.currentTarget.getAttribute('data-id'), 10);
+            
+            // Check if we are clicking the row that is already highlighted
+            const isAlreadyHighlighted = highlightLayer && highlightLayer._row_id === rowId;
+            
+            // Always clear the existing highlight layer from the map
+            if (highlightLayer) {
+                map.removeLayer(highlightLayer);
+                highlightLayer = null;
+            }
+
+            // Reset all row background colors in the DOM to normal
+            document.querySelectorAll('.tbl-row').forEach(row => {
+                row.classList.remove('bg-cyan-100', 'dark:bg-cyan-900/40');
+                row.classList.add('hover:bg-blue-50', 'dark:hover:bg-blue-900/30');
+            });
+
+            // If we just clicked the already active row, stop here (Toggle Off)
+            if (isAlreadyHighlighted) {
+                return;
+            }
+
+            // Otherwise, we are highlighting a new row (Toggle On)
+            const targetFeature = currentTableFeatures.find(f => f.__row_id === rowId);
+            if (targetFeature && targetFeature.geometry) {
+                
+                if (!map.getPane('highlightPane')) {
+                    map.createPane('highlightPane');
+                    map.getPane('highlightPane').style.zIndex = 2500; 
+                    map.getPane('highlightPane').style.pointerEvents = 'none'; 
+                }
+
+                highlightLayer = L.geoJSON(targetFeature, {
+                    pane: 'highlightPane', 
+                    interactive: false,
+                    style: { color: '#00ffff', weight: 5, opacity: 1, fillColor: '#00ffff', fillOpacity: 0.3 },
+                    pointToLayer: (feature, latlng) => {
+                        return L.circleMarker(latlng, { 
+                            pane: 'highlightPane', 
+                            interactive: false, 
+                            radius: 10, 
+                            color: '#00ffff', 
+                            weight: 4, 
+                            opacity: 1, 
+                            fillColor: '#00ffff', 
+                            fillOpacity: 0.3 
+                        });
+                    }
+                }).addTo(map);
+                highlightLayer._row_id = rowId; 
+            }
+            
+            // Apply the highlighted blue/cyan color to the clicked row
+            e.currentTarget.classList.remove('hover:bg-blue-50', 'dark:hover:bg-blue-900/30');
+            e.currentTarget.classList.add('bg-cyan-100', 'dark:bg-cyan-900/40');
+        });
+    });
+};
+
 const handleToggleTable = async (e) => {
   const key = e.currentTarget ? e.currentTarget.getAttribute('data-key') : e;
   const layer = activeLayers.find(l => l.uniqueKey === key);
@@ -1133,43 +1280,25 @@ const handleToggleTable = async (e) => {
       return;
     }
 
+    // Attach unique row IDs for the highlight engine to track
+    features.forEach((f, i) => f.__row_id = i);
+    currentTableFeatures = features;
+
     const headerSet = new Set();
     features.forEach(f => {
         if (f.properties) Object.keys(f.properties).forEach(k => headerSet.add(k));
     });
     
     let headers = Array.from(headerSet);
-    
-    // Explicitly force baked color columns to the end of the table rendering
     const bakedCols = ['COLOR_FILL', 'COLOR_OUTLINE'];
-    headers = headers.filter(h => !bakedCols.includes(h)).concat(headers.filter(h => bakedCols.includes(h)));
+    currentTableHeaders = headers.filter(h => !bakedCols.includes(h)).concat(headers.filter(h => bakedCols.includes(h)));
+    
+    // Reset Sorting state for new layer
+    tableSortCol = null;
+    tableSortAsc = true;
 
-    let tableHtml = `
-        <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1">
-            <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layer.displayName} Data</div>
-            <button onclick="window.closeTablePanel()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
-        </div>
-        <div class="flex-1 overflow-auto min-h-0 custom-scroll border border-gray-200 dark:border-gray-700 rounded">
-            <table class="min-w-full text-xs text-left border-collapse bg-white dark:bg-gray-800">
-                <thead class="bg-gray-100 dark:bg-gray-700 sticky top-0 shadow-xs z-10"><tr>`;
-    headers.forEach(h => { tableHtml += `<th class="px-2 py-1 border border-gray-200 dark:border-gray-600 font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap">${h}</th>`; });
-    tableHtml += '</tr></thead><tbody>';
-
-    features.slice(0, 100).forEach(f => {
-      tableHtml += '<tr class="hover:bg-blue-50 dark:hover:bg-blue-900/30">';
-      headers.forEach(h => {
-         const val = f.properties ? f.properties[h] : '';
-         const displayVal = (val !== null && val !== undefined) ? val : '';
-         tableHtml += `<td class="px-2 py-0.5 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-300 whitespace-nowrap max-w-[200px] truncate" title="${displayVal}">${displayVal}</td>`;
-      });
-      tableHtml += '</tr>';
-    });
-
-    tableHtml += '</tbody></table></div>';
-    if (features.length >= 100 || (!layer.isLocalGeoJSON && features.length > 0)) {
-       tableHtml += `<p class="text-[9px] text-gray-400 dark:text-gray-500 mt-1 italic text-center shrink-0">Showing up to 100 records for preview.</p>`;
-    }
-    attributeTableContainer.innerHTML = tableHtml;
+    // Trigger initial render
+    renderTableContent(layer.displayName);
 
   } catch (err) {
     attributeTableContainer.innerHTML = `
