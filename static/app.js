@@ -2810,11 +2810,11 @@ window.addEventListener('DOMContentLoaded', async () => {
         const savedState = await loadStateFromDB();
         if (savedState && savedState.activeLayers && savedState.activeLayers.length > 0) {
             console.log("Restoring workspace from IndexedDB...");
-            isRestoringHistory = true;
+            isRestoringHistory = true; // Lock autosave during load
             try {
                 restoreWorkspaceState(savedState);
             } finally {
-                isRestoringHistory = false;
+                isRestoringHistory = false; // Unlock autosave
             }
         }
     } catch (e) {
