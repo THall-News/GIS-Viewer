@@ -2927,3 +2927,94 @@ const initContextPanelResizer = () => {
 };
 
 initContextPanelResizer();
+
+// ==========================================
+// 12. MAP SEARCH GEOCODER CONTROL
+// ==========================================
+const executeMapSearch = async () => {
+    const input = getEl('map-search-input');
+    if (!input) return;
+    const term = input.value.trim();
+    if (!term) return;
+
+    const btn = getEl('map-search-btn');
+    const spinner = getEl('map-search-spinner');
+
+    if (btn) btn.classList.add('hidden');
+    if (spinner) spinner.classList.remove('hidden');
+
+    try {
+        // Query the free Nominatim API (same as we use for OSM fetching)
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(term)}&format=json&limit=1`);
+        if (!res.ok) throw new Error("Search API failed");
+        const data = await res.json();
+        
+        if (data && data.length > 0) {
+            const place = data[0];
+            // If the search result has a bounding box (e.g. a city or country), fit the camera to it
+            if (place.boundingbox) {
+                map.fitBounds([
+                    [place.boundingbox[0], place.boundingbox[2]],
+                    [place.boundingbox[1], place.boundingbox[3]]
+                ]);
+            } else {
+                // Otherwise just jump the camera to the lat/lng point
+                map.setView([place.lat, place.lon], 13);
+            }
+            showToast(`Jumped to: ${place.display_name.split(',')[0]}`);
+        } else {
+            showToast("Location not found.", true);
+        }
+    } catch (err) {
+        showToast("Search failed.", true);
+    } finally {
+        if (btn) btn.classList.remove('hidden');
+        if (spinner) spinner.classList.add('hidden');
+    }
+};
+
+// Create a custom Leaflet UI Control
+const GeoSearchControl = L.Control.extend({
+    options: { position: 'topleft' }, // Places it in the same corner as zoom controls
+    onAdd: function () {
+        // Create the container using Leaflet's DOM utility so it behaves like a map element
+        const container = L.DomUtil.create('div', 'leaflet-control flex bg-white dark:bg-gray-800 rounded border border-gray-300 dark:border-gray-600 shadow-sm overflow-hidden cursor-auto');
+        
+        // Prevent clicking inside the text box from clicking the map underneath it
+        L.DomEvent.disableClickPropagation(container);
+
+        container.innerHTML = `
+            <div class="flex items-center px-2 py-1.5 h-full">
+                <i class="fa-solid fa-location-dot text-gray-400 dark:text-gray-500 mr-2 text-[11px]"></i>
+                <input type="text" id="map-search-input" placeholder="Jump to location..." class="w-32 md:w-48 border-none focus:outline-none bg-transparent text-[11px] text-gray-700 dark:text-gray-200 p-0 m-0 leading-none h-full placeholder-gray-400">
+                <button id="map-search-btn" class="text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 transition-colors ml-1 flex items-center h-full cursor-pointer" title="Search">
+                    <i class="fa-solid fa-magnifying-glass text-[11px]"></i>
+                </button>
+                <i id="map-search-spinner" class="fa-solid fa-circle-notch fa-spin text-blue-600 dark:text-blue-400 text-[11px] hidden ml-1"></i>
+            </div>
+        `;
+        
+        // Attach event listeners after a brief timeout to ensure HTML was successfully injected into the map DOM
+        setTimeout(() => {
+            getEl('map-search-btn')?.addEventListener('click', executeMapSearch);
+            getEl('map-search-input')?.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    executeMapSearch();
+                }
+            });
+        }, 100);
+
+        return container;
+    }
+});
+
+// Mount it to the map
+const searchControlInstance = new GeoSearchControl();
+map.addControl(searchControlInstance);
+
+// Force the search bar to physically sit above the default zoom controls in the DOM
+const searchNode = searchControlInstance.getContainer();
+if (searchNode && searchNode.parentNode) {
+    searchNode.parentNode.insertBefore(searchNode, searchNode.parentNode.firstChild);
+}
