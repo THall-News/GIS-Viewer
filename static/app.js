@@ -2592,21 +2592,17 @@ const initOsmDatalists = () => {
 loadSavedServers();
 initOsmDatalists();
 
-try {
-    const savedSession = localStorage.getItem('gis_previewer_auto_save');
-    if (savedSession) {
-        const data = JSON.parse(savedSession);
-        isRestoringHistory = true;
-        try { restoreWorkspaceState(data); } 
-        finally { isRestoringHistory = false; }
-        autoSaveWorkspace();
-    } else {
-        autoSaveWorkspace();
-    }
-} catch(e) {
-    console.warn("Could not auto-restore previous workspace.", e);
+// Persist position and zoom whenever the user moves the map
+map.on('moveend', () => {
     autoSaveWorkspace();
-}
+});
+
+map.on('zoomend', () => {
+    autoSaveWorkspace();
+});
+
+// The synchronous localStorage check has been removed to prevent the boot-time DB wipe.
+// Workspace restoration is now handled exclusively by the DOMContentLoaded listener below.
 
 
 // ==========================================
@@ -2816,9 +2812,14 @@ window.addEventListener('DOMContentLoaded', async () => {
             } finally {
                 isRestoringHistory = false; // Unlock autosave
             }
+        } else {
+            // Only trigger an initial save if we confirmed the DB is actually empty
+            autoSaveWorkspace();
         }
     } catch (e) {
         console.error("Failed to restore workspace from IndexedDB:", e);
+        // Fallback to seeding empty state if DB read fails entirely
+        autoSaveWorkspace(); 
     }
 });
 
