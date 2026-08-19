@@ -339,8 +339,14 @@ window.closeAllPanels = closeAllPanels;
 
 const switchTab = (tabName) => {
   const isAvailable = (tabName === 'available');
-  if (tabBtnAvailable) tabBtnAvailable.className = `flex-1 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${isAvailable ? 'text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400' : 'text-gray-500 dark:text-gray-400 border-transparent hover:text-gray-700 dark:hover:text-gray-200'}`;
-  if (tabBtnAdded) tabBtnAdded.className = `flex-1 py-1.5 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 ${!isAvailable ? 'text-blue-600 dark:text-blue-400 border-blue-600 dark:border-blue-400' : 'text-gray-500 dark:text-gray-400 border-transparent hover:text-gray-700 dark:hover:text-gray-200'}`;
+  
+  // New UI Tab Strings
+  const baseClasses = "flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200";
+  const activeClasses = `${baseClasses} font-bold bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border-t-[3px] border-t-blue-600 dark:border-t-blue-400 border-b border-b-transparent opacity-100 z-10`;
+  const inactiveClasses = `${baseClasses} font-medium bg-transparent text-gray-400 dark:text-gray-500 border-t-[3px] border-t-transparent border-b border-b-gray-200 dark:border-b-gray-700 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/80 opacity-60 hover:opacity-100 shadow-inner cursor-pointer`;
+
+  if (tabBtnAvailable) tabBtnAvailable.className = isAvailable ? activeClasses : inactiveClasses;
+  if (tabBtnAdded) tabBtnAdded.className = !isAvailable ? activeClasses : inactiveClasses;
   
   if (isAvailable) {
     tabAvailable?.classList.replace('hidden', 'flex');
