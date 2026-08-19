@@ -68,13 +68,26 @@ export const renderAddedLayers = () => {
                                 
                                 <!-- LEFT ALIGNED -->
                                 <div class="flex space-x-2 items-center pl-1">
-                                    <button class="transition-colors btn-toggle-vis shrink-0 hover:text-[#71A4F4] ${node.isVisible ? 'text-[#E6E7EB]' : 'text-gray-400 dark:text-gray-500'}" data-key="${node.uniqueKey}" title="Visibility">
+                                    <button class="transition-colors btn-toggle-vis shrink-0 ${node.isVisible ? '' : 'text-gray-400 dark:text-gray-500'}" 
+                                            style="${node.isVisible ? 'color: #E6E7EB;' : ''}" 
+                                            onmouseenter="this.style.color='#71A4F4'" 
+                                            onmouseleave="this.style.color='${node.isVisible ? '#E6E7EB' : ''}'" 
+                                            data-key="${node.uniqueKey}" title="Visibility">
                                         <i class="fa-solid ${node.isVisible ? 'fa-eye' : 'fa-eye-slash'} text-[11px] w-3 text-center"></i>
                                     </button>
-                                    <button class="transition-colors btn-solo shrink-0 hover:text-[#71A4F4] ${AppState.currentSoloLayerKey === node.uniqueKey ? 'text-[#71A4F4]' : 'text-gray-400 dark:text-gray-500'}" data-key="${node.uniqueKey}" title="Solo Layer">
+                                    
+                                    <button class="transition-colors btn-solo shrink-0 ${AppState.currentSoloLayerKey === node.uniqueKey ? '' : 'text-gray-400 dark:text-gray-500'}" 
+                                            style="${AppState.currentSoloLayerKey === node.uniqueKey ? 'color: #71A4F4;' : ''}" 
+                                            onmouseenter="this.style.color='#71A4F4'" 
+                                            onmouseleave="this.style.color='${AppState.currentSoloLayerKey === node.uniqueKey ? '#71A4F4' : ''}'" 
+                                            data-key="${node.uniqueKey}" title="Solo Layer">
                                         <span class="inline-block w-3 text-center text-[10px] font-black">S</span>
                                     </button>
-                                    <button class="transition-colors btn-zoom shrink-0 text-gray-400 dark:text-gray-500 hover:text-[#71A4F4]" data-key="${node.uniqueKey}" title="Fit to View">
+                                    
+                                    <button class="transition-colors btn-zoom shrink-0 text-gray-400 dark:text-gray-500" 
+                                            onmouseenter="this.style.color='#71A4F4'" 
+                                            onmouseleave="this.style.color=''" 
+                                            data-key="${node.uniqueKey}" title="Fit to View">
                                         <i class="fa-solid fa-bullseye text-[11px] w-3 text-center"></i>
                                     </button>
                                 </div>
@@ -84,9 +97,26 @@ export const renderAddedLayers = () => {
 
                                 <!-- RIGHT ALIGNED -->
                                 <div class="flex space-x-2 justify-end pr-1">
-                                    <button class="transition-colors text-gray-400 dark:text-gray-500 hover:text-[#71A4F4] btn-duplicate" data-key="${node.uniqueKey}" title="Duplicate"><i class="fa-solid fa-clone text-[10px]"></i></button>
-                                    <button class="transition-colors text-gray-400 dark:text-gray-500 hover:text-[#94BC74] btn-export-folder" data-key="${node.uniqueKey}" title="Download"><i class="fa-solid fa-download text-[10px]"></i></button>
-                                    <button class="transition-colors text-gray-400 dark:text-gray-500 hover:text-[#E87975] btn-remove" data-key="${node.uniqueKey}" title="Delete"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                                    <button class="transition-colors text-gray-400 dark:text-gray-500 btn-duplicate" 
+                                            onmouseenter="this.style.color='#71A4F4'" 
+                                            onmouseleave="this.style.color=''" 
+                                            data-key="${node.uniqueKey}" title="Duplicate">
+                                        <i class="fa-solid fa-clone text-[10px]"></i>
+                                    </button>
+                                    
+                                    <button class="transition-colors text-gray-400 dark:text-gray-500 btn-export-folder" 
+                                            onmouseenter="this.style.color='#94BC74'" 
+                                            onmouseleave="this.style.color=''" 
+                                            data-key="${node.uniqueKey}" title="Download">
+                                        <i class="fa-solid fa-download text-[10px]"></i>
+                                    </button>
+                                    
+                                    <button class="transition-colors text-gray-400 dark:text-gray-500 btn-remove" 
+                                            onmouseenter="this.style.color='#E87975'" 
+                                            onmouseleave="this.style.color=''" 
+                                            data-key="${node.uniqueKey}" title="Delete">
+                                        <i class="fa-solid fa-trash text-[10px]"></i>
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -128,13 +158,26 @@ export const renderAddedLayers = () => {
                             
                             <!-- LEFT ALIGNED -->
                             <div class="flex space-x-2 items-center pl-1">
-                                <button class="transition-colors btn-toggle-vis shrink-0 hover:text-[#71A4F4] ${node.isVisible ? 'text-[#E6E7EB]' : 'text-gray-400 dark:text-gray-500'}" data-key="${node.uniqueKey}" title="Visibility">
+                                <button class="transition-colors btn-toggle-vis shrink-0 ${node.isVisible ? '' : 'text-gray-400 dark:text-gray-500'}" 
+                                        style="${node.isVisible ? 'color: #E6E7EB;' : ''}" 
+                                        onmouseenter="this.style.color='#71A4F4'" 
+                                        onmouseleave="this.style.color='${node.isVisible ? '#E6E7EB' : ''}'" 
+                                        data-key="${node.uniqueKey}" title="Visibility">
                                     <i class="fa-solid ${node.isVisible ? 'fa-eye' : 'fa-eye-slash'} text-[11px] w-3 text-center"></i>
                                 </button>
-                                <button class="transition-colors btn-solo shrink-0 hover:text-[#71A4F4] ${AppState.currentSoloLayerKey === node.uniqueKey ? 'text-[#71A4F4]' : 'text-gray-400 dark:text-gray-500'}" data-key="${node.uniqueKey}" title="Solo Layer">
+                                
+                                <button class="transition-colors btn-solo shrink-0 ${AppState.currentSoloLayerKey === node.uniqueKey ? '' : 'text-gray-400 dark:text-gray-500'}" 
+                                        style="${AppState.currentSoloLayerKey === node.uniqueKey ? 'color: #71A4F4;' : ''}" 
+                                        onmouseenter="this.style.color='#71A4F4'" 
+                                        onmouseleave="this.style.color='${AppState.currentSoloLayerKey === node.uniqueKey ? '#71A4F4' : ''}'" 
+                                        data-key="${node.uniqueKey}" title="Solo Layer">
                                     <span class="inline-block w-3 text-center text-[10px] font-black">S</span>
                                 </button>
-                                <button class="transition-colors btn-zoom shrink-0 text-gray-400 dark:text-gray-500 hover:text-[#71A4F4]" data-key="${node.uniqueKey}" title="Fit to View">
+                                
+                                <button class="transition-colors btn-zoom shrink-0 text-gray-400 dark:text-gray-500" 
+                                        onmouseenter="this.style.color='#71A4F4'" 
+                                        onmouseleave="this.style.color=''" 
+                                        data-key="${node.uniqueKey}" title="Fit to View">
                                     <i class="fa-solid fa-bullseye text-[11px] w-3 text-center"></i>
                                 </button>
                             </div>
@@ -144,13 +187,58 @@ export const renderAddedLayers = () => {
 
                             <!-- RIGHT ALIGNED -->
                             <div class="flex space-x-2 justify-end">
-                                <button class="transition-colors btn-table hover:text-[#DDCD84] ${isTableActive ? 'text-[#DDCD84]' : 'text-gray-400 dark:text-gray-500'}" data-key="${node.uniqueKey}" title="Attribute Table"><i class="fa-solid fa-table text-[10px]"></i></button>
-                                <button class="transition-colors btn-edit hover:text-[#71A4F4] ${isEditActive ? 'text-[#71A4F4]' : 'text-gray-400 dark:text-gray-500'}" data-key="${node.uniqueKey}" title="Edit Appearance"><i class="fa-solid fa-palette text-[10px]"></i></button>
-                                <button class="transition-colors btn-crop hover:text-[#71A4F4] ${isCropActive ? 'text-[#71A4F4]' : 'text-gray-400 dark:text-gray-500'}" data-key="${node.uniqueKey}" title="Crop/Filter"><i class="fa-solid fa-crop text-[10px]"></i></button>
-                                <button class="transition-colors btn-split hover:text-[#71A4F4] ${isSplitActive ? 'text-[#71A4F4]' : 'text-gray-400 dark:text-gray-500'}" data-key="${node.uniqueKey}" title="Split"><i class="fa-solid fa-object-ungroup text-[10px]"></i></button>
-                                <button class="transition-colors btn-duplicate text-gray-400 dark:text-gray-500 hover:text-[#71A4F4]" data-key="${node.uniqueKey}" title="Duplicate"><i class="fa-solid fa-clone text-[10px]"></i></button>
-                                <button class="transition-colors btn-export text-gray-400 dark:text-gray-500 hover:text-[#94BC74]" data-key="${node.uniqueKey}" title="Download"><i class="fa-solid fa-download text-[10px]"></i></button>
-                                <button class="transition-colors btn-remove text-gray-400 dark:text-gray-500 hover:text-[#E87975]" data-key="${node.uniqueKey}" title="Delete"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                                <button class="transition-colors btn-table ${isTableActive ? '' : 'text-gray-400 dark:text-gray-500'}" 
+                                        style="${isTableActive ? 'color: #DDCD84;' : ''}" 
+                                        onmouseenter="this.style.color='#DDCD84'" 
+                                        onmouseleave="this.style.color='${isTableActive ? '#DDCD84' : ''}'" 
+                                        data-key="${node.uniqueKey}" title="Attribute Table">
+                                    <i class="fa-solid fa-table text-[10px]"></i>
+                                </button>
+                                
+                                <button class="transition-colors btn-edit ${isEditActive ? '' : 'text-gray-400 dark:text-gray-500'}" 
+                                        style="${isEditActive ? 'color: #71A4F4;' : ''}" 
+                                        onmouseenter="this.style.color='#71A4F4'" 
+                                        onmouseleave="this.style.color='${isEditActive ? '#71A4F4' : ''}'" 
+                                        data-key="${node.uniqueKey}" title="Edit Appearance">
+                                    <i class="fa-solid fa-palette text-[10px]"></i>
+                                </button>
+                                
+                                <button class="transition-colors btn-crop ${isCropActive ? '' : 'text-gray-400 dark:text-gray-500'}" 
+                                        style="${isCropActive ? 'color: #71A4F4;' : ''}" 
+                                        onmouseenter="this.style.color='#71A4F4'" 
+                                        onmouseleave="this.style.color='${isCropActive ? '#71A4F4' : ''}'" 
+                                        data-key="${node.uniqueKey}" title="Crop/Filter">
+                                    <i class="fa-solid fa-crop text-[10px]"></i>
+                                </button>
+                                
+                                <button class="transition-colors btn-split ${isSplitActive ? '' : 'text-gray-400 dark:text-gray-500'}" 
+                                        style="${isSplitActive ? 'color: #71A4F4;' : ''}" 
+                                        onmouseenter="this.style.color='#71A4F4'" 
+                                        onmouseleave="this.style.color='${isSplitActive ? '#71A4F4' : ''}'" 
+                                        data-key="${node.uniqueKey}" title="Split">
+                                    <i class="fa-solid fa-object-ungroup text-[10px]"></i>
+                                </button>
+                                
+                                <button class="transition-colors btn-duplicate text-gray-400 dark:text-gray-500" 
+                                        onmouseenter="this.style.color='#71A4F4'" 
+                                        onmouseleave="this.style.color=''" 
+                                        data-key="${node.uniqueKey}" title="Duplicate">
+                                    <i class="fa-solid fa-clone text-[10px]"></i>
+                                </button>
+                                
+                                <button class="transition-colors btn-export text-gray-400 dark:text-gray-500" 
+                                        onmouseenter="this.style.color='#94BC74'" 
+                                        onmouseleave="this.style.color=''" 
+                                        data-key="${node.uniqueKey}" title="Download">
+                                    <i class="fa-solid fa-download text-[10px]"></i>
+                                </button>
+                                
+                                <button class="transition-colors btn-remove text-gray-400 dark:text-gray-500" 
+                                        onmouseenter="this.style.color='#E87975'" 
+                                        onmouseleave="this.style.color=''" 
+                                        data-key="${node.uniqueKey}" title="Delete">
+                                    <i class="fa-solid fa-trash text-[10px]"></i>
+                                </button>
                             </div>
                         </div>
                     </div>
