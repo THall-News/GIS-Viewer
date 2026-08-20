@@ -2630,7 +2630,7 @@ const initSidebarResizer = () => {
             if (!isResizing) return;
             const newWidth = Math.max(minWidth, moveEvt.clientX);
             leftPanel.style.width = `${newWidth}px`;
-            map.invalidateSize();
+            // Removed map.invalidateSize() from here to stop the continuous render lag
         };
 
         const stopDrag = () => {
@@ -2639,6 +2639,8 @@ const initSidebarResizer = () => {
                 document.body.classList.remove('select-none', 'cursor-col-resize');
                 window.removeEventListener('mousemove', doDrag);
                 window.removeEventListener('mouseup', stopDrag);
+                
+                // Fire the map recalculation only once the user finishes dragging
                 map.invalidateSize();
             }
         };
