@@ -20,6 +20,11 @@ if not os.path.exists(SERVERS_FILE):
 def index():
     return render_template('index.html')
 
+@app.route('/sw.js')
+def service_worker():
+    # Serves the sw.js file from the static folder, but makes the browser think it's at the root
+    return app.send_static_file('sw.js')
+
 @app.route('/api/servers', methods=['GET', 'POST'])
 def handle_servers():
     if request.method == 'GET':

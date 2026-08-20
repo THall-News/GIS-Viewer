@@ -2838,3 +2838,15 @@ async function clearWorkspaceDB() {
     const tx = db.transaction('workspace', 'readwrite');
     tx.objectStore('workspace').clear();
 }
+
+// ==========================================
+// 12. SERVICE WORKER REGISTRATION
+// ==========================================
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        // We request the worker from the root URL so it has security scope over the entire app
+        navigator.serviceWorker.register('/sw.js')
+            .then(reg => console.log('Service Worker registered with scope:', reg.scope))
+            .catch(err => console.error('Service Worker registration failed:', err));
+    });
+}
