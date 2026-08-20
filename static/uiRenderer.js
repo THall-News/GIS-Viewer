@@ -326,9 +326,10 @@ export const renderAddedLayers = () => {
     const attachSortable = (el) => {
         new Sortable(el, {
             group: 'nested',
-            animation: 150,
+            animation: 90,
             fallbackOnBody: true,
-            swapThreshold: 0.65,
+            swapThreshold: 0.9, // Increased from 0.5 to trigger the snap earlier
+            invertSwap: true,
             handle: '.drag-handle',
             disabled: searchActive,
             onEnd: function (evt) {

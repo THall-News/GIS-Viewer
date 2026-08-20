@@ -226,8 +226,13 @@ const downloadBlob = (blob, name) => {
 };
 
 const openContextSubmenu = () => {
-    getEl('context-panel-wrapper')?.classList.remove('hidden');
-    getEl('context-panel-wrapper')?.classList.add('flex');
+    const wrapper = getEl('context-panel-wrapper');
+    if (wrapper) {
+        wrapper.classList.remove('hidden');
+        wrapper.classList.add('flex');
+        wrapper.style.height = 'auto'; // Resets any fixed height set by previous dragging
+        wrapper.style.maxHeight = '';  // Restores the default 45vh max-height limit
+    }
     getEl('context-resizer')?.classList.remove('hidden');
 };
 
@@ -1129,7 +1134,7 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
             </div>
             
             <!-- FLEXIBLE CONFIG BODY -->
-            <div class="flex-1 min-h-0 flex flex-col">
+            <div class="flex-1 min-h-0 flex flex-col overflow-y-auto custom-scroll pr-1 pb-1">
                 
                 <!-- POINT STYLE OPTIONS -->
                 ${hasPoints ? `
@@ -1293,7 +1298,7 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
             </div> <!-- END FLEX BODY -->
 
             <!-- FOOTER -->
-            <div class="flex justify-between items-center pt-2 border-t border-blue-100 dark:border-blue-800 shrink-0 mt-2">
+            <div class="flex justify-between items-center pt-2 pb-1 border-t border-blue-100 dark:border-blue-800 shrink-0 mt-2 bg-blue-50 dark:bg-gray-900 relative z-10">
                 <button id="btn-bake-colors" class="bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-1 rounded transition-colors font-medium border border-gray-300 dark:border-gray-600">
                     <i class="fa-solid fa-database mr-1"></i>Bake to Table
                 </button>
@@ -2666,7 +2671,12 @@ const initContextPanelResizer = () => {
         const doDrag = (moveEvt) => {
             if (!isResizing) return;
             const dy = startY - moveEvt.clientY;
-            const newHeight = Math.max(120, Math.min(600, startHeight + dy));
+            // Allow manual drag up to 85% of the window height
+            const maxDragHeight = window.innerHeight * 0.85;
+            const newHeight = Math.max(120, Math.min(maxDragHeight, startHeight + dy));
+            
+            // Override the Tailwind max-h class so it can grow beyond 45%
+            wrapper.style.maxHeight = 'none';
             wrapper.style.height = `${newHeight}px`;
         };
 
