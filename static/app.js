@@ -2850,3 +2850,4 @@ if ('serviceWorker' in navigator) {
             .catch(err => console.error('Service Worker registration failed:', err));
     });
 }
+

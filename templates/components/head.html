@@ -5,8 +5,23 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
   tailwind.config = {
-    darkMode: 'class',
+    darkMode: 'media', // Natively listens to Chrome's Appearance settings
   }
+</script>
+
+<!-- System Theme Detector -->
+<script>
+  (() => {
+    const savedTheme = localStorage.getItem('theme');
+    const themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+    
+    // Check local storage first, fallback to system/browser setting
+    if (savedTheme === 'dark' || (!savedTheme && themeMedia.matches)) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  })();
 </script>
 
 <!-- Leaflet -->
