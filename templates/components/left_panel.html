@@ -23,6 +23,7 @@
                     <option value="ARCGIS">ESRI/REST</option>
                     <option value="WFS">WFS/OGC</option>
                     <option value="OVERPASS">OSM</option>
+                    <option value="LOCAL">Upload File</option>
                 </select>
                 
                 <div id="server-url-container" class="flex-1 flex space-x-1">
@@ -30,6 +31,11 @@
                     <button id="btn-save-server" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs px-2 py-1 rounded font-medium transition-colors shadow-xs shrink-0" title="Save Server URL">
                         <i class="fa-solid fa-bookmark text-blue-600 dark:text-blue-400"></i>
                     </button>
+                </div>
+
+                <!-- NEW: Hidden Local File Upload Container -->
+                <div id="local-upload-container" class="hidden flex-1 flex space-x-1">
+                    <input type="file" id="local-file-input" accept=".geojson,.json,.kml,.csv,.zip" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded py-0.5 text-xs focus:outline-none file:mr-2 file:py-1 file:px-2 file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-gray-600 dark:file:text-white cursor-pointer">
                 </div>
             </div>
 

@@ -2288,15 +2288,27 @@ getEl('server-type')?.addEventListener('change', (e) => {
     const type = e.target.value;
     const saveBtn = getEl('btn-save-server');
     const urlFetchBtn = getEl('btn-fetch-url');
+    const urlContainer = getEl('server-url-container');
+    const overpassBuilder = getEl('overpass-builder');
+    const localContainer = getEl('local-upload-container');
 
     if (type === 'OVERPASS') {
-        getEl('server-url-container')?.classList.add('hidden');
-        getEl('overpass-builder')?.classList.remove('hidden');
+        urlContainer?.classList.add('hidden');
+        localContainer?.classList.add('hidden');
+        overpassBuilder?.classList.remove('hidden');
         if (urlFetchBtn) urlFetchBtn.classList.add('hidden');
         if (saveBtn) { saveBtn.disabled = true; saveBtn.classList.add('opacity-50'); }
+    } else if (type === 'LOCAL') {
+        urlContainer?.classList.add('hidden');
+        overpassBuilder?.classList.add('hidden');
+        localContainer?.classList.remove('hidden');
+        localContainer?.classList.add('flex');
+        if (urlFetchBtn) urlFetchBtn.classList.add('hidden');
     } else {
-        getEl('server-url-container')?.classList.remove('hidden');
-        getEl('overpass-builder')?.classList.add('hidden');
+        urlContainer?.classList.remove('hidden');
+        overpassBuilder?.classList.add('hidden');
+        localContainer?.classList.add('hidden');
+        localContainer?.classList.remove('flex');
         if (urlFetchBtn) urlFetchBtn.classList.remove('hidden');
         if (saveBtn) { saveBtn.disabled = false; saveBtn.classList.remove('opacity-50'); }
         const tools = getEl('osm-available-tools');
@@ -2858,3 +2870,131 @@ if ('serviceWorker' in navigator) {
     });
 }
 
+// ==========================================
+// 13. LOCAL FILE UPLOAD & PARSING
+// ==========================================
+getEl('local-file-input')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    showToast(`Processing local file: ${file.name}...`);
+    await processLocalFile(file);
+    
+    e.target.value = ''; // Reset the input so they can upload the same file again if needed
+});
+
+async function processLocalFile(file) {
+    const name = file.name;
+    const ext = name.split('.').pop().toLowerCase();
+    
+    try {
+        let geoJson = null;
+        
+        if (ext === 'geojson' || ext === 'json') {
+            const text = await file.text();
+            geoJson = JSON.parse(text);
+        } 
+        else if (ext === 'kml') {
+            const text = await file.text();
+            const xml = new DOMParser().parseFromString(text, 'text/xml');
+            geoJson = toGeoJSON.kml(xml);
+        }
+        else if (ext === 'zip') {
+            const buffer = await file.arrayBuffer();
+            geoJson = await shp(buffer);
+            
+            if (Array.isArray(geoJson)) {
+                const mergedFeatures = [];
+                geoJson.forEach(gj => {
+                    if (gj && gj.features) mergedFeatures.push(...gj.features);
+                });
+                geoJson = { type: "FeatureCollection", features: mergedFeatures };
+            }
+        }
+        else if (ext === 'csv') {
+            const text = await file.text();
+            geoJson = await parseCSVtoGeoJSON(text);
+        }
+        else {
+            return showToast(`Unsupported file type: .${ext}`, true);
+        }
+
+        if (!geoJson || !geoJson.features || geoJson.features.length === 0) {
+            throw new Error("No valid spatial features found in file.");
+        }
+
+        addLocalGeoJsonToMap(geoJson, name.replace(/\.[^/.]+$/, ""));
+        
+    } catch (err) {
+        console.error("Error parsing file:", err);
+        showToast(`Failed to parse ${name}: ${err.message}`, true);
+    }
+}
+
+function parseCSVtoGeoJSON(csvText) {
+    return new Promise((resolve, reject) => {
+        Papa.parse(csvText, {
+            header: true, skipEmptyLines: true,
+            complete: function(results) {
+                const data = results.data;
+                const features = [];
+                let latCol = null, lonCol = null;
+                
+                if (data.length > 0) {
+                    const cols = Object.keys(data[0]);
+                    const latAliases = ['lat', 'latitude', 'y', 'ycoord'];
+                    const lonAliases = ['lon', 'long', 'longitude', 'x', 'xcoord'];
+                    
+                    latCol = cols.find(c => latAliases.includes(c.toLowerCase().trim()));
+                    lonCol = cols.find(c => lonAliases.includes(c.toLowerCase().trim()));
+                }
+                
+                if (!latCol || !lonCol) return reject(new Error("Could not detect Latitude/Longitude columns in CSV."));
+                
+                data.forEach(row => {
+                    const lat = parseFloat(row[latCol]);
+                    const lon = parseFloat(row[lonCol]);
+                    
+                    if (!isNaN(lat) && !isNaN(lon)) {
+                        features.push({
+                            type: "Feature",
+                            geometry: { type: "Point", coordinates: [lon, lat] },
+                            properties: { ...row }
+                        });
+                    }
+                });
+                
+                if (features.length === 0) reject(new Error("No valid coordinate pairs found in CSV."));
+                else resolve({ type: "FeatureCollection", features: features });
+            },
+            error: function(err) { reject(err); }
+        });
+    });
+}
+
+function addLocalGeoJsonToMap(geoJsonData, layerName) {
+    const uniqueKey = Math.random().toString(36).substr(2,9);
+    const paneName = 'pane-' + uniqueKey;
+    
+    // Give imported files a distinct purple style by default
+    const customStyle = { type: 'single', fillColor: '#8b5cf6', fillOpacity: 0.5, color: '#6d28d9', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
+    
+    const newMapLayer = createCustomGeoJSONLayer(geoJsonData, customStyle, paneName).addTo(map);
+    
+    try {
+        const bounds = newMapLayer.getBounds();
+        if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30] });
+    } catch(e) {}
+    
+    AppState.activeLayers = [{ 
+        uniqueKey: uniqueKey, id: `local_${Date.now()}`, displayName: layerName, 
+        mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, 
+        geoJsonData: geoJsonData, customStyle: customStyle, isVisible: true, 
+        parentId: null, isFolder: false
+    }, ...AppState.activeLayers];
+    
+    updateMapLayerOrder();
+    renderAddedLayers();
+    switchTab('added');
+    showToast(`Successfully imported local file: ${layerName}`);
+}
