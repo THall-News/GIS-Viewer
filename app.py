@@ -8,9 +8,12 @@ from urllib.parse import urlparse
 
 app = Flask(__name__)
 
-SERVERS_FILE = 'gis_servers.json'
+# --- 1. ABSOLUTE PATH FIX ---
+# This guarantees it ONLY writes to the exact file you see in your code editor
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SERVERS_FILE = os.path.join(BASE_DIR, 'gis_servers.json')
 
-# --- 1. DEFAULT SEED DATA ---
+# --- 2. DEFAULT SEED DATA ---
 if not os.path.exists(SERVERS_FILE):
     with open(SERVERS_FILE, 'w') as f:
         json.dump([
@@ -20,17 +23,27 @@ if not os.path.exists(SERVERS_FILE):
             {"name": "Canada Provinces and Territories (ESRI)", "url": "https://services5.arcgis.com/Mze3GM5YlDfcAPOn/ArcGIS/rest/services/Provinces_and_Territories_of_Canada/FeatureServer", "type": "ESRI"}
         ], f, indent=2)
 
-# --- 2. SMART SCRAPER FUNCTION ---
-def fetch_server_metadata(url, server_type):
+# --- 3. BULLETPROOF SCRAPER FUNCTION ---
+def fetch_server_metadata(url, server_type, user_name):
     """
     Scrapes a GIS server endpoint. Bypasses strict SSL checks common with 
     government servers, and aggressively searches for ESRI metadata.
     """
+    # Auto-detect missing types
+    if not server_type:
+        if any(keyword in url.lower() for keyword in ['arcgis', 'mapserver', 'featureserver']):
+            server_type = 'ESRI'
+        elif 'wfs' in url.lower():
+            server_type = 'WFS'
+        else:
+            server_type = 'ESRI' 
+
     metadata = {
         "id": f"srv_{uuid.uuid4().hex[:8]}",
+        "display_name": user_name,
         "name": "Unknown GIS Server",
         "provider": "Unknown Provider",
-        "type": server_type.upper(),
+        "type": str(server_type).upper(),
         "url": url,
         "description": "No description available.",
         "themes": [],
@@ -50,21 +63,21 @@ def fetch_server_metadata(url, server_type):
     }
 
     try:
-        if server_type.upper() == 'ESRI':
+        # FIX: Check for both 'ESRI' and 'ARCGIS' to match the frontend selection
+        if metadata['type'] in ['ESRI', 'ARCGIS']:
             base_url = url.split('?')[0]
             resp = requests.get(f"{base_url}?f=json", headers=headers, timeout=10, verify=False)
             resp.raise_for_status()
             data = resp.json()
 
-            # FIX: If documentInfo is explicitly null, force it to be an empty dictionary
+            # Prevent crashes from explicitly null documentInfo objects
             doc_info = data.get('documentInfo') or {}
             
             metadata['name'] = data.get('mapName') or data.get('name') or doc_info.get('Title') or "ESRI Server"
             
             raw_desc = data.get('description') or data.get('serviceDescription') or doc_info.get('Comments') or doc_info.get('Subject') or data.get('copyrightText')
             if raw_desc and str(raw_desc).strip():
-                clean_desc = str(raw_desc).replace('<br />', '\n').replace('<br>', '\n')
-                metadata['description'] = clean_desc.strip()
+                metadata['description'] = str(raw_desc).replace('<br />', '\n').replace('<br>', '\n').strip()
             else:
                 metadata['description'] = "No description provided by the publisher."
 
@@ -72,13 +85,13 @@ def fetch_server_metadata(url, server_type):
             metadata['capabilities']['max_record_count'] = data.get('maxRecordCount', 1000)
 
             extent = data.get('fullExtent') or data.get('initialExtent') or data.get('extent')
-            if extent and 'xmin' in extent and 'ymin' in extent:
+            if isinstance(extent, dict) and 'xmin' in extent and 'ymin' in extent:
                 metadata['geographic_extent']['bbox'] = [
                     extent['xmin'], extent['ymin'], 
                     extent['xmax'], extent['ymax']
                 ]
 
-        elif server_type.upper() == 'WFS':
+        elif metadata['type'] == 'WFS':
             parsed_url = urlparse(url)
             sep = '&' if parsed_url.query else '?'
             req_url = f"{url}{sep}service=WFS&request=GetCapabilities"
@@ -136,7 +149,7 @@ def fetch_server_metadata(url, server_type):
 
     return metadata
 
-# --- 3. ROUTES ---
+# --- 4. ROUTES ---
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -153,6 +166,7 @@ def handle_servers():
         data = request.json
         url = data.get('url')
         server_type = data.get('type')
+        user_name = data.get('name') or "Custom Server"
         
         servers = []
         if os.path.exists(SERVERS_FILE):
@@ -162,9 +176,9 @@ def handle_servers():
             except:
                 pass
         
-        # Scrape rich metadata from the endpoint
+        # Pass user_name into the scraper
         print(f"\n[Scraper] Fetching metadata for: {url} ({server_type})")
-        enriched_server_data = fetch_server_metadata(url, server_type)
+        enriched_server_data = fetch_server_metadata(url, server_type, user_name) # <-- Update this call
 
         # Check if URL already exists
         existing_index = None
@@ -174,7 +188,8 @@ def handle_servers():
                 break
 
         if existing_index is not None:
-            # OVERWRITE existing entry with newly scraped data
+            # OVERWRITE existing entry with newly scraped data, preserving the original ID
+            enriched_server_data['id'] = servers[existing_index].get('id', enriched_server_data['id'])
             servers[existing_index] = enriched_server_data
             msg = "Existing server metadata updated successfully"
         else:
@@ -197,7 +212,6 @@ def proxy():
     except Exception as e:
         return {"error": str(e)}, 500
 
-# --- THE MISSING PIECE ---
 if __name__ == '__main__':
-    print("🚀 GIS App running at: http://127.0.0.1:5000")
+    print(f"🚀 Writing Database to: {SERVERS_FILE}")
     app.run(debug=True, port=5000)

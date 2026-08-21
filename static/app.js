@@ -533,7 +533,12 @@ const loadSavedServers = async () => {
         savedServersSelect.innerHTML = '<option value="" disabled selected>-- Load saved server --</option>';
         servers.forEach(s => {
             const opt = document.createElement('option');
-            opt.value = s.url; opt.textContent = s.name; opt.dataset.type = s.type;
+            opt.value = s.url; 
+            
+            // Use the custom display_name, fallback to real name if missing
+            opt.textContent = s.display_name || s.name; 
+            
+            opt.dataset.type = s.type;
             savedServersSelect.appendChild(opt);
         });
     } catch (err) { console.error("Failed to load servers", err); }
