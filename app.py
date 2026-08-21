@@ -23,13 +23,22 @@ if not os.path.exists(SERVERS_FILE):
             {"name": "Canada Provinces and Territories (ESRI)", "url": "https://services5.arcgis.com/Mze3GM5YlDfcAPOn/ArcGIS/rest/services/Provinces_and_Territories_of_Canada/FeatureServer", "type": "ESRI"}
         ], f, indent=2)
 
-# --- 3. BULLETPROOF SCRAPER FUNCTION ---
+# --- ISO 19115 CROSSWALK DICTIONARY ---
+ISO_CROSSWALK = {
+    "planningCadastre": ["zoning", "parcel", "property", "landuse", "land use", "development", "permit", "land "],
+    "structure": ["building", "footprint", "structure", "facility", "address", "roof", "residential", "commercial", "man_made"],
+    "utilitiesCommunication": ["watermain", "sewer", "hydro", "electricity", "pipe", "utility", "waste", "power"],
+    "transportation": ["bus", "train", "transit", "subway", "road", "highway", "street", "traffic", "bike", "cycling", "pedestrian", "railway"],
+    "environment": ["tree", "park", "water", "river", "lake", "forest", "climate", "weather", "flood", "conservation", "wildlife", "natural", "leisure", "environment"],
+    "boundaries": ["boundary", "neighborhood", "ward", "municipality", "provincial", "territorial", "electoral", "admin_level", "government"],
+    "society": ["census", "population", "demograph", "income", "household", "employment", "first nation", "indigenous", "community"]
+}
+
 def fetch_server_metadata(url, server_type, user_name):
     """
-    Scrapes a GIS server endpoint. Bypasses strict SSL checks common with 
-    government servers, and aggressively searches for ESRI metadata.
+    Scrapes a GIS server endpoint, extracts rich metadata, and auto-categorizes 
+    themes using ISO 19115 global GIS standards.
     """
-    # Auto-detect missing types
     if not server_type:
         if any(keyword in url.lower() for keyword in ['arcgis', 'mapserver', 'featureserver']):
             server_type = 'ESRI'
@@ -63,16 +72,13 @@ def fetch_server_metadata(url, server_type, user_name):
     }
 
     try:
-        # FIX: Check for both 'ESRI' and 'ARCGIS' to match the frontend selection
         if metadata['type'] in ['ESRI', 'ARCGIS']:
             base_url = url.split('?')[0]
             resp = requests.get(f"{base_url}?f=json", headers=headers, timeout=10, verify=False)
             resp.raise_for_status()
             data = resp.json()
 
-            # Prevent crashes from explicitly null documentInfo objects
             doc_info = data.get('documentInfo') or {}
-            
             metadata['name'] = data.get('mapName') or data.get('name') or doc_info.get('Title') or "ESRI Server"
             
             raw_desc = data.get('description') or data.get('serviceDescription') or doc_info.get('Comments') or doc_info.get('Subject') or data.get('copyrightText')
@@ -143,6 +149,22 @@ def fetch_server_metadata(url, server_type, user_name):
                     pass
             else:
                 metadata['geographic_extent']['name'] = "Projected Extent (Non-WGS84)"
+
+        # --- Auto-Categorize Themes (ISO 19115) ---
+        text_to_scan = f"{metadata.get('name', '')} {metadata.get('description', '')}".lower()
+        matched_themes = set()
+        
+        for theme, keywords in ISO_CROSSWALK.items():
+            for kw in keywords:
+                if kw in text_to_scan:
+                    matched_themes.add(theme)
+                    break
+                    
+        metadata['themes'] = list(matched_themes)
+        
+        # Give us immediate feedback in the terminal!
+        print(f"[Theme Scanner] Scanned {len(text_to_scan)} characters.")
+        print(f"[Theme Scanner] Assigned Themes: {metadata['themes']}")
 
     except Exception as e:
         print(f"\n[Scraper Critical Error] Failed to parse {url}: {str(e)}\n")
