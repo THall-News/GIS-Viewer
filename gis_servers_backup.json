@@ -1,0 +1,93 @@
+[
+  {
+    "name": "Environment Canada GeoMet (WFS)",
+    "url": "https://geo.weather.gc.ca/geomet",
+    "type": "WFS"
+  },
+  {
+    "name": "City of Toronto Geospatial (ESRI FeatureServer)",
+    "url": "https://gis.toronto.ca/arcgis/rest/services/cot_geospatial2/FeatureServer",
+    "type": "ESRI"
+  },
+  {
+    "name": "Statistics Canada 2021 Census Boundaries (ESRI)",
+    "url": "https://services.arcgis.com/lGOekm0RsNxYnT3j/arcgis/rest/services/Generalized_2021_Statistics_Canada_census_boundaries/FeatureServer",
+    "type": "ESRI"
+  },
+  {
+    "id": "srv_51f73230",
+    "display_name": "BC Open maps",
+    "name": "DataBC Public Web Feature Service",
+    "provider": "DataBC",
+    "type": "WFS",
+    "url": "https://openmaps.gov.bc.ca/geo/ows?service=WFS&request=GetCapabilities",
+    "description": "This is the reference implementation of WFS 1.0.0 and\r\n  WFS 1.1.0, supports all WFS operations including\r\n  Transaction.",
+    "themes": [],
+    "geographic_extent": {
+      "name": "Area D (Endako/Fort Fraser),  Regional District of Bulkley-Nechako",
+      "bbox": [
+        -139.1782824917356,
+        47.60393449638617,
+        -110.35337939457779,
+        60.593907018763396
+      ]
+    },
+    "capabilities": {
+      "supports_spatial_queries": true,
+      "max_record_count": 1000
+    }
+  },
+  {
+    "id": "srv_026e4df7",
+    "display_name": "Yukon First Nations Boundaries",
+    "name": "GY_FirstNations",
+    "provider": "Unknown Provider",
+    "type": "ARCGIS",
+    "url": "https://mapservices.gov.yk.ca/arcgis/rest/services/GeoYukon/GY_FirstNations/MapServer",
+    "description": "Created for distribution by the GeoYukon application as a comprehensive resource for all publicly available First Nation Land information in the Government of Yukon.  This data may be used directly by other applications to dynamically display Yukon data; however, it may be subject to change as data sets are updated or added.",
+    "themes": [
+      "boundaries",
+      "planningCadastre",
+      "society"
+    ],
+    "geographic_extent": {
+      "name": "Projected Extent (Non-WGS84)",
+      "bbox": [
+        30720.6899999995,
+        611140.91,
+        984540.5500000011,
+        1709102.5
+      ]
+    },
+    "capabilities": {
+      "supports_spatial_queries": true,
+      "max_record_count": 1000
+    }
+  },
+  {
+    "id": "srv_13533a3c",
+    "display_name": "Provinces and Territories of Canada",
+    "name": "ESRI Server",
+    "provider": "Unknown Provider",
+    "type": "ARCGIS",
+    "url": "https://services5.arcgis.com/Mze3GM5YlDfcAPOn/ArcGIS/rest/services/Provinces_and_Territories_of_Canada/FeatureServer",
+    "description": "Layer indicates Canadian provincial and territorial boundaries and extents. Suitable for use at 1:2,000,000 or smaller. This layer does not include maritime boundaries. It includes both official French and English names for each province and territory as well as its abbreviation.\n\nOriginal data is from <a href='http://www.naturalearthdata.com/' target='_blank'>Natural Earth</a>.",
+    "themes": [
+      "environment",
+      "boundaries"
+    ],
+    "geographic_extent": {
+      "name": "Projected Extent (Non-WGS84)",
+      "bbox": [
+        -15696665.8733,
+        5111538.240199998,
+        -5857253.923699999,
+        17929238.8777
+      ]
+    },
+    "capabilities": {
+      "supports_spatial_queries": true,
+      "max_record_count": 2000
+    }
+  }
+]

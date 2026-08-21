@@ -1,0 +1,74 @@
+[
+  {
+    "id": "srv_geomet01",
+    "display_name": "Environment Canada GeoMet",
+    "name": "MSC GeoMet",
+    "provider": "Environment and Climate Change Canada",
+    "type": "WFS",
+    "url": "https://geo.weather.gc.ca/geomet",
+    "description": "Environment and Climate Change Canada's meteorological and environmental data. Provides public access to real-time and archived weather, climate, and water data.",
+    "themes": ["environment"],
+    "geographic_extent": {
+      "name": "Canada",
+      "bbox": [-141.0, 41.6, -52.6, 83.1]
+    },
+    "capabilities": {
+      "supports_spatial_queries": true,
+      "max_record_count": 5000
+    }
+  },
+  {
+    "id": "srv_toronto01",
+    "display_name": "City of Toronto Geospatial",
+    "name": "COT_Geospatial2",
+    "provider": "City of Toronto",
+    "type": "ESRI",
+    "url": "https://gis.toronto.ca/arcgis/rest/services/cot_geospatial2/FeatureServer",
+    "description": "City of Toronto's primary geospatial open data FeatureServer, containing municipal boundaries, infrastructure, and planning data.",
+    "themes": ["boundaries", "planningCadastre", "structure", "transportation"],
+    "geographic_extent": {
+      "name": "Toronto",
+      "bbox": [-79.639, 43.580, -79.115, 43.855]
+    },
+    "capabilities": {
+      "supports_spatial_queries": true,
+      "max_record_count": 2000
+    }
+  },
+  {
+    "id": "srv_statcan01",
+    "display_name": "StatCan 2021 Census",
+    "name": "Generalized 2021 Statistics Canada Census Boundaries",
+    "provider": "Statistics Canada",
+    "type": "ESRI",
+    "url": "https://services.arcgis.com/lGOekm0RsNxYnT3j/arcgis/rest/services/Generalized_2021_Statistics_Canada_census_boundaries/FeatureServer",
+    "description": "Generalized boundary files for the 2021 Census of Population. Includes provinces, territories, census divisions, and dissemination areas.",
+    "themes": ["boundaries", "society"],
+    "geographic_extent": {
+      "name": "Canada",
+      "bbox": [-141.0, 41.6, -52.6, 83.1]
+    },
+    "capabilities": {
+      "supports_spatial_queries": true,
+      "max_record_count": 2000
+    }
+  },
+  {
+    "id": "srv_canada01",
+    "display_name": "Canada Provinces & Territories",
+    "name": "Provinces and Territories of Canada",
+    "provider": "Natural Resources Canada",
+    "type": "ESRI",
+    "url": "https://services5.arcgis.com/Mze3GM5YlDfcAPOn/ArcGIS/rest/services/Provinces_and_Territories_of_Canada/FeatureServer",
+    "description": "Official political boundaries of the Provinces and Territories of Canada.",
+    "themes": ["boundaries"],
+    "geographic_extent": {
+      "name": "Canada",
+      "bbox": [-141.0, 41.6, -52.6, 83.1]
+    },
+    "capabilities": {
+      "supports_spatial_queries": true,
+      "max_record_count": 2000
+    }
+  }
+]

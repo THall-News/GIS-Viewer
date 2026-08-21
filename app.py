@@ -8,20 +8,28 @@ from urllib.parse import urlparse
 
 app = Flask(__name__)
 
-# --- 1. ABSOLUTE PATH FIX ---
-# This guarantees it ONLY writes to the exact file you see in your code editor
+# --- 1. ABSOLUTE PATH SETUP ---
+# This guarantees it ONLY writes/reads from the exact folder your code is in
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVERS_FILE = os.path.join(BASE_DIR, 'gis_servers.json')
+DEFAULT_SERVERS_FILE = os.path.join(BASE_DIR, 'default_servers.json')
 
-# --- 2. DEFAULT SEED DATA ---
+# --- 2. DYNAMIC SEED DATA ---
 if not os.path.exists(SERVERS_FILE):
+    seed_data = []
+    
+    # Try to load the rich default data if the file exists
+    if os.path.exists(DEFAULT_SERVERS_FILE):
+        try:
+            with open(DEFAULT_SERVERS_FILE, 'r') as f:
+                seed_data = json.load(f)
+            print("🌱 Initialized database with rich default servers.")
+        except Exception as e:
+            print(f"⚠️ Error reading default_servers.json: {e}")
+            
+    # Create the active database
     with open(SERVERS_FILE, 'w') as f:
-        json.dump([
-            {"name": "Environment Canada GeoMet (WFS)", "url": "https://geo.weather.gc.ca/geomet", "type": "WFS"},
-            {"name": "City of Toronto Geospatial (ESRI FeatureServer)", "url": "https://gis.toronto.ca/arcgis/rest/services/cot_geospatial2/FeatureServer", "type": "ESRI"},
-            {"name": "Statistics Canada 2021 Census Boundaries (ESRI)", "url": "https://services.arcgis.com/lGOekm0RsNxYnT3j/arcgis/rest/services/Generalized_2021_Statistics_Canada_census_boundaries/FeatureServer", "type": "ESRI"},
-            {"name": "Canada Provinces and Territories (ESRI)", "url": "https://services5.arcgis.com/Mze3GM5YlDfcAPOn/ArcGIS/rest/services/Provinces_and_Territories_of_Canada/FeatureServer", "type": "ESRI"}
-        ], f, indent=2)
+        json.dump(seed_data, f, indent=2)
 
 # --- ISO 19115 CROSSWALK DICTIONARY ---
 ISO_CROSSWALK = {
