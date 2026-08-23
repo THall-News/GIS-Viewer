@@ -1,10 +1,18 @@
-from flask import Flask, request, Response, render_template
+from flask import Flask, request, Response, render_template, jsonify
 import requests
 import json
 import os
 import uuid
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
+import urllib3
+import re
+import tempfile
+import geopandas as gpd
+import pandas as pd
+
+# Suppress unverified SSL warnings for government portals
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
@@ -170,7 +178,6 @@ def fetch_server_metadata(url, server_type, user_name):
                     
         metadata['themes'] = list(matched_themes)
         
-        # Give us immediate feedback in the terminal!
         print(f"[Theme Scanner] Scanned {len(text_to_scan)} characters.")
         print(f"[Theme Scanner] Assigned Themes: {metadata['themes']}")
 
@@ -178,6 +185,7 @@ def fetch_server_metadata(url, server_type, user_name):
         print(f"\n[Scraper Critical Error] Failed to parse {url}: {str(e)}\n")
 
     return metadata
+
 
 # --- 4. ROUTES ---
 @app.route('/')
@@ -206,11 +214,9 @@ def handle_servers():
             except:
                 pass
         
-        # Pass user_name into the scraper
         print(f"\n[Scraper] Fetching metadata for: {url} ({server_type})")
-        enriched_server_data = fetch_server_metadata(url, server_type, user_name) # <-- Update this call
+        enriched_server_data = fetch_server_metadata(url, server_type, user_name)
 
-        # Check if URL already exists
         existing_index = None
         for i, s in enumerate(servers):
             if s.get('url') == url:
@@ -218,12 +224,10 @@ def handle_servers():
                 break
 
         if existing_index is not None:
-            # OVERWRITE existing entry with newly scraped data, preserving the original ID
             enriched_server_data['id'] = servers[existing_index].get('id', enriched_server_data['id'])
             servers[existing_index] = enriched_server_data
             msg = "Existing server metadata updated successfully"
         else:
-            # APPEND new entry
             servers.append(enriched_server_data)
             msg = "New server scraped and saved"
 
@@ -232,15 +236,181 @@ def handle_servers():
         
         return {"message": msg}, 201
 
-@app.route('/proxy')
-def proxy():
-    target_url = request.args.get('url')
-    if not target_url: return {"error": "No URL provided"}, 400
+@app.route('/api/ckan_search', methods=['POST'])
+def ckan_search():
+    data = request.json or {}
+    raw_url = data.get('url', '').strip()
+    if not raw_url:
+        return jsonify({"error": "No URL provided"}), 400
+
+    if not raw_url.startswith(('http://', 'https://')):
+        raw_url = f"https://{raw_url}"
+
+    clean_url = raw_url.rstrip('/')
+
+    if clean_url.endswith('package_search'):
+        api_endpoint = clean_url
+    elif clean_url.endswith('/api/3/action'):
+        api_endpoint = f"{clean_url}/package_search"
+    else:
+        api_endpoint = f"{clean_url}/api/3/action/package_search"
+
+    params = {'q': '*:*', 'rows': 1000}
+    headers = {'User-Agent': 'Mozilla/5.0'}
+
     try:
-        response = requests.get(target_url, timeout=30, verify=False) 
-        return Response(response.content, status=response.status_code, content_type=response.headers.get('Content-Type', 'application/json'))
+        res = requests.get(api_endpoint, params=params, headers=headers, verify=False, timeout=20)
+        res.raise_for_status()
+        res_json = res.json()
+
+        if not res_json.get('success'):
+            return jsonify({"error": "CKAN API returned an unsuccessful response."}), 500
+
+        results = res_json.get('result', {}).get('results', [])
+        valid_formats = ['geojson', 'json', 'shp', 'shapefile', 'zip', 'gpkg', 'geopackage', 'kml']
+        layers = []
+
+        for pkg in results:
+            pkg_title = pkg.get('title', 'Untitled Package').strip()
+            pkg_notes = pkg.get('notes', '')
+            
+            resources_by_name = {}
+
+            for resource in pkg.get('resources', []):
+                fmt = str(resource.get('format', '')).lower().strip()
+                res_url = str(resource.get('url', '')).strip()
+                
+                if any(vf in fmt or vf in res_url.lower() for vf in valid_formats):
+                    res_name = str(resource.get('name') or '').strip()
+                    
+                    clean_name = res_name.lower()
+                    for f in valid_formats + ['csv']:
+                        clean_name = clean_name.replace(f, '').strip(' -_.()[]')
+                    
+                    group_key = clean_name if clean_name else pkg_title.lower()
+
+                    if 'geojson' in fmt or 'json' in fmt or '.geojson' in res_url.lower():
+                        ext, disp = 'geojson', 'GEOJSON'
+                    elif any(x in fmt or x in res_url.lower() for x in ['gpkg', 'geopackage']):
+                        ext, disp = 'gpkg', 'GPKG'
+                    elif any(x in fmt or x in res_url.lower() for x in ['shp', 'shapefile', 'zip']):
+                        ext, disp = 'zip', 'SHP'
+                    elif 'kml' in fmt or '.kml' in res_url.lower():
+                        ext, disp = 'kml', 'KML'
+                    else:
+                        continue
+
+                    if group_key not in resources_by_name:
+                        resources_by_name[group_key] = {
+                            "display_name": res_name,
+                            "seen_exts": set(),
+                            "resources": []
+                        }
+                    
+                    if ext not in resources_by_name[group_key]["seen_exts"]:
+                        resources_by_name[group_key]["resources"].append({
+                            "display": disp,
+                            "ext": ext,
+                            "url": res_url
+                        })
+                        resources_by_name[group_key]["seen_exts"].add(ext)
+
+            for group_key, r_data in resources_by_name.items():
+                package_resources = r_data["resources"]
+                res_name = r_data["display_name"]
+                
+                if not package_resources:
+                    continue
+                
+                def sort_formats(r):
+                    if r['display'] == 'GEOJSON': return 1
+                    if r['display'] == 'SHP': return 2
+                    if r['display'] == 'GPKG': return 3
+                    if r['display'] == 'KML': return 4
+                    return 5
+                package_resources.sort(key=sort_formats)
+
+                # STRIP format extensions out of the raw resource name for BOTH title and filename
+                clean_display = res_name
+                for f_str in ['geojson', 'csv', 'shp', 'shapefile', 'zip', 'gpkg', 'geopackage', 'kml', '.geojson', '.csv', '.zip', '.shp', '.gpkg', '.kml']:
+                    clean_display = re.compile(re.escape(f_str), re.IGNORECASE).sub('', clean_display).strip(' -_.()[]')
+
+                if clean_display and clean_display.lower() not in pkg_title.lower() and pkg_title.lower() not in clean_display.lower():
+                    display_title = f"{pkg_title} ({clean_display})"
+                    # Use the clean_display as the final backend name
+                    final_name = f"{pkg_title} - {clean_display}"
+                else:
+                    display_title = pkg_title
+                    final_name = pkg_title
+
+                layers.append({
+                    "id": str(uuid.uuid4()),
+                    "title": display_title,
+                    "name": final_name,  # <--- Cleaned name passed to the frontend
+                    "type": "CKAN",
+                    "description": pkg_notes,
+                    "resources": package_resources
+                })
+
+        return jsonify({"success": True, "layers": layers})
+
     except Exception as e:
-        return {"error": str(e)}, 500
+        return jsonify({"error": f"Failed to fetch CKAN catalog: {str(e)}"}), 500
+
+@app.route('/proxy', methods=['GET'])
+def proxy_download():
+    """
+    Safely streams large files (ZIP, CSV, GeoJSON) from external servers.
+    Intercepts and converts GPKG to GeoJSON on the fly.
+    """
+    target_url = request.args.get('url')
+    target_format = request.args.get('format', '').lower()
+    
+    if not target_url:
+        return jsonify({"error": "No URL provided"}), 400
+
+    try:
+        req = requests.get(target_url, stream=True, timeout=30, verify=False)
+        req.raise_for_status()
+
+        # Intercept GPKGs using the explicitly passed format flag
+        if 'gpkg' in target_url.lower() or target_url.endswith('.gpkg') or target_format == 'gpkg':
+            with tempfile.NamedTemporaryFile(suffix='.gpkg', delete=False) as tmp:
+                for chunk in req.iter_content(chunk_size=8192):
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+                
+            # Convert to GeoJSON string
+            gdf = gpd.read_file(tmp_path)
+            
+            # THE FIX: Find any datetime columns and convert them to simple text strings
+            for col in gdf.columns:
+                if pd.api.types.is_datetime64_any_dtype(gdf[col]):
+                    gdf[col] = gdf[col].astype(str)
+                elif gdf[col].dtype == 'object':
+                    # Catch hidden Timestamps sitting inside generic object columns
+                    gdf[col] = gdf[col].apply(lambda x: str(x) if type(x).__name__ == 'Timestamp' else x)
+
+            geojson_data = gdf.to_json()
+            os.remove(tmp_path)
+            
+            return Response(geojson_data, mimetype='application/json', headers={'Access-Control-Allow-Origin': '*'})
+
+        # Standard streaming for all other formats
+        def generate():
+            for chunk in req.iter_content(chunk_size=8192):
+                if chunk:
+                    yield chunk
+
+        headers = {
+            'Content-Type': req.headers.get('Content-Type', 'application/octet-stream'),
+            'Access-Control-Allow-Origin': '*'
+        }
+        
+        return Response(generate(), headers=headers)
+
+    except Exception as e:
+        return jsonify({"error": f"Proxy download failed: {str(e)}"}), 502
 
 if __name__ == '__main__':
     print(f"🚀 Writing Database to: {SERVERS_FILE}")

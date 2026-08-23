@@ -33,9 +33,6 @@ export const removeLayerFromCache = async (layerKey) => {
 };
 import { getCachedLayers } from './db.js';
 
-// DELETED: Legacy restoreCachedWorkspace and duplicate DOMContentLoaded listener.
-// Workspace initialization is handled asynchronously by loadStateFromDB at the bottom of this file.
-
 // Safely Query DOM Elements
 const getEl = (id) => document.getElementById(id);
 
@@ -203,7 +200,6 @@ const updateSoloView = () => {
 
 export const updateMapLayerOrder = () => {
     let zIndex = 1000;
-    // Loop forwards so top of UI list gets highest zIndex
     for (let i = 0; i < AppState.activeLayers.length; i++) {
         const layer = AppState.activeLayers[i];
         if (layer.isFolder || !layer.isVisible) continue;
@@ -230,8 +226,8 @@ const openContextSubmenu = () => {
     if (wrapper) {
         wrapper.classList.remove('hidden');
         wrapper.classList.add('flex');
-        wrapper.style.height = 'auto'; // Resets any fixed height set by previous dragging
-        wrapper.style.maxHeight = '';  // Restores the default 45vh max-height limit
+        wrapper.style.height = 'auto';
+        wrapper.style.maxHeight = '';
     }
     getEl('context-resizer')?.classList.remove('hidden');
 };
@@ -377,7 +373,6 @@ export const togglePreviewLayer = (layerId, isVisible) => {
             renderer: previewRenderer,
             style: createGeoJsonStyleFunction(customStyle),
             pointToLayer: createGeoJsonPointToLayer(customStyle, previewPaneName, previewRenderer)
-            // No popups attached to preview layer for performance
         });
     } else {
         const baseUrl = AppState.currentServerUrl.split('?')[0];
@@ -396,12 +391,10 @@ export const togglePreviewLayer = (layerId, isVisible) => {
     AppState.previewLayers[layerId] = mapLayer;
 };
 
-// Helper to strip Leaflet internal properties & circular references before saving
 const sanitizeGeoJSON = (geoJson) => {
     if (!geoJson) return null;
     try {
         return JSON.parse(JSON.stringify(geoJson, (key, value) => {
-            // Strip out Leaflet circular references and internal state flags
             if (key.startsWith('_') || key === 'mapLayer') return undefined;
             return value;
         }));
@@ -415,7 +408,6 @@ const serializeWorkspace = () => {
     const center = map.getCenter();
     const zoom = map.getZoom();
     const layersData = AppState.activeLayers.map(l => {
-        // Strip out Leaflet circular references before serializing
         let cleanGeoJSON = null;
         if (l.geoJsonData) {
             try {
@@ -448,9 +440,7 @@ const serializeWorkspace = () => {
 export const autoSaveWorkspace = () => {
     try {
         const state = serializeWorkspace();
-
         persistStateToDB(state);
-
         const stateStr = JSON.stringify(state);
         
         if (!isRestoringHistory) {
@@ -497,7 +487,6 @@ const restoreWorkspaceState = (data) => {
             const paneName = 'pane-' + uniqueKey;
             if (!map.getPane(paneName)) map.createPane(paneName);
             
-            // Rebuild layer if shape data exists regardless of flag
             if (lData.geoJsonData) {
                 mapLayer = createCustomGeoJSONLayer(lData.geoJsonData, lData.customStyle, paneName);
             } else if (lData.exportUrl) {
@@ -534,10 +523,7 @@ const loadSavedServers = async () => {
         servers.forEach(s => {
             const opt = document.createElement('option');
             opt.value = s.url; 
-            
-            // Use the custom display_name, fallback to real name if missing
             opt.textContent = s.display_name || s.name; 
-            
             opt.dataset.type = s.type;
             savedServersSelect.appendChild(opt);
         });
@@ -741,7 +727,7 @@ export const handleExportFolder = async (e) => {
 
     showToast(`Preparing ZIP for ${folder.displayName}...`);
 
-    const zip = new JSZip(); // JSZip is now globally available from head.html
+    const zip = new JSZip();
     let processedCount = 0;
 
     const addLayersToZip = async (parentId, currentZipFolder) => {
@@ -882,7 +868,6 @@ const attachTableResizer = () => {
             const dy = startY - moveEvt.clientY;
             const newHeight = Math.max(100, Math.min(window.innerHeight - 40, startHeight + dy));
             
-            // FORCE OVERRIDE: Kill any Tailwind max-height classes on the HTML element
             attributeTableContainer.style.maxHeight = 'none';
             attributeTableContainer.style.height = `${newHeight}px`;
         };
@@ -1567,35 +1552,66 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
         }
     };
 
-    gradColSelect?.addEventListener('change', updateGraduatedMinMax);
-    if (activeStyleType === 'graduated' && cs.property) updateGraduatedMinMax();
-
-    getEl('btn-copy-style')?.addEventListener('click', () => {
-        AppState.copiedStyle = extractStyleFromUI() || layer.customStyle;
+    getEl('btn-copy-style')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        const styleToCopy = extractStyleFromUI() || layer.customStyle;
+        AppState.copiedStyle = JSON.parse(JSON.stringify(styleToCopy));
+        
         showToast("Style copied to clipboard!");
+        
         const pasteBtn = getEl('btn-paste-style');
-        if (pasteBtn) { pasteBtn.disabled = false; pasteBtn.classList.remove('opacity-50', 'cursor-not-allowed'); }
+        if (pasteBtn) { 
+            pasteBtn.disabled = false; 
+            pasteBtn.classList.remove('opacity-50', 'cursor-not-allowed'); 
+        }
     });
 
-    getEl('btn-paste-style')?.addEventListener('click', () => {
-        if (!AppState.copiedStyle) return;
-        showToast("Style pasted into UI! Click 'Apply Style' to update map.");
-        handleToggleEdit(key, AppState.copiedStyle); 
+    getEl('btn-paste-style')?.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (!AppState.copiedStyle) return showToast("Clipboard is empty!", true);
+        
+        const newStyle = JSON.parse(JSON.stringify(AppState.copiedStyle));
+        layer.customStyle = newStyle;
+        
+        map.removeLayer(layer.mapLayer);
+        const paneName = 'pane-' + layer.uniqueKey;
+        const existingPane = map.getPane(paneName);
+        if (existingPane) {
+            existingPane.innerHTML = ''; 
+        }
+
+        const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
+        if (layer.isVisible) newMapLayer.addTo(map);
+        layer.mapLayer = newMapLayer;
+        updateMapLayerOrder();
+        
+        handleToggleEdit(key, newStyle);
+        showToast("Style pasted and applied to map!");
     });
 
-    getEl('btn-apply-edit')?.addEventListener('click', () => {
+    getEl('btn-apply-edit')?.addEventListener('click', (e) => {
+        e.preventDefault();
         const newStyle = extractStyleFromUI();
         if (!newStyle) return showToast("Please configure valid style mapping.", true);
         
         layer.customStyle = newStyle;
         map.removeLayer(layer.mapLayer);
         const paneName = 'pane-' + layer.uniqueKey;
+        
+        const existingPane = map.getPane(paneName);
+        if (existingPane) {
+            existingPane.innerHTML = ''; 
+        }
+
         const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
         if (layer.isVisible) newMapLayer.addTo(map);
         layer.mapLayer = newMapLayer;
         updateMapLayerOrder();
         showToast("Layer style updated!");
     });
+
+    gradColSelect?.addEventListener('change', updateGraduatedMinMax);
+    if (activeStyleType === 'graduated' && cs.property) updateGraduatedMinMax();
 
     getEl('btn-bake-colors')?.addEventListener('click', () => {
         const currentStyle = extractStyleFromUI() || layer.customStyle;
@@ -1939,15 +1955,33 @@ const renderAvailableLayers = () => {
     div.className = 'available-layer-item flex items-center p-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 rounded border border-transparent hover:border-gray-200 dark:hover:border-gray-600 mb-1 transition-colors';
     div.setAttribute('data-search', `${layer.title} ${layer.id}`.toLowerCase());
     
+    // Build the format dropdown specifically for CKAN layers
+    let formatDropdown = '';
+    if (layer.type === 'CKAN' && layer.resources && layer.resources.length > 0) {
+        const options = layer.resources.map(r => `<option value="${r.url}" data-ext="${r.ext}">${r.display}</option>`).join('');
+        formatDropdown = `
+            <select id="sel-${layer.id}" class="ml-2 border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] font-bold rounded px-1 py-0.5 cursor-pointer focus:outline-none shrink-0" title="Select format to download">
+                ${options}
+            </select>
+        `;
+    }
+
     div.innerHTML = `
-      <div class="flex items-center h-4 mr-2 shrink-0">
-         <input id="cb-${layer.id}" type="checkbox" value="${layer.id}" class="w-3.5 h-3.5 layer-checkbox cursor-pointer accent-blue-600 dark:accent-blue-500" title="Preview on Map">
-      </div>
-      <div class="ml-1 text-xs flex-1 overflow-hidden pr-2 cursor-pointer">
-        <label for="cb-${layer.id}" class="font-medium text-gray-700 dark:text-gray-200 block truncate cursor-pointer" title="${layer.title}">${layer.title}</label>
-        <p class="text-gray-400 dark:text-gray-500 text-[10px] truncate" title="${layer.id}">ID: ${layer.id}</p>
-      </div>
-      <button class="btn-add-single shrink-0 bg-blue-100 dark:bg-blue-900/40 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-xs" data-id="${layer.id}" title="Add Single Layer"><i class="fa-solid fa-plus text-[10px]"></i></button>
+        <div class="flex items-center justify-center mr-2 shrink-0">
+            <label class="cursor-pointer relative flex items-center justify-center" title="Toggle Map Preview">
+                <input id="cb-${layer.id}" type="checkbox" value="${layer.id}" class="peer layer-checkbox sr-only">
+                <i class="fa-solid fa-eye-slash text-gray-400 dark:text-gray-500 hover:text-blue-500 peer-checked:hidden text-[11px] w-3 text-center transition-colors"></i>
+                <i class="fa-solid fa-eye hidden peer-checked:inline-block text-blue-500 text-[11px] w-3 text-center"></i>
+            </label>
+        </div>
+        <div class="ml-1 text-xs flex-1 overflow-hidden pr-2 cursor-pointer flex items-center">
+            <div class="flex-1 min-w-0">
+                <label for="cb-${layer.id}" class="font-medium text-gray-700 dark:text-gray-200 block truncate cursor-pointer" title="${layer.title}">${layer.title}</label>
+                <p class="text-gray-400 dark:text-gray-500 text-[10px] truncate" title="${layer.id}">ID: ${layer.id}</p>
+            </div>
+            ${formatDropdown}
+        </div>
+        <button class="btn-add-single shrink-0 bg-blue-100 dark:bg-blue-900/40 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-xs" data-id="${layer.id}" title="Add Single Layer"><i class="fa-solid fa-plus text-[10px]"></i></button>
     `;
     availableLayerList.appendChild(div);
   });
@@ -1968,6 +2002,23 @@ const renderAvailableLayers = () => {
 const addLayerToMap = (layerId, switchTabAfter = true) => {
     const meta = AppState.fetchedLayers.find(l => l.id === layerId);
     if (!meta) return;
+
+    // THE CKAN INTERCEPT: Read the UI dropdown!
+    if (meta.type === 'CKAN') {
+        const sel = getEl(`sel-${layerId}`);
+        let targetUrl = meta.resources[0].url;
+        let targetExt = meta.resources[0].ext;
+        
+        if (sel) {
+            targetUrl = sel.value;
+            const selectedOption = sel.options[sel.selectedIndex];
+            targetExt = selectedOption.getAttribute('data-ext');
+        }
+        
+        // Pass the explicitly selected URL and Extension to the downloader
+        const targetMeta = { ...meta, url: targetUrl, format: targetExt };
+        return fetchAndProcessCKANLayer(targetMeta);
+    }
 
     let mapLayer, exportUrl = null, isLocalGeoJSON = false, geoJsonData = null, customStyle = null;
 
@@ -2131,6 +2182,35 @@ const handleFetchLayers = async () => {
     const toolsContainer = getEl('osm-available-tools');
     if (toolsContainer) { toolsContainer.classList.add('hidden'); toolsContainer.classList.remove('flex'); }
 
+    // --- CKAN FETCH INTERCEPT ---
+    if (AppState.currentServerType === 'CKAN') {
+        showToast("Sniffing out CKAN API & loading catalog...");
+        try {
+            const response = await fetch('/api/ckan_search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: rawUrl })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || "Failed to search CKAN portal");
+            }
+
+            AppState.fetchedLayers = data.layers || [];
+            
+            renderAvailableLayers();
+            switchTab('available');
+            showToast(`Loaded ${AppState.fetchedLayers.length} CKAN datasets!`);
+            return;
+        } catch (err) {
+            console.error("CKAN fetch error:", err);
+            throw new Error(err.message || "Failed to parse CKAN Catalog.");
+        }
+    }
+
+    // --- ESRI / WFS FETCH LOGIC ---
     let targetUrl = new URL(rawUrl);
     if (AppState.currentServerType === 'WFS') { targetUrl.searchParams.set('service', 'WFS'); targetUrl.searchParams.set('request', 'GetCapabilities'); } 
     else { targetUrl.searchParams.set('f', 'json'); }
@@ -2192,6 +2272,7 @@ savedServersSelect?.addEventListener('change', (e) => {
             const rawType = opt.dataset.type.toUpperCase();
             if (rawType.includes('ARCGIS') || rawType.includes('ESRI') || rawType.includes('REST')) sType.value = 'ARCGIS';
             else if (rawType.includes('WFS') || rawType.includes('OGC')) sType.value = 'WFS';
+            else if (rawType.includes('CKAN')) sType.value = 'CKAN';
             else if (rawType.includes('OVERPASS') || rawType.includes('OSM')) sType.value = 'OVERPASS';
             else sType.value = rawType;
             sType.dispatchEvent(new Event('change'));
@@ -2255,9 +2336,7 @@ getEl('btn-clear-workspace')?.addEventListener('click', async () => {
         });
         AppState.activeLayers = []; 
         
-        // NEW: Wipe the offline IndexedDB cache
         await clearWorkspaceDB();
-        
         autoSaveWorkspace();
         renderAddedLayers(); 
         showToast("Workspace reset. (You can undo this)");
@@ -2614,7 +2693,6 @@ const initOsmDatalists = () => {
 loadSavedServers();
 initOsmDatalists();
 
-// Persist position and zoom whenever the user moves the map
 map.on('moveend', () => {
     autoSaveWorkspace();
 });
@@ -2622,9 +2700,6 @@ map.on('moveend', () => {
 map.on('zoomend', () => {
     autoSaveWorkspace();
 });
-
-// The synchronous localStorage check has been removed to prevent the boot-time DB wipe.
-// Workspace restoration is now handled exclusively by the DOMContentLoaded listener below.
 
 
 // ==========================================
@@ -2647,7 +2722,6 @@ const initSidebarResizer = () => {
             if (!isResizing) return;
             const newWidth = Math.max(minWidth, moveEvt.clientX);
             leftPanel.style.width = `${newWidth}px`;
-            // Removed map.invalidateSize() from here to stop the continuous render lag
         };
 
         const stopDrag = () => {
@@ -2656,8 +2730,6 @@ const initSidebarResizer = () => {
                 document.body.classList.remove('select-none', 'cursor-col-resize');
                 window.removeEventListener('mousemove', doDrag);
                 window.removeEventListener('mouseup', stopDrag);
-                
-                // Fire the map recalculation only once the user finishes dragging
                 map.invalidateSize();
             }
         };
@@ -2690,11 +2762,9 @@ const initContextPanelResizer = () => {
         const doDrag = (moveEvt) => {
             if (!isResizing) return;
             const dy = startY - moveEvt.clientY;
-            // Allow manual drag up to 85% of the window height
             const maxDragHeight = window.innerHeight * 0.85;
             const newHeight = Math.max(120, Math.min(maxDragHeight, startHeight + dy));
             
-            // Override the Tailwind max-h class so it can grow beyond 45%
             wrapper.style.maxHeight = 'none';
             wrapper.style.height = `${newHeight}px`;
         };
@@ -2794,6 +2864,7 @@ const searchNode = searchControlInstance.getContainer();
 if (searchNode && searchNode.parentNode) {
     searchNode.parentNode.insertBefore(searchNode, searchNode.parentNode.firstChild);
 }
+
 // --- OFFLINE CACHING: INDEXEDDB HELPERS ---
 function initWorkspaceDB() {
     return new Promise((resolve, reject) => {
@@ -2829,25 +2900,24 @@ async function loadStateFromDB() {
         req.onerror = () => resolve(null);
     });
 }
+
 // --- RESTORE ON REFRESH ---
 window.addEventListener('DOMContentLoaded', async () => {
     try {
         const savedState = await loadStateFromDB();
         if (savedState && savedState.activeLayers && savedState.activeLayers.length > 0) {
             console.log("Restoring workspace from IndexedDB...");
-            isRestoringHistory = true; // Lock autosave during load
+            isRestoringHistory = true; 
             try {
                 restoreWorkspaceState(savedState);
             } finally {
-                isRestoringHistory = false; // Unlock autosave
+                isRestoringHistory = false; 
             }
         } else {
-            // Only trigger an initial save if we confirmed the DB is actually empty
             autoSaveWorkspace();
         }
     } catch (e) {
         console.error("Failed to restore workspace from IndexedDB:", e);
-        // Fallback to seeding empty state if DB read fails entirely
         autoSaveWorkspace(); 
     }
 });
@@ -2863,7 +2933,6 @@ async function clearWorkspaceDB() {
 // ==========================================
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
-        // We request the worker from the root URL so it has security scope over the entire app
         navigator.serviceWorker.register('/sw.js')
             .then(reg => console.log('Service Worker registered with scope:', reg.scope))
             .catch(err => console.error('Service Worker registration failed:', err));
@@ -2880,7 +2949,7 @@ getEl('local-file-input')?.addEventListener('change', async (e) => {
     showToast(`Processing local file: ${file.name}...`);
     await processLocalFile(file);
     
-    e.target.value = ''; // Reset the input so they can upload the same file again if needed
+    e.target.value = ''; 
 });
 
 async function processLocalFile(file) {
@@ -2893,7 +2962,7 @@ async function processLocalFile(file) {
         if (ext === 'geojson' || ext === 'json') {
             const text = await file.text();
             geoJson = JSON.parse(text);
-        } 
+        }
         else if (ext === 'kml') {
             const text = await file.text();
             const xml = new DOMParser().parseFromString(text, 'text/xml');
@@ -2976,7 +3045,6 @@ function addLocalGeoJsonToMap(geoJsonData, layerName) {
     const uniqueKey = Math.random().toString(36).substr(2,9);
     const paneName = 'pane-' + uniqueKey;
     
-    // Give imported files a distinct purple style by default
     const customStyle = { type: 'single', fillColor: '#8b5cf6', fillOpacity: 0.5, color: '#6d28d9', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
     
     const newMapLayer = createCustomGeoJSONLayer(geoJsonData, customStyle, paneName).addTo(map);
@@ -2997,4 +3065,39 @@ function addLocalGeoJsonToMap(geoJsonData, layerName) {
     renderAddedLayers();
     switchTab('added');
     showToast(`Successfully imported local file: ${layerName}`);
+}
+
+// ==========================================
+// 14. CKAN PROXY DOWNLOADER
+// ==========================================
+async function fetchAndProcessCKANLayer(meta) {
+    showToast(`Downloading ${meta.title}...`);
+    
+    try {
+        const ext = meta.format || 'geojson';
+        const proxyUrl = `/proxy?url=${encodeURIComponent(meta.url)}&format=${ext}`;
+        const response = await fetch(proxyUrl);
+        
+        if (!response.ok) {
+            // NEW: Actually read the JSON error message Python sends back!
+            let errMsg = `${response.status} ${response.statusText}`;
+            try {
+                const errData = await response.json();
+                errMsg = errData.error || errMsg;
+            } catch(e) {}
+            throw new Error(errMsg);
+        }
+
+        const blob = await response.blob();
+        
+        const fileExt = (ext === 'gpkg') ? 'geojson' : ext;
+        const fileName = `${meta.name.replace(/[^a-z0-9]/gi, '_')}.${fileExt}`;
+        const syntheticFile = new File([blob], fileName, { type: blob.type });
+
+        await processLocalFile(syntheticFile);
+        
+    } catch (err) {
+        console.error("CKAN Download Error:", err);
+        showToast(`Failed to download: ${err.message}`, true);
+    }
 }
