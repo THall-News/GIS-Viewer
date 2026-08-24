@@ -10,6 +10,8 @@ import re
 import tempfile
 import geopandas as gpd
 import pandas as pd
+import math
+import time
 
 # Suppress unverified SSL warnings for government portals
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -60,6 +62,8 @@ def fetch_server_metadata(url, server_type, user_name):
             server_type = 'ESRI'
         elif 'wfs' in url.lower():
             server_type = 'WFS'
+        elif 'ckan' in url.lower() or 'open.canada' in url.lower():
+            server_type = 'CKAN'
         else:
             server_type = 'ESRI' 
 
@@ -147,7 +151,30 @@ def fetch_server_metadata(url, server_type, user_name):
                             ]
                     break
 
-        # --- Reverse Geocode the Bounding Box Name ---
+        elif metadata['type'] == 'CKAN':
+            clean_url = url.rstrip('/')
+            
+            # Strip language tags and package search paths to find the root portal URL
+            if clean_url.endswith('/en') or clean_url.endswith('/fr'):
+                clean_url = clean_url[:-3]
+            if '/api/3/action' in clean_url:
+                clean_url = clean_url.split('/api/3/action')[0]
+                
+            status_url = f"{clean_url}/api/3/action/status_show"
+            resp = requests.get(status_url, headers=headers, timeout=10, verify=False)
+            
+            if resp.ok:
+                data = resp.json()
+                if data.get('success'):
+                    site_info = data.get('result', {})
+                    metadata['name'] = site_info.get('site_title') or "CKAN Data Portal"
+                    metadata['description'] = site_info.get('site_description') or "Open data portal powered by CKAN."
+                else:
+                    metadata['name'] = "CKAN Data Portal"
+            else:
+                metadata['name'] = "CKAN Data Portal"
+
+        # --- Reverse Geocode the Bounding Box Name (For ESRI/WFS) ---
         bbox = metadata['geographic_extent']['bbox']
         if bbox and len(bbox) == 4:
             if -180 <= bbox[0] <= 180 and -90 <= bbox[1] <= 90:
@@ -248,6 +275,10 @@ def ckan_search():
 
     clean_url = raw_url.rstrip('/')
 
+    # --- THE FIX: Strip Canadian/Regional Language Routes ---
+    if clean_url.endswith('/en') or clean_url.endswith('/fr'):
+        clean_url = clean_url[:-3]
+
     if clean_url.endswith('package_search'):
         api_endpoint = clean_url
     elif clean_url.endswith('/api/3/action'):
@@ -256,12 +287,22 @@ def ckan_search():
         api_endpoint = f"{clean_url}/api/3/action/package_search"
 
     params = {'q': '*:*', 'rows': 1000}
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    # --- THE FIX: Heavier Headers to Bypass Firewalls ---
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+    }
 
     try:
         res = requests.get(api_endpoint, params=params, headers=headers, verify=False, timeout=20)
         res.raise_for_status()
-        res_json = res.json()
+        
+        # --- THE FIX: Safely Catch Non-JSON Responses ---
+        try:
+            res_json = res.json()
+        except ValueError:
+            return jsonify({"error": f"Server returned an empty or HTML page. The API endpoint ({api_endpoint}) might be invalid or protected."}), 500
 
         if not res_json.get('success'):
             return jsonify({"error": "CKAN API returned an unsuccessful response."}), 500
@@ -271,8 +312,15 @@ def ckan_search():
         layers = []
 
         for pkg in results:
-            pkg_title = pkg.get('title', 'Untitled Package').strip()
+            pkg_title = pkg.get('title', 'Untitled Package')
+            # Title can sometimes be a dict in bilingual portals like Canada's {"en": "...", "fr": "..."}
+            if isinstance(pkg_title, dict):
+                pkg_title = pkg_title.get('en', pkg_title.get('fr', 'Untitled Package'))
+            pkg_title = str(pkg_title).strip()
+            
             pkg_notes = pkg.get('notes', '')
+            if isinstance(pkg_notes, dict):
+                pkg_notes = pkg_notes.get('en', '')
             
             resources_by_name = {}
 
@@ -281,7 +329,11 @@ def ckan_search():
                 res_url = str(resource.get('url', '')).strip()
                 
                 if any(vf in fmt or vf in res_url.lower() for vf in valid_formats):
-                    res_name = str(resource.get('name') or '').strip()
+                    res_name = resource.get('name') or ''
+                    # Resource name can also be bilingual
+                    if isinstance(res_name, dict):
+                        res_name = res_name.get('en', res_name.get('fr', ''))
+                    res_name = str(res_name).strip()
                     
                     clean_name = res_name.lower()
                     for f in valid_formats + ['csv']:
@@ -330,14 +382,12 @@ def ckan_search():
                     return 5
                 package_resources.sort(key=sort_formats)
 
-                # STRIP format extensions out of the raw resource name for BOTH title and filename
                 clean_display = res_name
                 for f_str in ['geojson', 'csv', 'shp', 'shapefile', 'zip', 'gpkg', 'geopackage', 'kml', '.geojson', '.csv', '.zip', '.shp', '.gpkg', '.kml']:
                     clean_display = re.compile(re.escape(f_str), re.IGNORECASE).sub('', clean_display).strip(' -_.()[]')
 
                 if clean_display and clean_display.lower() not in pkg_title.lower() and pkg_title.lower() not in clean_display.lower():
                     display_title = f"{pkg_title} ({clean_display})"
-                    # Use the clean_display as the final backend name
                     final_name = f"{pkg_title} - {clean_display}"
                 else:
                     display_title = pkg_title
@@ -346,9 +396,9 @@ def ckan_search():
                 layers.append({
                     "id": str(uuid.uuid4()),
                     "title": display_title,
-                    "name": final_name,  # <--- Cleaned name passed to the frontend
+                    "name": final_name,
                     "type": "CKAN",
-                    "description": pkg_notes,
+                    "description": str(pkg_notes),
                     "resources": package_resources
                 })
 
@@ -411,6 +461,192 @@ def proxy_download():
 
     except Exception as e:
         return jsonify({"error": f"Proxy download failed: {str(e)}"}), 502
+
+@app.route('/api/overpass_search', methods=['POST'])
+def overpass_search():
+    data = request.json or {}
+    key = data.get('key')
+    val = data.get('val')
+    feat_name = data.get('featName')
+    loc = data.get('loc')
+    geom_type = data.get('geomType', 'all')
+    bbox = data.get('bbox')
+
+    if not key:
+        return jsonify({"error": "Tag key is required"}), 400
+
+    tag_filter = f'["{key}"="{val}"]' if val else f'["{key}"]'
+    if feat_name:
+        tag_filter += f'["name"~"{feat_name}",i]'
+
+    headers = {'User-Agent': 'GIS-Layer-Previewer/1.0 (Python/Requests)'}
+    
+    area_id = None
+    target_bbox = None
+
+    if loc:
+        nom_url = f"https://nominatim.openstreetmap.org/search?q={loc}&format=json&limit=1"
+        try:
+            nom_res = requests.get(nom_url, headers=headers, timeout=10)
+            nom_res.raise_for_status()
+            nom_data = nom_res.json()
+            
+            if not nom_data:
+                return jsonify({"error": f"Location not found: {loc}"}), 404
+            
+            place = nom_data[0]
+            if place.get('osm_type') in ['relation', 'way']:
+                base_id = 3600000000 if place['osm_type'] == 'relation' else 2400000000
+                area_id = base_id + int(place['osm_id'])
+            else:
+                bb = place['boundingbox']
+                target_bbox = [float(bb[0]), float(bb[2]), float(bb[1]), float(bb[3])]
+        except Exception as e:
+            return jsonify({"error": "Failed to geocode location with Nominatim."}), 500
+    elif bbox:
+        target_bbox = [bbox['south'], bbox['west'], bbox['north'], bbox['east']]
+    else:
+        return jsonify({"error": "No location or map bounds provided"}), 400
+
+    def build_query(bbox_str=None, area_str=None):
+        q = "[out:json][timeout:25];\n"
+        if area_str:
+            q += f"area({area_str})->.searchArea;\n(\n"
+            if geom_type in ['all', 'points']:
+                q += f"  node{tag_filter}(area.searchArea);\n"
+            if geom_type in ['all', 'lines_polygons']:
+                q += f"  way{tag_filter}(area.searchArea);\n"
+                q += f"  relation{tag_filter}(area.searchArea);\n"
+            q += ");\n"
+        else:
+            q += "(\n"
+            if geom_type in ['all', 'points']:
+                q += f"  node{tag_filter}({bbox_str});\n"
+            if geom_type in ['all', 'lines_polygons']:
+                q += f"  way{tag_filter}({bbox_str});\n"
+                q += f"  relation{tag_filter}({bbox_str});\n"
+            q += ");\n"
+        q += "out body;\n>;\nout skel qt;"
+        return q
+
+    # --- FALLBACK SERVER LOGIC ---
+    # --- BULLETPROOF FALLBACK SERVER LOGIC ---
+    overpass_endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://lz4.overpass-api.de/api/interpreter",
+        "https://z.overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+        "https://overpass.osm.ch/api/interpreter"
+    ]
+
+    def execute_overpass_query(query_string):
+        for url in overpass_endpoints:
+            try:
+                res = requests.post(url, data={"data": query_string}, headers=headers, timeout=45)
+                
+                if res.status_code == 429:
+                    print(f"  -> Rate limited by {url}! Sleeping 3s...")
+                    time.sleep(3)
+                    res = requests.post(url, data={"data": query_string}, headers=headers, timeout=45)
+                
+                # NEW: If the server answers, but it's an error code (500, 502, 503, 504), skip to the next server!
+                if res.status_code in [500, 502, 503, 504]:
+                    print(f"  -> Server {url} returned HTTP {res.status_code}. Trying backup server...")
+                    continue
+
+                # If it's a 400 error (Syntax/Bad Query), Overpass usually sends a helpful message
+                if res.status_code == 400:
+                    print(f"  -> Bad Request! Overpass says: {res.text}")
+
+                return res
+
+            except requests.exceptions.ConnectionError:
+                print(f"  -> Connection refused by {url}. Trying backup server...")
+                continue
+            except requests.exceptions.ReadTimeout:
+                print(f"  -> Server {url} timed out. Trying backup server...")
+                continue
+                
+        raise Exception("All public Overpass servers failed, timed out, or returned errors.")
+
+    try:
+        if area_id:
+            query = build_query(area_str=area_id)
+            res = execute_overpass_query(query)
+            
+            if res.status_code == 504:
+                return jsonify({"error": "Overpass API timed out. Try a more specific tag or a smaller location."}), 504
+                
+            res.raise_for_status()
+            return jsonify(res.json())
+        
+        else:
+            s, w, n, e = target_bbox
+            
+            area_sq_deg = (n - s) * (e - w)
+            if area_sq_deg > 2.0:
+                return jsonify({"error": "Map area is too massive for Overpass. Please zoom in closer."}), 400
+
+            grid_size = 0.1
+
+            lat_steps = max(1, math.ceil((n - s) / grid_size))
+            lon_steps = max(1, math.ceil((e - w) / grid_size))
+
+            if lat_steps * lon_steps > 25:
+                 return jsonify({"error": "Map area requires too many grid chunks. Please zoom in closer."}), 400
+
+            lat_step_size = (n - s) / lat_steps
+            lon_step_size = (e - w) / lon_steps
+
+            all_elements = []
+            seen_ids = set()
+
+            total_cells = lat_steps * lon_steps
+            current_cell = 0
+            
+            print(f"\n[Overpass Grid] Slicing query into {total_cells} sub-regions...")
+
+            for i in range(lat_steps):
+                for j in range(lon_steps):
+                    current_cell += 1
+                    cell_s = s + i * lat_step_size
+                    cell_n = cell_s + lat_step_size
+                    cell_w = w + j * lon_step_size
+                    cell_e = cell_w + lon_step_size
+                    
+                    cell_bbox = f"{cell_s},{cell_w},{cell_n},{cell_e}"
+                    query = build_query(bbox_str=cell_bbox)
+
+                    print(f"  -> Fetching cell {current_cell}/{total_cells}...")
+                    
+                    res = execute_overpass_query(query)
+
+                    if res.status_code == 504:
+                         print(f"  -> Cell {current_cell} timed out! Data is too dense.")
+                         return jsonify({"error": "Overpass API timed out on a grid cell. The data is too dense, please zoom in."}), 504
+
+                    res.raise_for_status()
+                    
+                    data = res.json()
+                    elements_found = len(data.get('elements', []))
+                    print(f"  -> Cell {current_cell} complete. Found {elements_found} elements.")
+                    
+                    for el in data.get('elements', []):
+                        uid = f"{el['type']}_{el['id']}"
+                        if uid not in seen_ids:
+                            seen_ids.add(uid)
+                            all_elements.append(el)
+                    
+                    time.sleep(0.5)
+
+            print(f"[Overpass Grid] Successfully stitched {len(all_elements)} unique elements.")
+            return jsonify({"elements": all_elements})
+
+    except requests.exceptions.HTTPError as err:
+        return jsonify({"error": f"Overpass rejected the query (Status {err.response.status_code})."}), 500
+    except Exception as err:
+        return jsonify({"error": str(err)}), 500
 
 if __name__ == '__main__':
     print(f"🚀 Writing Database to: {SERVERS_FILE}")

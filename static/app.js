@@ -548,10 +548,40 @@ const executeOsmInspect = async (bounds) => {
         const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
         const query = `[out:json][timeout:25];\n(\n  node(${bbox});\n  way(${bbox});\n  relation(${bbox});\n);\nout tags;`;
         
-        const res = await fetch(`https://overpass-api.de/api/interpreter`, { method: 'POST', body: "data=" + encodeURIComponent(query), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-        if (!res.ok) throw new Error("API limits or area too large.");
+        // Use the same bulletproof fallback list as the Python backend
+        const endpoints = [
+            "https://overpass-api.de/api/interpreter",
+            "https://lz4.overpass-api.de/api/interpreter",
+            "https://z.overpass-api.de/api/interpreter",
+            "https://overpass.kumi.systems/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+            "https://overpass.osm.ch/api/interpreter"
+        ];
+
+        let data = null;
+        let fetchSuccess = false;
+
+        // Loop through backup servers until one successfully answers
+        for (const url of endpoints) {
+            try {
+                const res = await fetch(url, { 
+                    method: 'POST', 
+                    body: "data=" + encodeURIComponent(query), 
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' } 
+                });
+                
+                if (res.ok) {
+                    data = await res.json();
+                    fetchSuccess = true;
+                    break;
+                }
+            } catch (e) {
+                console.warn(`Inspect tool skipped failing server: ${url}`);
+            }
+        }
+
+        if (!fetchSuccess || !data) throw new Error("All Overpass servers failed or area too large.");
         
-        const data = await res.json();
         const tagCounts = {};
         const ignoreList = ['source', 'created_by', 'name', 'note', 'wikipedia', 'wikidata', 'tiger:', 'ele', 'gnis:', 'import_', 'addr:', 'phone', 'website', 'email', 'fax', 'ref'];
         
@@ -590,7 +620,7 @@ const executeOsmInspect = async (bounds) => {
                 showToast(`Copied ${el.getAttribute('data-k')}=${el.getAttribute('data-v')} to Query Builder!`);
             });
         });
-    } catch (err) { status.textContent = 'Scan failed. Area might be too large.'; }
+    } catch (err) { status.textContent = 'Scan failed. Area might be too large or servers are currently down.'; }
 };
 
 
@@ -2085,50 +2115,38 @@ const handleFetchLayers = async () => {
 
         if (!key) throw new Error("Please enter a Tag Key.");
 
-        let query = `[out:json][timeout:50];\n`;
-        let tagFilter = val ? `["${key}"="${val}"]` : `["${key}"]`;
-        if (featName) tagFilter += `["name"~"${featName}",i]`;
-
-        if (loc) {
-            if (fetchText) fetchText.textContent = 'Locating Area...';
-            const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(loc)}&format=json&limit=1`);
-            const nomData = await nomRes.json();
-            if (nomData.length === 0) throw new Error(`Could not find the location: "${loc}"`);
-            
-            if (fetchText) fetchText.textContent = 'Fetching Data...';
-            const place = nomData[0];
-            
-            if (place.osm_type === 'relation' || place.osm_type === 'way') {
-                const areaId = (place.osm_type === 'relation' ? 3600000000 : 2400000000) + parseInt(place.osm_id);
-                query += `area(${areaId})->.searchArea;\n(\n`;
-                if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(area.searchArea);\n`;
-                if (geomType === 'all' || geomType === 'lines_polygons') { query += `  way${tagFilter}(area.searchArea);\n  relation${tagFilter}(area.searchArea);\n`; }
-                query += `);\n`;
-            } else {
-                const bb = place.boundingbox; const bbox = `${bb[0]},${bb[2]},${bb[1]},${bb[3]}`;
-                query += `(\n`;
-                if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(${bbox});\n`;
-                if (geomType === 'all' || geomType === 'lines_polygons') { query += `  way${tagFilter}(${bbox});\n  relation${tagFilter}(${bbox});\n`; }
-                query += `);\n`;
+        const bounds = map.getBounds();
+        const payload = {
+            key, val, featName, loc, geomType,
+            bbox: {
+                south: bounds.getSouth(),
+                west: bounds.getWest(),
+                north: bounds.getNorth(),
+                east: bounds.getEast()
             }
-        } else {
-            const b = map.getBounds(); const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
-            query += `(\n`;
-            if (geomType === 'all' || geomType === 'points') query += `  node${tagFilter}(${bbox});\n`;
-            if (geomType === 'all' || geomType === 'lines_polygons') { query += `  way${tagFilter}(${bbox});\n  relation${tagFilter}(${bbox});\n`; }
-            query += `);\n`;
-        }
+        };
+
+        if (fetchText) fetchText.textContent = 'Querying Grid...';
         
-        query += `out body;\n>;\nout skel qt;`;
-        const res = await fetch(`https://overpass-api.de/api/interpreter`, { method: 'POST', body: "data=" + encodeURIComponent(query), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-        
-        if (!res.ok) throw new Error("Overpass API failed. Query may be too large.");
-        const data = await res.json();
+        // Let Python handle the heavy lifting and grid splitting
+        const response = await fetch('/api/overpass_search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Overpass API failed.");
         if (!data.elements || data.elements.length === 0) throw new Error("No data found for this query.");
 
+        // Parse the combined data back into GeoJSON locally
         const geoJson = osmtogeojson(data, { flatProperties: true });
         geoJson.features.forEach(f => {
-            if (f.properties) { if (f.properties.id) f.properties.osm_id = f.properties.id; delete f.properties.id; delete f.properties['@id']; delete f.properties['@relations']; delete f.properties.meta; }
+            if (f.properties) { 
+                if (f.properties.id) f.properties.osm_id = f.properties.id; 
+                delete f.properties.id; delete f.properties['@id']; 
+                delete f.properties['@relations']; delete f.properties.meta; 
+            }
         });
         
         if (geomType === 'lines_polygons') geoJson.features = geoJson.features.filter(f => !['Point', 'MultiPoint'].includes(f.geometry?.type));
@@ -2136,25 +2154,21 @@ const handleFetchLayers = async () => {
 
         if (!geoJson.features || geoJson.features.length === 0) throw new Error("No renderable geometry found.");
         
-        if (loc || featName) { try { const tempLayer = L.geoJSON(geoJson); const bounds = tempLayer.getBounds(); if(bounds.isValid()) map.fitBounds(bounds); } catch(e) {} }
-
-        let layerName = `OSM: ${key}${val ? '=' + val : ''}`;
-        let autoCity = null;
-        if (!loc) {
-            const cities = {};
-            geoJson.features.forEach(f => { const c = f.properties ? (f.properties['addr:city'] || f.properties['is_in:city'] || f.properties['is_in:municipality']) : null; if (c) cities[c] = (cities[c] || 0) + 1; });
-            autoCity = Object.keys(cities).sort((a,b) => cities[b] - cities[a])[0];
+        if (loc || featName) { 
+            try { 
+                const tempLayer = L.geoJSON(geoJson); 
+                const layerBounds = tempLayer.getBounds(); 
+                if(layerBounds.isValid()) map.fitBounds(layerBounds); 
+            } catch(e) {} 
         }
 
-        if (loc && featName) layerName = `OSM: ${featName}, ${loc} (${key})`;
-        else if (featName) layerName = `OSM: ${featName} (${key})`;
-        else if (loc) layerName = `OSM: ${loc} (${key}${val ? '=' + val : ''})`;
-        else if (geoJson.features.length === 1 && geoJson.features[0].properties && geoJson.features[0].properties.name) layerName = `OSM: ${geoJson.features[0].properties.name} (${key}${val ? '=' + val : ''})`;
-        else if (autoCity) layerName = `OSM: ${autoCity} (${key}${val ? '=' + val : ''})`;
+        let layerName = `OSM: ${key}${val ? '=' + val : ''}`;
+        if (loc) layerName = `OSM: ${loc} (${key}${val ? '=' + val : ''})`;
         else layerName = `OSM: Map View (${key}${val ? '=' + val : ''})`;
 
         AppState.fetchedLayers = [{ id: `osm_${Date.now()}`, title: layerName, geoJsonData: geoJson }];
-        AppState.lastFetchedOsmGeoJson = geoJson; AppState.lastFetchedOsmLayerName = layerName;
+        AppState.lastFetchedOsmGeoJson = geoJson; 
+        AppState.lastFetchedOsmLayerName = layerName;
         
         const toolsContainer = getEl('osm-available-tools');
         if (toolsContainer) { toolsContainer.classList.remove('hidden'); toolsContainer.classList.add('flex'); }
@@ -2168,7 +2182,9 @@ const handleFetchLayers = async () => {
             Array.from(cols).sort().forEach(c => { sel.innerHTML += `<option value="${c}">${c}</option>`; });
         }
 
-        renderAvailableLayers(); switchTab('available'); showToast(`Fetched ${geoJson.features.length} OSM features for preview!`);
+        renderAvailableLayers(); 
+        switchTab('available'); 
+        showToast(`Fetched & Merged ${geoJson.features.length} OSM features!`);
         return;
     }
 
