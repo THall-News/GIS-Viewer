@@ -938,7 +938,19 @@ const renderTableContent = (layerName) => {
         <div class="table-resizer absolute top-0 left-0 w-full h-1.5 bg-gray-200 hover:bg-blue-400 dark:bg-gray-700 dark:hover:bg-blue-500 cursor-row-resize z-50 transition-colors" title="Drag to resize"></div>
         <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1 pt-1.5">
             <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layerName} Data</div>
-            <button onclick="window.closeTablePanel()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times"></i></button>
+            
+            <!-- Action Button Group -->
+            <div class="flex items-center space-x-2 pr-1">
+                <!-- NEW: Download CSV Button -->
+                <button id="btn-download-csv" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-0.5 rounded font-medium border border-gray-300 dark:border-gray-600 transition-colors shadow-xs flex items-center" title="Download table as CSV">
+                    <i class="fa-solid fa-file-csv mr-1 text-emerald-600 dark:text-emerald-400"></i> Download CSV
+                </button>
+                
+                <button id="btn-bake-coords" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-0.5 rounded font-medium border border-gray-300 dark:border-gray-600 transition-colors shadow-xs flex items-center" title="Extract coordinates to data columns">
+                    <i class="fa-solid fa-location-dot mr-1 text-blue-600 dark:text-blue-400"></i> Bake Lat/Long
+                </button>
+                <button onclick="window.closeTablePanel()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"><i class="fa-solid fa-times text-xs"></i></button>
+            </div>
         </div>
         <div class="flex-1 overflow-auto min-h-0 custom-scroll border border-gray-200 dark:border-gray-700 rounded">
             <table class="min-w-full text-xs text-left border-collapse bg-white dark:bg-gray-800">
@@ -975,6 +987,119 @@ const renderTableContent = (layerName) => {
     
     attributeTableContainer.innerHTML = tableHtml;
     attachTableResizer();
+
+    // --- NEW: Download CSV Logic ---
+    const btnDownloadCsv = attributeTableContainer.querySelector('#btn-download-csv');
+    if (btnDownloadCsv) {
+        btnDownloadCsv.addEventListener('click', async () => {
+            const layer = AppState.activeLayers.find(l => l.uniqueKey === AppState.activeTableLayerKey);
+            if (!layer) return;
+
+            // Ensure we have the full dataset locally before building the CSV
+            if (!layer.isLocalGeoJSON) {
+                btnDownloadCsv.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1 text-emerald-600 dark:text-emerald-400"></i> Fetching Data...';
+                btnDownloadCsv.disabled = true;
+                const success = await ensureGeoJSON(layer);
+                if (!success) {
+                    btnDownloadCsv.innerHTML = '<i class="fa-solid fa-file-csv mr-1 text-emerald-600 dark:text-emerald-400"></i> Download CSV';
+                    btnDownloadCsv.disabled = false;
+                    return;
+                }
+            }
+
+            const featuresToExport = layer.geoJsonData.features || [];
+            if (featuresToExport.length === 0) {
+                showToast("No data available to export.", true);
+                return;
+            }
+
+            // Dynamically gather all unique property keys from the entire dataset
+            const headerSet = new Set();
+            featuresToExport.forEach(f => {
+                if (f.properties) Object.keys(f.properties).forEach(k => headerSet.add(k));
+            });
+            const headers = Array.from(headerSet);
+
+            // Construct the raw CSV string and escape quotes
+            let csvString = headers.join(',') + '\n';
+            featuresToExport.forEach(f => {
+                const row = headers.map(h => {
+                    let val = f.properties ? f.properties[h] : '';
+                    if (val === null || val === undefined) val = '';
+                    val = String(val).replace(/"/g, '""'); // Escape internal double quotes
+                    return `"${val}"`;
+                });
+                csvString += row.join(',') + '\n';
+            });
+
+            // Trigger the download using the existing helper
+            const safeName = (layerName || 'export').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+            const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+            downloadBlob(blob, `${safeName}.csv`);
+            
+            showToast(`Downloaded CSV with ${featuresToExport.length} records!`);
+            
+            // Restore button state
+            btnDownloadCsv.innerHTML = '<i class="fa-solid fa-file-csv mr-1 text-emerald-600 dark:text-emerald-400"></i> Download CSV';
+            btnDownloadCsv.disabled = false;
+        });
+    }
+
+    // --- Bake Coords Logic ---
+    const btnBakeCoords = attributeTableContainer.querySelector('#btn-bake-coords');
+    if (btnBakeCoords) {
+        btnBakeCoords.addEventListener('click', async () => {
+            const layer = AppState.activeLayers.find(l => l.uniqueKey === AppState.activeTableLayerKey);
+            if (!layer) return;
+
+            // Prevent baking against a limited "Preview" dataset
+            if (!layer.isLocalGeoJSON) {
+                btnBakeCoords.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1 text-blue-600 dark:text-blue-400"></i> Fetching Data...';
+                btnBakeCoords.disabled = true;
+                const success = await ensureGeoJSON(layer);
+                if (!success) {
+                    btnBakeCoords.innerHTML = '<i class="fa-solid fa-location-dot mr-1 text-blue-600 dark:text-blue-400"></i> Bake Lat/Long';
+                    btnBakeCoords.disabled = false;
+                    return;
+                }
+            }
+
+            // Loop shapes, extract coords, and inject into properties table
+            let count = 0;
+            layer.geoJsonData.features.forEach(f => {
+                if (!f.properties) f.properties = {};
+                try {
+                    let coords;
+                    
+                    if (f.geometry && f.geometry.type === 'Point') {
+                        coords = f.geometry.coordinates;
+                    } 
+                    else if (f.geometry) {
+                        const centroid = turf.centroid(f);
+                        coords = centroid.geometry.coordinates;
+                    }
+                    
+                    if (coords && coords.length >= 2) {
+                        f.properties['LATITUDE'] = parseFloat(coords[1].toFixed(6));
+                        f.properties['LONGITUDE'] = parseFloat(coords[0].toFixed(6));
+                        count++;
+                    }
+                } catch(e) {}
+            });
+
+            // Trigger a UI refresh and hard-save to local workspace
+            if (count > 0) {
+                autoSaveWorkspace();
+                showToast(`Baked LAT/LONG to ${count} features!`);
+                AppState.activeTableLayerKey = null; 
+                handleToggleTable(layer.uniqueKey);
+            } else {
+                showToast("No valid geometries found.", true);
+                btnBakeCoords.innerHTML = '<i class="fa-solid fa-location-dot mr-1 text-blue-600 dark:text-blue-400"></i> Bake Lat/Long';
+                btnBakeCoords.disabled = false;
+            }
+        });
+    }
 
     document.querySelectorAll('.tbl-header').forEach(th => {
         th.addEventListener('click', (e) => {
@@ -1086,8 +1211,15 @@ export const handleToggleTable = async (e) => {
     });
     
     let headers = Array.from(headerSet);
-    const bakedCols = ['COLOR_FILL', 'COLOR_OUTLINE'];
-    AppState.currentTableHeaders = headers.filter(h => !bakedCols.includes(h)).concat(headers.filter(h => bakedCols.includes(h)));
+    
+    // --- THE FIX: Add LATITUDE and LONGITUDE to the baked columns list ---
+    const bakedCols = ['COLOR_FILL', 'COLOR_OUTLINE', 'LATITUDE', 'LONGITUDE'];
+    
+    // Because filter() preserves the Set's chronological insertion order, 
+    // whichever button the user clicked LAST will append its columns to the absolute end.
+    AppState.currentTableHeaders = headers
+        .filter(h => !bakedCols.includes(h))
+        .concat(headers.filter(h => bakedCols.includes(h)));
     
     AppState.tableSortCol = null;
     AppState.tableSortAsc = true;
@@ -1884,12 +2016,63 @@ const triggerSearch = () => {
   if (term === '') btnClearSearch?.classList.add('hidden');
   else btnClearSearch?.classList.remove('hidden');
   
-  let visibleCount = 0;
-  document.querySelectorAll('.available-layer-item').forEach(item => {
-    if (item.getAttribute('data-search').includes(term)) { item.classList.remove('hidden'); visibleCount++; } 
-    else { item.classList.add('hidden'); }
-  });
+  if (term === '') {
+      // Clear Search: Restore default collapsed state
+      document.querySelectorAll('.folder-item, .available-layer-item').forEach(item => {
+          item.classList.remove('hidden');
+      });
+      document.querySelectorAll('.folder-children').forEach(c => {
+          c.classList.add('hidden');
+      });
+      document.querySelectorAll('.collapse-icon').forEach(i => {
+          i.classList.remove('fa-folder-open');
+          i.classList.add('fa-folder');
+      });
+  } else {
+      // Active Search: Hide everything first
+      document.querySelectorAll('.folder-item, .available-layer-item').forEach(item => {
+          item.classList.add('hidden');
+      });
+
+      // Show matches and auto-expand their parent folders
+      document.querySelectorAll('.folder-item, .available-layer-item').forEach(item => {
+        if (item.getAttribute('data-search') && item.getAttribute('data-search').includes(term)) { 
+            item.classList.remove('hidden'); 
+            
+            // Traverse upwards and expand parent folders
+            let parentBlock = item.parentElement.closest('.folder-item');
+            while (parentBlock) {
+                parentBlock.classList.remove('hidden');
+                const childrenContainer = parentBlock.querySelector('.folder-children');
+                if (childrenContainer) childrenContainer.classList.remove('hidden');
+                
+                const icon = parentBlock.querySelector('.collapse-icon');
+                if (icon) {
+                    icon.classList.remove('fa-folder');
+                    icon.classList.add('fa-folder-open');
+                }
+                
+                parentBlock = parentBlock.parentElement.closest('.folder-item');
+            }
+            
+            // If the matching item IS a folder, expand its children to show the contents
+            if (item.classList.contains('folder-item')) {
+                 item.querySelectorAll('.available-layer-item, .folder-item').forEach(child => {
+                     child.classList.remove('hidden');
+                 });
+                 item.querySelectorAll('.folder-children').forEach(child => {
+                     child.classList.remove('hidden');
+                 });
+                 item.querySelectorAll('.collapse-icon').forEach(i => {
+                     i.classList.remove('fa-folder');
+                     i.classList.add('fa-folder-open');
+                 });
+            }
+        } 
+      });
+  }
   
+  const visibleCount = document.querySelectorAll('.available-layer-item:not(.hidden)').length;
   let emptyMsg = getEl('search-empty-msg');
   if (visibleCount === 0 && AppState.fetchedLayers.length > 0) {
     if (!emptyMsg && availableLayerList) {
@@ -1983,72 +2166,148 @@ const renderAvailableLayers = () => {
   searchContainer?.classList.remove('hidden');
   if (btnAddBulk) btnAddBulk.disabled = false;
 
-  let currentService = null;
+  const standaloneLayers = [];
+  const servicesMap = {};
 
-  AppState.fetchedLayers.forEach((layer) => {
-    // Render Service Header when transitioning to a new MapServer / FeatureServer
-    if (layer.serviceName && layer.serviceName !== currentService) {
-        currentService = layer.serviceName;
-        const serviceHeader = document.createElement('div');
-        serviceHeader.className = 'available-service-header flex items-center px-2 py-1.5 bg-gray-200 dark:bg-gray-800 rounded font-bold text-gray-800 dark:text-gray-200 text-xs mt-3 mb-1 border-l-4 border-blue-600 shadow-xs';
-        serviceHeader.innerHTML = `
-            <i class="fa-solid fa-folder-tree text-blue-600 dark:text-blue-400 mr-2 text-xs"></i>
-            <span class="truncate" title="${currentService}">${currentService}</span>
-        `;
-        availableLayerList.appendChild(serviceHeader);
-    }
-
-    const div = document.createElement('div');
-    div.className = 'available-layer-item flex items-center p-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 rounded border border-transparent hover:border-gray-200 dark:hover:border-gray-600 mb-0.5 transition-colors';
-    div.setAttribute('data-search', `${layer.title} ${layer.id} ${layer.serviceName || ''}`.toLowerCase());
-    
-    // Dynamic Indentation based on Depth
-    const depth = layer.depth || 1;
-    const indentPx = (depth - 1) * 16 + (layer.serviceName ? 8 : 0);
-    div.style.paddingLeft = `${indentPx + 6}px`;
-
-    // Render Group Layers differently (no direct preview/add buttons)
-    if (layer.isGroup) {
-        div.classList.add('bg-gray-50/50', 'dark:bg-gray-800/40', 'font-semibold', 'my-0.5');
-        div.innerHTML = `
-            <i class="fa-solid fa-layer-group text-amber-500 mr-2 text-[11px] shrink-0"></i>
-            <span class="text-xs text-gray-700 dark:text-gray-300 font-semibold truncate" title="${layer.title}">${layer.title}</span>
-        `;
-        availableLayerList.appendChild(div);
-        return;
-    }
-
-    // Format dropdown (for CKAN layers)
-    let formatDropdown = '';
-    if (layer.type === 'CKAN' && layer.resources && layer.resources.length > 0) {
-        const options = layer.resources.map(r => `<option value="${r.url}" data-ext="${r.ext}">${r.display}</option>`).join('');
-        formatDropdown = `
-            <select id="sel-${layer.id}" class="ml-2 border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] font-bold rounded px-1 py-0.5 cursor-pointer focus:outline-none shrink-0" title="Select format to download">
-                ${options}
-            </select>
-        `;
-    }
-
-    div.innerHTML = `
-        <div class="flex items-center justify-center mr-2 shrink-0">
-            <label class="cursor-pointer relative flex items-center justify-center" title="Toggle Map Preview">
-                <input id="cb-${layer.id}" type="checkbox" value="${layer.id}" class="peer layer-checkbox sr-only">
-                <i class="fa-solid fa-eye-slash text-gray-400 dark:text-gray-500 hover:text-blue-500 peer-checked:hidden text-[11px] w-3 text-center transition-colors"></i>
-                <i class="fa-solid fa-eye hidden peer-checked:inline-block text-blue-500 text-[11px] w-3 text-center"></i>
-            </label>
-        </div>
-        <div class="ml-1 text-xs flex-1 overflow-hidden pr-2 cursor-pointer flex items-center">
-            <div class="flex-1 min-w-0">
-                <label for="cb-${layer.id}" class="font-medium text-gray-700 dark:text-gray-200 block truncate cursor-pointer" title="${layer.title}">${layer.title}</label>
-                <p class="text-gray-400 dark:text-gray-500 text-[10px] truncate" title="${layer.id}">ID: ${layer.layerId !== undefined ? layer.layerId : layer.id}</p>
-            </div>
-            ${formatDropdown}
-        </div>
-        <button class="btn-add-single shrink-0 bg-blue-100 dark:bg-blue-900/40 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-xs" data-id="${layer.id}" title="Add Single Layer"><i class="fa-solid fa-plus text-[10px]"></i></button>
-    `;
-    availableLayerList.appendChild(div);
+  AppState.fetchedLayers.forEach(layer => {
+      if (!layer.serviceName) {
+          standaloneLayers.push(layer);
+      } else {
+          const sUrl = layer.serviceUrl || layer.serviceName;
+          if (!servicesMap[sUrl]) {
+              servicesMap[sUrl] = { serviceName: layer.serviceName, layers: [] };
+          }
+          servicesMap[sUrl].layers.push(layer);
+      }
   });
-  
+
+  // --- THE FIX: Flatten Overkill Folders ---
+  // If a service only contains a single feature layer, remove it from the folder system
+  // and display it directly in the root list to save clicks and screen space.
+  Object.keys(servicesMap).forEach(sUrl => {
+      const srv = servicesMap[sUrl];
+      if (srv.layers.length === 1 && !srv.layers[0].isGroup) {
+          standaloneLayers.push(srv.layers[0]);
+          delete servicesMap[sUrl];
+      }
+  });
+
+  // Sort standalone layers alphabetically so they are easy to find
+  standaloneLayers.sort((a, b) => a.title.localeCompare(b.title));
+
+  const createFormatDropdown = (layer) => {
+      // Only render the dropdown if it is a CKAN layer AND it has more than 1 format available
+      if (layer.type === 'CKAN' && layer.resources && layer.resources.length > 1) {
+          const options = layer.resources.map(r => `<option value="${r.url}" data-ext="${r.ext}">${r.display}</option>`).join('');
+          return `<select id="sel-${layer.id}" class="ml-2 border border-gray-300 dark:border-gray-600 bg-blue-50 dark:bg-gray-700 text-blue-700 dark:text-gray-200 text-[10px] font-bold rounded px-1 py-0.5 cursor-pointer focus:outline-none shrink-0 transition-colors hover:bg-blue-100 dark:hover:bg-gray-600 shadow-xs" title="Select format to download">${options}</select>`;
+      }
+      
+      // Otherwise, return nothing
+      return '';
+  };
+
+  // Reusable component builder for Layers
+  const buildLayerItem = (layer, parentContainer) => {
+      const div = document.createElement('div');
+      div.className = 'available-layer-item flex mb-1 rounded border transition-colors bg-white border-gray-100 shadow-xs dark:bg-gray-800 dark:border-gray-700 overflow-hidden';
+      div.setAttribute('data-search', `${layer.title} ${layer.id} ${layer.serviceName || ''}`.toLowerCase());
+      
+      div.innerHTML = `
+          <div class="flex-1 flex items-center p-1.5 min-w-0">
+              <div class="flex items-center justify-center mr-2 shrink-0">
+                  <label class="cursor-pointer relative flex items-center justify-center" title="Toggle Map Preview">
+                      <input id="cb-${layer.id}" type="checkbox" value="${layer.id}" class="peer layer-checkbox sr-only">
+                      <i class="fa-solid fa-eye-slash text-gray-400 dark:text-gray-500 hover:text-blue-500 peer-checked:hidden text-[11px] w-3 text-center transition-colors"></i>
+                      <i class="fa-solid fa-eye hidden peer-checked:inline-block text-blue-500 text-[11px] w-3 text-center"></i>
+                  </label>
+              </div>
+              <div class="flex-1 min-w-0 overflow-hidden pr-2 flex flex-col justify-center">
+                  <label for="cb-${layer.id}" class="text-xs font-semibold text-gray-800 dark:text-gray-200 block truncate cursor-pointer" title="${layer.title}">${layer.title}</label>
+                  <p class="text-[9px] text-gray-400 dark:text-gray-500 block truncate" title="${layer.id}">ID: ${layer.layerId !== undefined ? layer.layerId : layer.id}</p>
+              </div>
+              ${createFormatDropdown(layer)}
+              <button class="btn-add-single shrink-0 bg-blue-100 dark:bg-blue-900/40 hover:bg-blue-200 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-300 w-7 h-7 rounded-full flex items-center justify-center transition-colors shadow-xs ml-1" data-id="${layer.id}" title="Add Single Layer"><i class="fa-solid fa-plus text-[10px]"></i></button>
+          </div>
+      `;
+      parentContainer.appendChild(div);
+  };
+
+  // Reusable component builder for Folders
+  const buildFolderItem = (title, searchStr, parentContainer) => {
+      const folderWrapper = document.createElement('div');
+      folderWrapper.className = 'folder-item mb-1 border border-gray-300 dark:border-gray-600 rounded bg-gray-100 dark:bg-gray-800 shadow-xs flex flex-col overflow-hidden';
+      folderWrapper.setAttribute('data-search', searchStr);
+
+      const folderHeader = document.createElement('div');
+      folderHeader.className = 'flex items-stretch border-b border-transparent dark:border-gray-700 folder-header cursor-pointer select-none hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors';
+      
+      folderHeader.innerHTML = `
+          <div class="flex-1 flex flex-col p-1.5 min-w-0">
+              <div class="flex items-center overflow-hidden pr-1 space-x-1.5 pl-0.5">
+                  <button class="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 shrink-0 flex justify-center transition-colors">
+                      <i class="collapse-icon fa-solid fa-folder text-[12px] w-4 text-center"></i>
+                  </button>
+                  <span class="text-xs font-bold text-gray-700 dark:text-gray-200 truncate flex-1" title="${title}">${title}</span>
+              </div>
+          </div>
+      `;
+
+      const childrenDiv = document.createElement('div');
+      childrenDiv.className = 'folder-children pl-4 pr-1 py-1 min-h-[15px] space-y-1 hidden transition-all';
+      
+      folderHeader.addEventListener('click', () => {
+          const icon = folderHeader.querySelector('.collapse-icon');
+          if (icon.classList.contains('fa-folder')) {
+              icon.classList.remove('fa-folder');
+              icon.classList.add('fa-folder-open');
+          } else {
+              icon.classList.remove('fa-folder-open');
+              icon.classList.add('fa-folder');
+          }
+          childrenDiv.classList.toggle('hidden');
+      });
+
+      folderWrapper.appendChild(folderHeader);
+      folderWrapper.appendChild(childrenDiv);
+      parentContainer.appendChild(folderWrapper);
+
+      return childrenDiv;
+  };
+
+  // 1. Render Standalone Layers
+  standaloneLayers.forEach(layer => buildLayerItem(layer, availableLayerList));
+
+  // 2. Render Structured Services
+  const sortedServices = Object.values(servicesMap).sort((a,b) => a.serviceName.localeCompare(b.serviceName));
+
+  sortedServices.forEach(service => {
+      const rootChildrenDiv = buildFolderItem(service.serviceName, service.serviceName.toLowerCase(), availableLayerList);
+      const groupContainers = { '-1': rootChildrenDiv };
+
+      service.layers.sort((a, b) => {
+          const depthA = a.depth || 1;
+          const depthB = b.depth || 1;
+          if (depthA !== depthB) return depthA - depthB;
+          const idA = a.layerId !== undefined ? a.layerId : 0;
+          const idB = b.layerId !== undefined ? b.layerId : 0;
+          return idA - idB;
+      });
+
+      service.layers.forEach(layer => {
+          const parentId = layer.parentLayerId !== undefined ? layer.parentLayerId : -1;
+          const parentContainer = groupContainers[parentId] || rootChildrenDiv;
+
+          if (layer.isGroup) {
+              const searchStr = `${layer.title} ${layer.id} ${layer.serviceName}`.toLowerCase();
+              const groupChildrenDiv = buildFolderItem(layer.title, searchStr, parentContainer);
+              const gid = layer.layerId !== undefined ? layer.layerId : layer.id;
+              groupContainers[gid] = groupChildrenDiv;
+          } else {
+              buildLayerItem(layer, parentContainer);
+          }
+      });
+  });
+
   document.querySelectorAll('.layer-checkbox').forEach(cb => cb.addEventListener('change', (e) => togglePreviewLayer(e.target.value, e.target.checked)));
   document.querySelectorAll('.btn-add-single').forEach(btn => {
       btn.addEventListener('click', (e) => {

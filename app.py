@@ -525,7 +525,8 @@ def esri_search():
             return jsonify({"success": True, "layers": layers_output})
 
         # Case 3: Directory / Subfolder Catalog (AGOL / ArcGIS Server)
-        services_to_fetch = []
+        # Use a dictionary to deduplicate overlapping MapServers/FeatureServers
+        services_dict = {}
 
         if '/rest/services' in clean_url.lower():
             base_rest_url = re.split(r'/rest/services', clean_url, flags=re.IGNORECASE)[0] + '/rest/services'
@@ -538,11 +539,13 @@ def esri_search():
                 s_type = s.get('type', '')
                 if s_type in ['FeatureServer', 'MapServer', 'ImageServer']:
                     s_url = f"{base_rest_url}/{s_name}/{s_type}"
-                    services_to_fetch.append({
-                        "name": s_name,
-                        "type": s_type,
-                        "url": s_url
-                    })
+                    
+                    # Deduplicate: If both MapServer and FeatureServer exist, prefer FeatureServer
+                    if s_name in services_dict:
+                        if s_type == 'FeatureServer':
+                            services_dict[s_name] = {"name": s_name, "type": s_type, "url": s_url}
+                    else:
+                        services_dict[s_name] = {"name": s_name, "type": s_type, "url": s_url}
 
         extract_services_from_catalog(root_json)
 
@@ -558,6 +561,9 @@ def esri_search():
                     extract_services_from_catalog(f_res.json())
             except Exception:
                 pass
+        
+        # Convert the deduplicated dictionary back into a list
+        services_to_fetch = list(services_dict.values())
 
         if not services_to_fetch:
             return jsonify({"error": "No FeatureServer or MapServer services found in this directory."}), 404
@@ -565,7 +571,7 @@ def esri_search():
         def fetch_service_layers(s_info):
             s_url = s_info['url']
             s_type = s_info['type']
-            s_raw_name = s_info['name'].split('/')[-1].replace('_', ' ')
+            s_name_full = s_info['name']  # e.g., "Economy/Petroleum"
             
             try:
                 res = requests.get(f"{s_url}?f=json", headers=headers, verify=False, timeout=12)
@@ -573,10 +579,26 @@ def esri_search():
                     return []
                 s_data = res.json()
                 
-                doc_title = s_data.get('documentInfo', {}).get('Title') or s_data.get('serviceDescription')
-                clean_service_title = doc_title.strip() if (doc_title and str(doc_title).strip() and len(str(doc_title)) < 60) else s_raw_name
+                # Safely grab the raw title
+                doc_title = str(s_data.get('documentInfo', {}).get('Title') or '').strip()
+                
+                # Extract the REST folder and the base service name from the URL path
+                path_parts = s_name_full.split('/')
+                folder_context = path_parts[0].replace('_', ' ') if len(path_parts) > 1 else ''
+                service_basename = path_parts[-1].replace('_', ' ')
+                
+                # Trap lazy metadata (project files, generic defaults, or overly long descriptions)
+                bad_keywords = ['.aprx', '.mxd', 'untitled', 'map', 'layers']
+                if not doc_title or any(kw in doc_title.lower() for kw in bad_keywords) or len(doc_title) > 60:
+                    map_title = service_basename
+                else:
+                    map_title = doc_title
 
-                return process_service_layers(s_data, s_url, clean_service_title, s_type, s_info['name'])
+                # Combine the REST folder and the Map title for a perfect UI group name
+                clean_service_title = f"{folder_context} / {map_title}" if folder_context else map_title
+
+                return process_service_layers(s_data, s_url, clean_service_title, s_type, s_name_full)
+            
             except Exception as err:
                 print(f"Error fetching service {s_url}: {err}")
                 return []
