@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, request, Response, render_template, jsonify
 import requests
 import json
@@ -99,23 +100,38 @@ def fetch_server_metadata(url, server_type, user_name):
             data = resp.json()
 
             doc_info = data.get('documentInfo') or {}
-            metadata['name'] = data.get('mapName') or data.get('name') or doc_info.get('Title') or "ESRI Server"
             
-            raw_desc = data.get('description') or data.get('serviceDescription') or doc_info.get('Comments') or doc_info.get('Subject') or data.get('copyrightText')
-            if raw_desc and str(raw_desc).strip():
-                metadata['description'] = str(raw_desc).replace('<br />', '\n').replace('<br>', '\n').strip()
-            else:
-                metadata['description'] = "No description provided by the publisher."
+            # --- DIRECT MAP/FEATURE SERVER METADATA ---
+            if 'layers' in data or 'type' in data:
+                metadata['name'] = data.get('mapName') or data.get('name') or doc_info.get('Title') or "ESRI Server"
+                raw_desc = data.get('description') or data.get('serviceDescription') or doc_info.get('Comments') or doc_info.get('Subject') or data.get('copyrightText')
+                if raw_desc and str(raw_desc).strip():
+                    metadata['description'] = str(raw_desc).replace('<br />', '\n').replace('<br>', '\n').strip()
+                else:
+                    metadata['description'] = "No description provided by the publisher."
 
-            metadata['provider'] = doc_info.get('Author') or "Unknown Provider"
-            metadata['capabilities']['max_record_count'] = data.get('maxRecordCount', 1000)
+                metadata['provider'] = doc_info.get('Author') or "Unknown Provider"
+                metadata['capabilities']['max_record_count'] = data.get('maxRecordCount', 1000)
 
-            extent = data.get('fullExtent') or data.get('initialExtent') or data.get('extent')
-            if isinstance(extent, dict) and 'xmin' in extent and 'ymin' in extent:
-                metadata['geographic_extent']['bbox'] = [
-                    extent['xmin'], extent['ymin'], 
-                    extent['xmax'], extent['ymax']
-                ]
+                extent = data.get('fullExtent') or data.get('initialExtent') or data.get('extent')
+                if isinstance(extent, dict) and 'xmin' in extent and 'ymin' in extent:
+                    metadata['geographic_extent']['bbox'] = [
+                        extent['xmin'], extent['ymin'], 
+                        extent['xmax'], extent['ymax']
+                    ]
+
+            # --- DIRECTORY / CATALOG METADATA (AGOL / REST Root) ---
+            elif 'services' in data or 'folders' in data:
+                service_count = len(data.get('services', []))
+                folder_count = len(data.get('folders', []))
+                
+                # Derive cleaner title from URL path or user input
+                path_parts = [p for p in base_url.split('/') if p and p.lower() not in ['rest', 'services', 'arcgis']]
+                catalog_label = path_parts[-1] if path_parts else "ArcGIS Online"
+                
+                metadata['name'] = f"{catalog_label} Services Directory"
+                metadata['description'] = f"ArcGIS REST Services Directory containing {service_count} services across {folder_count} folders."
+                metadata['provider'] = catalog_label
 
         elif metadata['type'] == 'WFS':
             parsed_url = urlparse(url)
@@ -154,7 +170,6 @@ def fetch_server_metadata(url, server_type, user_name):
         elif metadata['type'] == 'CKAN':
             clean_url = url.rstrip('/')
             
-            # Strip language tags and package search paths to find the root portal URL
             if clean_url.endswith('/en') or clean_url.endswith('/fr'):
                 clean_url = clean_url[:-3]
             if '/api/3/action' in clean_url:
@@ -406,6 +421,175 @@ def ckan_search():
 
     except Exception as e:
         return jsonify({"error": f"Failed to fetch CKAN catalog: {str(e)}"}), 500
+
+@app.route('/api/esri_search', methods=['POST'])
+def esri_search():
+    data = request.json or {}
+    raw_url = data.get('url', '').strip()
+    if not raw_url:
+        return jsonify({"error": "No URL provided"}), 400
+
+    if not raw_url.startswith(('http://', 'https://')):
+        raw_url = f"https://{raw_url}"
+
+    clean_url = raw_url.split('?')[0].rstrip('/')
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json'
+    }
+
+    try:
+        resp = requests.get(f"{clean_url}?f=json", headers=headers, verify=False, timeout=15)
+        resp.raise_for_status()
+        root_json = resp.json()
+
+        layers_output = []
+
+        # Helper to process layers inside a single MapServer / FeatureServer endpoint
+        def process_service_layers(s_data, s_url, s_title, s_type, s_name_key):
+            out = []
+            service_layers = s_data.get('layers', [])
+            if not service_layers:
+                out.append({
+                    "id": f"{s_name_key}_0",
+                    "title": s_title,
+                    "url": f"{s_url}/0",
+                    "serviceUrl": s_url,
+                    "layerId": 0,
+                    "serverType": s_type,
+                    "serviceName": s_title,
+                    "parentLayerId": -1,
+                    "isGroup": False,
+                    "depth": 1
+                })
+            else:
+                layer_map = {l.get('id'): l for l in service_layers}
+                
+                def calc_depth(l_id):
+                    d = 1
+                    curr = layer_map.get(l_id)
+                    while curr and curr.get('parentLayerId', -1) != -1:
+                        d += 1
+                        curr = layer_map.get(curr.get('parentLayerId'))
+                    return d
+
+                for l in service_layers:
+                    l_id = l.get('id')
+                    l_name = l.get('name', f'Layer {l_id}')
+                    parent_id = l.get('parentLayerId', -1)
+                    sub_ids = l.get('subLayerIds')
+                    is_group = bool(sub_ids and len(sub_ids) > 0) or (l.get('type') == 'Group Layer')
+                    depth = calc_depth(l_id)
+
+                    out.append({
+                        "id": f"{s_name_key}_{l_id}",
+                        "title": l_name,
+                        "url": f"{s_url}/{l_id}",
+                        "serviceUrl": s_url,
+                        "layerId": l_id,
+                        "serverType": s_type,
+                        "serviceName": s_title,
+                        "parentLayerId": parent_id,
+                        "isGroup": is_group,
+                        "depth": depth
+                    })
+            return out
+
+        # Case 1: Direct Service Endpoint (MapServer or FeatureServer)
+        if 'layers' in root_json:
+            service_title = root_json.get('mapName') or root_json.get('name') or root_json.get('documentInfo', {}).get('Title') or clean_url.split('/')[-2]
+            server_type = 'FeatureServer' if 'featureserver' in clean_url.lower() else 'MapServer'
+            layers_output = process_service_layers(root_json, clean_url, service_title, server_type, service_title)
+            return jsonify({"success": True, "layers": layers_output})
+
+        # Case 2: Direct Single Layer Endpoint (e.g. .../FeatureServer/0)
+        elif 'type' in root_json and ('geometryType' in root_json or 'fields' in root_json):
+            layer_id = root_json.get('id', 0)
+            layer_name = root_json.get('name', 'Layer')
+            server_type = 'FeatureServer' if 'featureserver' in clean_url.lower() else 'MapServer'
+            service_url = clean_url.rsplit('/', 1)[0]
+
+            layers_output.append({
+                "id": str(layer_id),
+                "title": layer_name,
+                "url": clean_url,
+                "serviceUrl": service_url,
+                "layerId": layer_id,
+                "serverType": server_type,
+                "serviceName": layer_name,
+                "parentLayerId": -1,
+                "isGroup": False,
+                "depth": 1
+            })
+            return jsonify({"success": True, "layers": layers_output})
+
+        # Case 3: Directory / Subfolder Catalog (AGOL / ArcGIS Server)
+        services_to_fetch = []
+
+        if '/rest/services' in clean_url.lower():
+            base_rest_url = re.split(r'/rest/services', clean_url, flags=re.IGNORECASE)[0] + '/rest/services'
+        else:
+            base_rest_url = clean_url
+
+        def extract_services_from_catalog(catalog_data):
+            for s in catalog_data.get('services', []):
+                s_name = s.get('name', '')
+                s_type = s.get('type', '')
+                if s_type in ['FeatureServer', 'MapServer', 'ImageServer']:
+                    s_url = f"{base_rest_url}/{s_name}/{s_type}"
+                    services_to_fetch.append({
+                        "name": s_name,
+                        "type": s_type,
+                        "url": s_url
+                    })
+
+        extract_services_from_catalog(root_json)
+
+        folders = root_json.get('folders', [])
+        for folder in folders:
+            if clean_url.rstrip('/').lower().endswith(f"/{folder.lower()}"):
+                continue
+
+            folder_url = f"{base_rest_url}/{folder}?f=json"
+            try:
+                f_res = requests.get(folder_url, headers=headers, verify=False, timeout=10)
+                if f_res.ok:
+                    extract_services_from_catalog(f_res.json())
+            except Exception:
+                pass
+
+        if not services_to_fetch:
+            return jsonify({"error": "No FeatureServer or MapServer services found in this directory."}), 404
+
+        def fetch_service_layers(s_info):
+            s_url = s_info['url']
+            s_type = s_info['type']
+            s_raw_name = s_info['name'].split('/')[-1].replace('_', ' ')
+            
+            try:
+                res = requests.get(f"{s_url}?f=json", headers=headers, verify=False, timeout=12)
+                if not res.ok:
+                    return []
+                s_data = res.json()
+                
+                doc_title = s_data.get('documentInfo', {}).get('Title') or s_data.get('serviceDescription')
+                clean_service_title = doc_title.strip() if (doc_title and str(doc_title).strip() and len(str(doc_title)) < 60) else s_raw_name
+
+                return process_service_layers(s_data, s_url, clean_service_title, s_type, s_info['name'])
+            except Exception as err:
+                print(f"Error fetching service {s_url}: {err}")
+                return []
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(fetch_service_layers, s) for s in services_to_fetch]
+            for future in as_completed(futures):
+                layers_output.extend(future.result())
+
+        return jsonify({"success": True, "layers": layers_output})
+
+    except Exception as e:
+        return jsonify({"error": f"Failed to crawl ESRI Directory: {str(e)}"}), 500
 
 @app.route('/proxy', methods=['GET'])
 def proxy_download():

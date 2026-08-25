@@ -375,15 +375,18 @@ export const togglePreviewLayer = (layerId, isVisible) => {
             pointToLayer: createGeoJsonPointToLayer(customStyle, previewPaneName, previewRenderer)
         });
     } else {
-        const baseUrl = AppState.currentServerUrl.split('?')[0];
+        const baseUrl = meta.serviceUrl || meta.url || AppState.currentServerUrl.split('?')[0];
+        const isFeatureServer = meta.serverType === 'FeatureServer' || baseUrl.toLowerCase().includes('featureserver') || (meta.url && meta.url.toLowerCase().includes('featureserver'));
+        
         if (AppState.currentServerType === 'WFS') {
             mapLayer = L.tileLayer.wms(baseUrl, { pane: previewPaneName, layers: meta.id, format: 'image/png', transparent: true });
         } else {
-            if (!baseUrl.toLowerCase().includes('featureserver')) {
-                mapLayer = L.esri.dynamicMapLayer({ pane: previewPaneName, url: baseUrl, layers: [meta.id], opacity: 0.8 });
+            if (!isFeatureServer) {
+                const layerId = meta.layerId !== undefined ? meta.layerId : meta.id;
+                mapLayer = L.esri.dynamicMapLayer({ pane: previewPaneName, url: baseUrl, layers: [layerId], opacity: 0.8 });
             } else {
-                const fUrl = baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`;
-                mapLayer = L.esri.featureLayer({ pane: previewPaneName, url: fUrl });
+                const targetUrl = meta.url || (baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`);
+                mapLayer = L.esri.featureLayer({ pane: previewPaneName, url: targetUrl });
             }
         }
     }
@@ -1980,12 +1983,42 @@ const renderAvailableLayers = () => {
   searchContainer?.classList.remove('hidden');
   if (btnAddBulk) btnAddBulk.disabled = false;
 
+  let currentService = null;
+
   AppState.fetchedLayers.forEach((layer) => {
+    // Render Service Header when transitioning to a new MapServer / FeatureServer
+    if (layer.serviceName && layer.serviceName !== currentService) {
+        currentService = layer.serviceName;
+        const serviceHeader = document.createElement('div');
+        serviceHeader.className = 'available-service-header flex items-center px-2 py-1.5 bg-gray-200 dark:bg-gray-800 rounded font-bold text-gray-800 dark:text-gray-200 text-xs mt-3 mb-1 border-l-4 border-blue-600 shadow-xs';
+        serviceHeader.innerHTML = `
+            <i class="fa-solid fa-folder-tree text-blue-600 dark:text-blue-400 mr-2 text-xs"></i>
+            <span class="truncate" title="${currentService}">${currentService}</span>
+        `;
+        availableLayerList.appendChild(serviceHeader);
+    }
+
     const div = document.createElement('div');
-    div.className = 'available-layer-item flex items-center p-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 rounded border border-transparent hover:border-gray-200 dark:hover:border-gray-600 mb-1 transition-colors';
-    div.setAttribute('data-search', `${layer.title} ${layer.id}`.toLowerCase());
+    div.className = 'available-layer-item flex items-center p-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 rounded border border-transparent hover:border-gray-200 dark:hover:border-gray-600 mb-0.5 transition-colors';
+    div.setAttribute('data-search', `${layer.title} ${layer.id} ${layer.serviceName || ''}`.toLowerCase());
     
-    // Build the format dropdown specifically for CKAN layers
+    // Dynamic Indentation based on Depth
+    const depth = layer.depth || 1;
+    const indentPx = (depth - 1) * 16 + (layer.serviceName ? 8 : 0);
+    div.style.paddingLeft = `${indentPx + 6}px`;
+
+    // Render Group Layers differently (no direct preview/add buttons)
+    if (layer.isGroup) {
+        div.classList.add('bg-gray-50/50', 'dark:bg-gray-800/40', 'font-semibold', 'my-0.5');
+        div.innerHTML = `
+            <i class="fa-solid fa-layer-group text-amber-500 mr-2 text-[11px] shrink-0"></i>
+            <span class="text-xs text-gray-700 dark:text-gray-300 font-semibold truncate" title="${layer.title}">${layer.title}</span>
+        `;
+        availableLayerList.appendChild(div);
+        return;
+    }
+
+    // Format dropdown (for CKAN layers)
     let formatDropdown = '';
     if (layer.type === 'CKAN' && layer.resources && layer.resources.length > 0) {
         const options = layer.resources.map(r => `<option value="${r.url}" data-ext="${r.ext}">${r.display}</option>`).join('');
@@ -2007,7 +2040,7 @@ const renderAvailableLayers = () => {
         <div class="ml-1 text-xs flex-1 overflow-hidden pr-2 cursor-pointer flex items-center">
             <div class="flex-1 min-w-0">
                 <label for="cb-${layer.id}" class="font-medium text-gray-700 dark:text-gray-200 block truncate cursor-pointer" title="${layer.title}">${layer.title}</label>
-                <p class="text-gray-400 dark:text-gray-500 text-[10px] truncate" title="${layer.id}">ID: ${layer.id}</p>
+                <p class="text-gray-400 dark:text-gray-500 text-[10px] truncate" title="${layer.id}">ID: ${layer.layerId !== undefined ? layer.layerId : layer.id}</p>
             </div>
             ${formatDropdown}
         </div>
@@ -2067,18 +2100,21 @@ const addLayerToMap = (layerId, switchTabAfter = true) => {
         mapLayer = createCustomGeoJSONLayer(geoJsonData, customStyle, paneName);
     } else {
         map.createPane(paneName);
-        const baseUrl = AppState.currentServerUrl.split('?')[0];
+        const baseUrl = meta.serviceUrl || meta.url || AppState.currentServerUrl.split('?')[0];
+        const isFeatureServer = meta.serverType === 'FeatureServer' || baseUrl.toLowerCase().includes('featureserver') || (meta.url && meta.url.toLowerCase().includes('featureserver'));
+
         if (AppState.currentServerType === 'WFS') {
           mapLayer = L.tileLayer.wms(baseUrl, { pane: paneName, layers: meta.id, format: 'image/png', transparent: true });
           exportUrl = `${baseUrl}?service=WFS&version=1.1.0&request=GetFeature&typeName=${encodeURIComponent(meta.id)}&outputFormat=application%2Fjson&srsName=EPSG:4326`;
         } else {
-          if (!baseUrl.toLowerCase().includes('featureserver')) {
-            mapLayer = L.esri.dynamicMapLayer({ pane: paneName, url: baseUrl, layers: [meta.id], opacity: 0.8 });
-            exportUrl = `${baseUrl}/${meta.id}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
+          if (!isFeatureServer) {
+            const layerId = meta.layerId !== undefined ? meta.layerId : meta.id;
+            mapLayer = L.esri.dynamicMapLayer({ pane: paneName, url: baseUrl, layers: [layerId], opacity: 0.8 });
+            exportUrl = `${baseUrl}/${layerId}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
           } else {
-            const fUrl = baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`;
-            mapLayer = L.esri.featureLayer({ pane: paneName, url: fUrl });
-            exportUrl = `${fUrl}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
+            const targetUrl = meta.url || (baseUrl.endsWith(`/${meta.id}`) ? baseUrl : `${baseUrl}/${meta.id}`);
+            mapLayer = L.esri.featureLayer({ pane: paneName, url: targetUrl });
+            exportUrl = `${targetUrl}/query?where=1=1&outFields=*&f=geojson&outSR=4326`;
           }
         }
     }
@@ -2223,6 +2259,34 @@ const handleFetchLayers = async () => {
         } catch (err) {
             console.error("CKAN fetch error:", err);
             throw new Error(err.message || "Failed to parse CKAN Catalog.");
+        }
+    }
+
+    // --- ESRI / ARCGIS FETCH INTERCEPT ---
+    if (AppState.currentServerType === 'ARCGIS' || AppState.currentServerType === 'ESRI') {
+        showToast("Scanning ArcGIS Server / Directory...");
+        try {
+            const response = await fetch('/api/esri_search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: rawUrl })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok || !data.success) {
+                throw new Error(data.error || "Failed to search ArcGIS portal");
+            }
+
+            AppState.fetchedLayers = data.layers || [];
+            
+            renderAvailableLayers();
+            switchTab('available');
+            showToast(`Loaded ${AppState.fetchedLayers.length} ArcGIS layers!`);
+            return;
+        } catch (err) {
+            console.error("ArcGIS fetch error:", err);
+            throw new Error(err.message || "Failed to parse ArcGIS Catalog.");
         }
     }
 
