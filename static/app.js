@@ -70,8 +70,6 @@ const filterDataValues = getEl('filter-data-values');
 const filterDataSearch = getEl('filter-data-search');
 const btnClearFilterSearch = getEl('btn-clear-filter-search');
 
-const osmKeyInput = getEl('osm-key');
-const osmValueDatalist = getEl('osm-values');
 const btnOsmInspect = getEl('btn-osm-inspect');
 const osmInspectContainer = getEl('osm-inspect-container');
 const osmInspectResults = getEl('osm-inspect-results');
@@ -611,13 +609,21 @@ const executeOsmInspect = async (bounds) => {
         });
         results.innerHTML = html;
         
+        // --- NEW: Map to the new QGIS-style query builder ---
         document.querySelectorAll('.inspect-tag-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 const el = e.currentTarget;
-                if (osmKeyInput) osmKeyInput.value = el.getAttribute('data-k');
-                const valEl = getEl('osm-value');
-                if (valEl) valEl.value = el.getAttribute('data-v');
-                showToast(`Copied ${el.getAttribute('data-k')}=${el.getAttribute('data-v')} to Query Builder!`);
+                const targetKey = el.getAttribute('data-k');
+                const targetVal = el.getAttribute('data-v');
+                
+                const firstRow = document.querySelector('.osm-tag-row');
+                if (firstRow) {
+                    const keyInp = firstRow.querySelector('.osm-key');
+                    const valInp = firstRow.querySelector('.osm-val');
+                    if (keyInp) keyInp.value = targetKey;
+                    if (valInp) valInp.value = targetVal;
+                }
+                showToast(`Copied ${targetKey}=${targetVal} to Query Builder!`);
             });
         });
     } catch (err) { status.textContent = 'Scan failed. Area might be too large or servers are currently down.'; }
@@ -2643,7 +2649,6 @@ const handleFetchLayers = async () => {
   fetchSpinner?.classList.remove('hidden'); 
   if (fetchText) fetchText.textContent = 'Fetching...';
 
-  // --- THE FIX: Immediate visual feedback in the list area ---
   switchTab('available');
   if (availableLayerList) {
       availableLayerList.innerHTML = `
@@ -2655,21 +2660,28 @@ const handleFetchLayers = async () => {
       `;
   }
   searchContainer?.classList.add('hidden');
-  // -----------------------------------------------------------
 
   try {
     if (AppState.currentServerType === 'OVERPASS') {
-        const key = getEl('osm-key')?.value.trim();
-        const val = getEl('osm-value')?.value.trim();
-        const featName = getEl('osm-name')?.value.trim();
+        // --- NEW: Parse the dynamic tag builder rows ---
+        const tagRows = document.querySelectorAll('.osm-tag-row');
+        const tags = [];
+        tagRows.forEach(row => {
+            const key = row.querySelector('.osm-key').value.trim();
+            const val = row.querySelector('.osm-val').value.trim();
+            if (key) tags.push({ key, val });
+        });
+
+        if (tags.length === 0) throw new Error("Please enter at least one Tag Key.");
+
+        const timeout = parseInt(getEl('osm-timeout')?.value) || 25;
+        const maxChunks = parseInt(getEl('osm-max-chunks')?.value) || 16;
         const loc = getEl('osm-location')?.value.trim();
         const geomType = getEl('osm-geom')?.value;
 
-        if (!key) throw new Error("Please enter a Tag Key.");
-
         const bounds = map.getBounds();
         const payload = {
-            key, val, featName, loc, geomType,
+            tags, loc, geomType, timeout, maxChunks,
             bbox: {
                 south: bounds.getSouth(),
                 west: bounds.getWest(),
@@ -2704,7 +2716,7 @@ const handleFetchLayers = async () => {
 
         if (!geoJson.features || geoJson.features.length === 0) throw new Error("No renderable geometry found.");
         
-        if (loc || featName) { 
+        if (loc) { 
             try { 
                 const tempLayer = L.geoJSON(geoJson); 
                 const layerBounds = tempLayer.getBounds(); 
@@ -2712,9 +2724,11 @@ const handleFetchLayers = async () => {
             } catch(e) {} 
         }
 
-        let layerName = `OSM: ${key}${val ? '=' + val : ''}`;
-        if (loc) layerName = `OSM: ${loc} (${key}${val ? '=' + val : ''})`;
-        else layerName = `OSM: Map View (${key}${val ? '=' + val : ''})`;
+        // --- NEW: Generate a smart layer name based on tags ---
+        const firstTag = tags[0];
+        let layerName = `OSM: ${firstTag.key}${firstTag.val ? '=' + firstTag.val : ''}`;
+        if (tags.length > 1) layerName += ` (+${tags.length - 1})`;
+        if (loc) layerName = `OSM: ${loc} (${firstTag.key})`;
 
         AppState.fetchedLayers = [{ id: `osm_${Date.now()}`, title: layerName, geoJsonData: geoJson }];
         AppState.lastFetchedOsmGeoJson = geoJson; 
@@ -2749,7 +2763,6 @@ const handleFetchLayers = async () => {
     if (toolsContainer) { toolsContainer.classList.add('hidden'); toolsContainer.classList.remove('flex'); }
 
     if (AppState.currentServerType === 'CKAN') {
-        showToast("Sniffing out CKAN API & loading catalog...");
         try {
             const response = await fetch('/api/ckan_search', {
                 method: 'POST',
@@ -2776,7 +2789,6 @@ const handleFetchLayers = async () => {
     }
 
     if (AppState.currentServerType === 'ARCGIS' || AppState.currentServerType === 'ESRI') {
-        showToast("Scanning ArcGIS Server / Directory...");
         try {
             const response = await fetch('/api/esri_search', {
                 method: 'POST',
@@ -2966,17 +2978,20 @@ getEl('server-type')?.addEventListener('change', (e) => {
         urlContainer?.classList.add('hidden');
         localContainer?.classList.add('hidden');
         overpassBuilder?.classList.remove('hidden');
+        overpassBuilder?.classList.add('flex');
         if (urlFetchBtn) urlFetchBtn.classList.add('hidden');
         if (saveBtn) { saveBtn.disabled = true; saveBtn.classList.add('opacity-50'); }
     } else if (type === 'LOCAL') {
         urlContainer?.classList.add('hidden');
         overpassBuilder?.classList.add('hidden');
+        overpassBuilder?.classList.remove('flex');
         localContainer?.classList.remove('hidden');
         localContainer?.classList.add('flex');
         if (urlFetchBtn) urlFetchBtn.classList.add('hidden');
     } else {
         urlContainer?.classList.remove('hidden');
         overpassBuilder?.classList.add('hidden');
+        overpassBuilder?.classList.remove('flex');
         localContainer?.classList.add('hidden');
         localContainer?.classList.remove('flex');
         if (urlFetchBtn) urlFetchBtn.classList.remove('hidden');
@@ -3263,22 +3278,68 @@ if (addedSearchContainerDOM && btnUndoDom && btnRedoDom && searchInputDiv) {
     addedSearchContainerDOM.insertBefore(btnUndoDom, btnRedoDom);
 }
 
-const initOsmDatalists = () => {
-    const keysList = getEl('osm-keys');
-    const valuesList = getEl('osm-values');
-    const keyInput = getEl('osm-key');
+// --- NEW: Dynamic Tag Builder Handlers ---
+const updateRemoveButtons = () => {
+    const rows = document.querySelectorAll('.osm-tag-row');
+    rows.forEach((row) => {
+        const remBtn = row.querySelector('.btn-remove-tag');
+        if (rows.length === 1) {
+            remBtn.disabled = true;
+            remBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        } else {
+            remBtn.disabled = false;
+            remBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+    });
+};
 
+const setupTagButtons = () => {
+    const container = getEl('osm-tags-container');
+    if (!container) return;
+
+    container.addEventListener('click', (e) => {
+        const addBtn = e.target.closest('.btn-add-tag');
+        const remBtn = e.target.closest('.btn-remove-tag');
+
+        if (addBtn) {
+            const newRow = document.createElement('div');
+            newRow.className = 'flex items-center space-x-1 osm-tag-row mt-1';
+            newRow.innerHTML = `
+                <input type="text" class="osm-key flex-1 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white" placeholder="Key (e.g. amenity)" list="osm-keys">
+                <input type="text" class="osm-val flex-1 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white" placeholder="Value (e.g. cafe)" list="osm-values">
+                <button type="button" class="btn-add-tag bg-emerald-100 hover:bg-emerald-200 text-emerald-700 dark:bg-emerald-900/50 dark:hover:bg-emerald-800 dark:text-emerald-400 w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-plus text-[10px]"></i></button>
+                <button type="button" class="btn-remove-tag bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/50 dark:hover:bg-red-800 dark:text-red-400 w-6 h-6 rounded flex items-center justify-center transition-colors"><i class="fa-solid fa-minus text-[10px]"></i></button>
+            `;
+            container.appendChild(newRow);
+            updateRemoveButtons();
+        }
+
+        if (remBtn && !remBtn.disabled) {
+            const row = remBtn.closest('.osm-tag-row');
+            if (row) {
+                row.remove();
+                updateRemoveButtons();
+            }
+        }
+    });
+};
+
+const initOsmDatalists = () => {
+    setupTagButtons();
+    const keysList = getEl('osm-keys');
     if (keysList) keysList.innerHTML = Object.keys(commonOsmTags).map(k => `<option value="${k}">`).join('');
 
-    const populateValues = (selectedKey) => {
-        if (!valuesList) return;
-        const key = selectedKey ? selectedKey.toLowerCase().trim() : '';
-        const values = commonOsmTags[key] || ['yes'];
-        valuesList.innerHTML = values.map(v => `<option value="${v}">`).join('');
-    };
-
-    keyInput?.addEventListener('input', (e) => populateValues(e.target.value));
-    keyInput?.addEventListener('focus', (e) => populateValues(e.target.value));
+    // Event delegation so dynamically added inputs still get autocomplete
+    document.addEventListener('input', (e) => {
+        if (e.target.classList.contains('osm-key')) {
+            const key = e.target.value.toLowerCase().trim();
+            const valuesList = getEl('osm-values');
+            if (valuesList) {
+                const values = commonOsmTags[key] || ['yes'];
+                valuesList.innerHTML = values.map(v => `<option value="${v}">`).join('');
+            }
+        }
+    });
 };
 
 loadSavedServers();

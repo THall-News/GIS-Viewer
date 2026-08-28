@@ -671,19 +671,34 @@ def proxy_download():
 @app.route('/api/overpass_search', methods=['POST'])
 def overpass_search():
     data = request.json or {}
-    key = data.get('key')
-    val = data.get('val')
+    
+    # 1. Parse the new tags array
+    tags = data.get('tags', [])
     feat_name = data.get('featName')
     loc = data.get('loc')
     geom_type = data.get('geomType', 'all')
     bbox = data.get('bbox')
-
-    if not key:
+    
+    # 2. Extract advanced settings
+    timeout_val = data.get('timeout', 25)
+    max_chunks = data.get('maxChunks', 16)
+    
+    if not tags:
         return jsonify({"error": "Tag key is required"}), 400
+        
+    # 3. Build the Overpass tag query string
+    tag_query = ""
+    for tag in tags:
+        k = tag.get('key')
+        v = tag.get('val')
+        if k:
+            if v:
+                tag_query += f'["{k}"="{v}"]'
+            else:
+                tag_query += f'["{k}"]'
 
-    tag_filter = f'["{key}"="{val}"]' if val else f'["{key}"]'
     if feat_name:
-        tag_filter += f'["name"~"{feat_name}",i]'
+        tag_query += f'["name"~"{feat_name}",i]'
 
     headers = {'User-Agent': 'GIS-Layer-Previewer/1.0 (Python/Requests)'}
     
@@ -715,27 +730,26 @@ def overpass_search():
         return jsonify({"error": "No location or map bounds provided"}), 400
 
     def build_query(bbox_str=None, area_str=None):
-        q = "[out:json][timeout:25];\n"
+        q = f"[out:json][timeout:{timeout_val}];\n"
         if area_str:
             q += f"area({area_str})->.searchArea;\n(\n"
             if geom_type in ['all', 'points']:
-                q += f"  node{tag_filter}(area.searchArea);\n"
+                q += f"  node{tag_query}(area.searchArea);\n"
             if geom_type in ['all', 'lines_polygons']:
-                q += f"  way{tag_filter}(area.searchArea);\n"
-                q += f"  relation{tag_filter}(area.searchArea);\n"
+                q += f"  way{tag_query}(area.searchArea);\n"
+                q += f"  relation{tag_query}(area.searchArea);\n"
             q += ");\n"
         else:
             q += "(\n"
             if geom_type in ['all', 'points']:
-                q += f"  node{tag_filter}({bbox_str});\n"
+                q += f"  node{tag_query}({bbox_str});\n"
             if geom_type in ['all', 'lines_polygons']:
-                q += f"  way{tag_filter}({bbox_str});\n"
-                q += f"  relation{tag_filter}({bbox_str});\n"
+                q += f"  way{tag_query}({bbox_str});\n"
+                q += f"  relation{tag_query}({bbox_str});\n"
             q += ");\n"
         q += "out body;\n>;\nout skel qt;"
         return q
 
-    # --- FALLBACK SERVER LOGIC ---
     # --- BULLETPROOF FALLBACK SERVER LOGIC ---
     overpass_endpoints = [
         "https://overpass-api.de/api/interpreter",
@@ -799,8 +813,9 @@ def overpass_search():
             lat_steps = max(1, math.ceil((n - s) / grid_size))
             lon_steps = max(1, math.ceil((e - w) / grid_size))
 
-            if lat_steps * lon_steps > 25:
-                 return jsonify({"error": "Map area requires too many grid chunks. Please zoom in closer."}), 400
+            total_cells = lat_steps * lon_steps
+            if total_cells > max_chunks:
+                 return jsonify({"error": f"Map area requires too many grid chunks ({total_cells}). Please zoom in closer or increase the Grid Overload Limit in Advanced Settings."}), 400
 
             lat_step_size = (n - s) / lat_steps
             lon_step_size = (e - w) / lon_steps
@@ -808,7 +823,6 @@ def overpass_search():
             all_elements = []
             seen_ids = set()
 
-            total_cells = lat_steps * lon_steps
             current_cell = 0
             
             print(f"\n[Overpass Grid] Slicing query into {total_cells} sub-regions...")
