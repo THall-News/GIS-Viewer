@@ -93,11 +93,26 @@ export const createGeoJsonStyleFunction = (styleState) => {
                 let t = (max > min) ? (rawVal - min) / (max - min) : 0.5;
                 t = Math.max(0, Math.min(1, isNaN(t) ? 0.5 : t)); 
                 
+                // Map rendering curve math
+                const curve = styleState.graduatedCurve || 'linear';
+                if (curve === 'exp') t = Math.pow(t, 2);
+                else if (curve === 'log') t = Math.sqrt(t);
+                else if (curve === 'sigmoid') t = 1 / (1 + Math.exp(-10 * (t - 0.5)));
+                
+                // Opacity curve interpolation
+                const minFOp = styleState.graduatedMinFillOpacity ?? (styleState.graduatedFillOpacity ?? 0.7);
+                const maxFOp = styleState.graduatedMaxFillOpacity ?? (styleState.graduatedFillOpacity ?? 0.7);
+                const minSOp = styleState.graduatedMinStrokeOpacity ?? (styleState.graduatedStrokeOpacity ?? 1.0);
+                const maxSOp = styleState.graduatedMaxStrokeOpacity ?? (styleState.graduatedStrokeOpacity ?? 1.0);
+                
+                const fOp = minFOp + (maxFOp - minFOp) * t;
+                const sOp = minSOp + (maxSOp - minSOp) * t;
+
                 return {
                     fillColor: interpolateColor(styleState.graduatedMinColor, styleState.graduatedMaxColor, t),
-                    fillOpacity: styleState.graduatedFillOpacity ?? 0.7,
+                    fillOpacity: fOp,
                     color: interpolateColor(styleState.graduatedMinStroke, styleState.graduatedMaxStroke, t),
-                    opacity: styleState.graduatedStrokeOpacity ?? 1.0,
+                    opacity: sOp,
                     weight: 2
                 };
             } else {
@@ -141,10 +156,23 @@ export const createGeoJsonPointToLayer = (styleState, paneName, customRenderer) 
                 let t = (max > min) ? (rawVal - min) / (max - min) : 0.5;
                 t = Math.max(0, Math.min(1, isNaN(t) ? 0.5 : t)); 
                 
+                // Map rendering curve math
+                const curve = styleState.graduatedCurve || 'linear';
+                if (curve === 'exp') t = Math.pow(t, 2);
+                else if (curve === 'log') t = Math.sqrt(t);
+                else if (curve === 'sigmoid') t = 1 / (1 + Math.exp(-10 * (t - 0.5)));
+
                 fColor = interpolateColor(styleState.graduatedMinColor, styleState.graduatedMaxColor, t);
                 sColor = interpolateColor(styleState.graduatedMinStroke, styleState.graduatedMaxStroke, t);
-                fOp = styleState.graduatedFillOpacity ?? 0.7;
-                sOp = styleState.graduatedStrokeOpacity ?? 1.0;
+                
+                // Opacity curve interpolation
+                const minFOp = styleState.graduatedMinFillOpacity ?? (styleState.graduatedFillOpacity ?? 0.7);
+                const maxFOp = styleState.graduatedMaxFillOpacity ?? (styleState.graduatedFillOpacity ?? 0.7);
+                const minSOp = styleState.graduatedMinStrokeOpacity ?? (styleState.graduatedStrokeOpacity ?? 1.0);
+                const maxSOp = styleState.graduatedMaxStrokeOpacity ?? (styleState.graduatedStrokeOpacity ?? 1.0);
+                
+                fOp = minFOp + (maxFOp - minFOp) * t;
+                sOp = minSOp + (maxSOp - minSOp) * t;
             } else {
                 fColor = styleState.defaultFill || '#cccccc';
                 sColor = styleState.defaultColor || '#999999';

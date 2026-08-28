@@ -9,7 +9,7 @@ import {
     removePane, clearAllPreviews, darkenHex, hexAlpha, interpolateColor,
     createGeoJsonStyleFunction, createGeoJsonPointToLayer, attachPopupsToFeatures
 } from './mapEngine.js';
-import { saveLayerToCache, deleteCachedLayer } from './db.js';
+import { saveLayerToCache, deleteCachedLayer, getCachedLayers } from './db.js';
 
 // Sync layer state whenever a layer is added, cropped, or re-styled
 export const syncLayerCache = async (layerKey) => {
@@ -31,7 +31,6 @@ export const syncLayerCache = async (layerKey) => {
 export const removeLayerFromCache = async (layerKey) => {
     await deleteCachedLayer(layerKey);
 };
-import { getCachedLayers } from './db.js';
 
 // Safely Query DOM Elements
 const getEl = (id) => document.getElementById(id);
@@ -551,7 +550,6 @@ const executeOsmInspect = async (bounds) => {
         const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
         const query = `[out:json][timeout:25];\n(\n  node(${bbox});\n  way(${bbox});\n  relation(${bbox});\n);\nout tags;`;
         
-        // Use the same bulletproof fallback list as the Python backend
         const endpoints = [
             "https://overpass-api.de/api/interpreter",
             "https://lz4.overpass-api.de/api/interpreter",
@@ -564,7 +562,6 @@ const executeOsmInspect = async (bounds) => {
         let data = null;
         let fetchSuccess = false;
 
-        // Loop through backup servers until one successfully answers
         for (const url of endpoints) {
             try {
                 const res = await fetch(url, { 
@@ -919,8 +916,102 @@ const attachTableResizer = () => {
     });
 };
 
+const attachColumnResizers = () => {
+    const ths = attributeTableContainer.querySelectorAll('.tbl-header');
+    ths.forEach(th => {
+        const resizer = th.querySelector('.col-resizer');
+        if (!resizer) return;
+        let startX, startWidth;
+        
+        resizer.addEventListener('mousedown', (e) => {
+            e.stopPropagation(); 
+            e.preventDefault();
+            startX = e.pageX;
+            startWidth = th.offsetWidth;
+            
+            document.body.classList.add('select-none', 'cursor-col-resize');
+            
+            const onMouseMove = (moveEvt) => {
+                const newWidth = startWidth + (moveEvt.pageX - startX);
+                if (newWidth > 30) {
+                    th.style.minWidth = `${newWidth}px`;
+                    th.style.width = `${newWidth}px`;
+                    th.style.maxWidth = `${newWidth}px`;
+                }
+            };
+            
+            const onMouseUp = () => {
+                document.body.classList.remove('select-none', 'cursor-col-resize');
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+            };
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        });
+    });
+};
+
+let currentTableLayerName = "";
+
+export const highlightTableRow = (rowId) => {
+    if (!attributeTableContainer || attributeTableContainer.classList.contains('hidden')) return;
+
+    if (rowId >= 100 && !AppState.tableShowAll) {
+        AppState.tableShowAll = true;
+        renderTableContent(currentTableLayerName);
+    }
+
+    const isAlreadyHighlighted = AppState.highlightLayer && AppState.highlightLayer._row_id === rowId;
+        
+    if (AppState.highlightLayer) {
+        map.removeLayer(AppState.highlightLayer);
+        AppState.highlightLayer = null;
+    }
+
+    document.querySelectorAll('.tbl-row').forEach(row => {
+        row.classList.remove('bg-blue-100', 'dark:bg-blue-800/60');
+        row.classList.add('hover:bg-blue-50', 'dark:hover:bg-blue-900/30');
+    });
+
+    if (isAlreadyHighlighted) return;
+
+    const targetFeature = AppState.currentTableFeatures.find(f => f.__row_id === rowId);
+    if (targetFeature && targetFeature.geometry) {
+        if (!map.getPane('highlightPane')) {
+            map.createPane('highlightPane');
+            map.getPane('highlightPane').style.zIndex = 2500; 
+            map.getPane('highlightPane').style.pointerEvents = 'none'; 
+        }
+
+        AppState.highlightLayer = L.geoJSON(targetFeature, {
+            pane: 'highlightPane', 
+            interactive: false,
+            style: { color: '#00ffff', weight: 5, opacity: 1, fillColor: '#00ffff', fillOpacity: 0.3 },
+            pointToLayer: (feature, latlng) => {
+                return L.circleMarker(latlng, { pane: 'highlightPane', interactive: false, radius: 10, color: '#00ffff', weight: 4, opacity: 1, fillColor: '#00ffff', fillOpacity: 0.3 });
+            }
+        }).addTo(map);
+        AppState.highlightLayer._row_id = rowId; 
+    }
+    
+    const targetRow = attributeTableContainer.querySelector(`.tbl-row[data-id="${rowId}"]`);
+    if (targetRow) {
+        targetRow.classList.remove('hover:bg-blue-50', 'dark:hover:bg-blue-900/30');
+        targetRow.classList.add('bg-blue-100', 'dark:bg-blue-800/60');
+        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+};
+
 const renderTableContent = (layerName) => {
-    let displayFeatures = [...AppState.currentTableFeatures].slice(0, 100);
+    currentTableLayerName = layerName;
+    const layer = AppState.activeLayers.find(l => l.uniqueKey === AppState.activeTableLayerKey);
+    
+    let displayFeatures = [...AppState.currentTableFeatures];
+    
+    if (!AppState.tableShowAll) {
+        displayFeatures = displayFeatures.slice(0, 100);
+    }
     
     if (AppState.tableSortCol) {
         displayFeatures.sort((a, b) => {
@@ -939,13 +1030,10 @@ const renderTableContent = (layerName) => {
         <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1 pt-1.5">
             <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layerName} Data</div>
             
-            <!-- Action Button Group -->
             <div class="flex items-center space-x-2 pr-1">
-                <!-- NEW: Download CSV Button -->
                 <button id="btn-download-csv" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-0.5 rounded font-medium border border-gray-300 dark:border-gray-600 transition-colors shadow-xs flex items-center" title="Download table as CSV">
                     <i class="fa-solid fa-file-csv mr-1 text-emerald-600 dark:text-emerald-400"></i> Download CSV
                 </button>
-                
                 <button id="btn-bake-coords" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-0.5 rounded font-medium border border-gray-300 dark:border-gray-600 transition-colors shadow-xs flex items-center" title="Extract coordinates to data columns">
                     <i class="fa-solid fa-location-dot mr-1 text-blue-600 dark:text-blue-400"></i> Bake Lat/Long
                 </button>
@@ -953,7 +1041,7 @@ const renderTableContent = (layerName) => {
             </div>
         </div>
         <div class="flex-1 overflow-auto min-h-0 custom-scroll border border-gray-200 dark:border-gray-700 rounded">
-            <table class="min-w-full text-xs text-left border-collapse bg-white dark:bg-gray-800">
+            <table class="min-w-full text-xs text-left border-collapse bg-white dark:bg-gray-800 table-auto">
                 <thead class="bg-gray-100 dark:bg-gray-700 sticky top-0 shadow-xs z-10"><tr>`;
     
     AppState.currentTableHeaders.forEach(h => { 
@@ -963,39 +1051,69 @@ const renderTableContent = (layerName) => {
                 ? '<i class="fa-solid fa-sort-up ml-1 text-blue-600 dark:text-blue-400"></i>' 
                 : '<i class="fa-solid fa-sort-down ml-1 text-blue-600 dark:text-blue-400"></i>';
         }
-        tableHtml += `<th class="px-2 py-1 border border-gray-200 dark:border-gray-600 font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors select-none tbl-header" data-col="${h}">${h} ${sortIcon}</th>`; 
+        tableHtml += `
+            <th class="px-2 py-1 border border-gray-200 dark:border-gray-600 font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors select-none tbl-header relative" data-col="${h}">
+                <span class="mr-2 pointer-events-none">${h} ${sortIcon}</span>
+                <div class="col-resizer absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-blue-400 dark:hover:bg-blue-500 z-10 transition-colors" title="Drag to resize"></div>
+            </th>`; 
     });
     tableHtml += '</tr></thead><tbody>';
 
     displayFeatures.forEach(f => {
         const isHighlighted = AppState.highlightLayer && AppState.highlightLayer._row_id === f.__row_id;
-        const rowClass = isHighlighted ? 'bg-cyan-100 dark:bg-cyan-900/40' : 'hover:bg-blue-50 dark:hover:bg-blue-900/30';
+        const rowClass = isHighlighted ? 'bg-blue-100 dark:bg-blue-800/60' : 'hover:bg-blue-50 dark:hover:bg-blue-900/30';
 
         tableHtml += `<tr class="tbl-row cursor-pointer transition-colors ${rowClass}" data-id="${f.__row_id}">`;
         AppState.currentTableHeaders.forEach(h => {
             const val = f.properties ? f.properties[h] : '';
             const displayVal = (val !== null && val !== undefined) ? val : '';
-            tableHtml += `<td class="px-2 py-0.5 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-300 whitespace-nowrap max-w-[200px] truncate" title="${displayVal}">${displayVal}</td>`;
+            tableHtml += `<td class="px-2 py-0.5 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis" title="${displayVal}">${displayVal}</td>`;
         });
         tableHtml += '</tr>';
     });
 
     tableHtml += '</tbody></table></div>';
-    if (AppState.currentTableFeatures.length >= 100 || AppState.currentTableFeatures.length > displayFeatures.length) {
-       tableHtml += `<p class="text-[9px] text-gray-400 dark:text-gray-500 mt-1 italic text-center shrink-0">Showing up to 100 records for preview.</p>`;
+    
+    const totalCount = layer && !layer.isLocalGeoJSON ? (layer.remoteFeatureCount || AppState.currentTableFeatures.length) : AppState.currentTableFeatures.length;
+    const isPreviewing = !AppState.tableShowAll && (totalCount > 100 || totalCount === '?');
+
+    if (isPreviewing) {
+       tableHtml += `<p class="text-[10px] text-blue-600 dark:text-blue-400 mt-1 italic text-center shrink-0 cursor-pointer hover:underline font-semibold transition-colors" id="btn-load-full-table">Showing ${displayFeatures.length} of ${totalCount} records for preview. Click here to load full table.</p>`;
+    } else {
+       tableHtml += `<p class="text-[9px] text-gray-400 dark:text-gray-500 mt-1 italic text-center shrink-0 cursor-default">Showing all ${displayFeatures.length} records.</p>`;
     }
     
     attributeTableContainer.innerHTML = tableHtml;
     attachTableResizer();
+    attachColumnResizers();
 
-    // --- NEW: Download CSV Logic ---
+    const btnLoadFull = attributeTableContainer.querySelector('#btn-load-full-table');
+    if (btnLoadFull) {
+        btnLoadFull.addEventListener('click', async () => {
+            if (layer && !layer.isLocalGeoJSON) {
+                btnLoadFull.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i> Downloading full dataset...';
+                btnLoadFull.classList.remove('hover:underline', 'cursor-pointer');
+                
+                const success = await ensureGeoJSON(layer);
+                if (success) {
+                    AppState.currentTableFeatures = layer.geoJsonData.features || [];
+                    AppState.currentTableFeatures.forEach((f, i) => f.__row_id = i);
+                } else {
+                    showToast("Failed to fetch full dataset.", true);
+                    return;
+                }
+            }
+            
+            AppState.tableShowAll = true;
+            renderTableContent(layerName);
+        });
+    }
+
     const btnDownloadCsv = attributeTableContainer.querySelector('#btn-download-csv');
     if (btnDownloadCsv) {
         btnDownloadCsv.addEventListener('click', async () => {
-            const layer = AppState.activeLayers.find(l => l.uniqueKey === AppState.activeTableLayerKey);
             if (!layer) return;
 
-            // Ensure we have the full dataset locally before building the CSV
             if (!layer.isLocalGeoJSON) {
                 btnDownloadCsv.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1 text-emerald-600 dark:text-emerald-400"></i> Fetching Data...';
                 btnDownloadCsv.disabled = true;
@@ -1008,51 +1126,40 @@ const renderTableContent = (layerName) => {
             }
 
             const featuresToExport = layer.geoJsonData.features || [];
-            if (featuresToExport.length === 0) {
-                showToast("No data available to export.", true);
-                return;
-            }
+            if (featuresToExport.length === 0) return showToast("No data available to export.", true);
 
-            // Dynamically gather all unique property keys from the entire dataset
             const headerSet = new Set();
             featuresToExport.forEach(f => {
                 if (f.properties) Object.keys(f.properties).forEach(k => headerSet.add(k));
             });
             const headers = Array.from(headerSet);
 
-            // Construct the raw CSV string and escape quotes
             let csvString = headers.join(',') + '\n';
             featuresToExport.forEach(f => {
                 const row = headers.map(h => {
                     let val = f.properties ? f.properties[h] : '';
                     if (val === null || val === undefined) val = '';
-                    val = String(val).replace(/"/g, '""'); // Escape internal double quotes
+                    val = String(val).replace(/"/g, '""'); 
                     return `"${val}"`;
                 });
                 csvString += row.join(',') + '\n';
             });
 
-            // Trigger the download using the existing helper
             const safeName = (layerName || 'export').replace(/[^a-z0-9]/gi, '_').toLowerCase();
             const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
             downloadBlob(blob, `${safeName}.csv`);
             
             showToast(`Downloaded CSV with ${featuresToExport.length} records!`);
-            
-            // Restore button state
             btnDownloadCsv.innerHTML = '<i class="fa-solid fa-file-csv mr-1 text-emerald-600 dark:text-emerald-400"></i> Download CSV';
             btnDownloadCsv.disabled = false;
         });
     }
 
-    // --- Bake Coords Logic ---
     const btnBakeCoords = attributeTableContainer.querySelector('#btn-bake-coords');
     if (btnBakeCoords) {
         btnBakeCoords.addEventListener('click', async () => {
-            const layer = AppState.activeLayers.find(l => l.uniqueKey === AppState.activeTableLayerKey);
             if (!layer) return;
 
-            // Prevent baking against a limited "Preview" dataset
             if (!layer.isLocalGeoJSON) {
                 btnBakeCoords.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1 text-blue-600 dark:text-blue-400"></i> Fetching Data...';
                 btnBakeCoords.disabled = true;
@@ -1064,13 +1171,11 @@ const renderTableContent = (layerName) => {
                 }
             }
 
-            // Loop shapes, extract coords, and inject into properties table
             let count = 0;
             layer.geoJsonData.features.forEach(f => {
                 if (!f.properties) f.properties = {};
                 try {
                     let coords;
-                    
                     if (f.geometry && f.geometry.type === 'Point') {
                         coords = f.geometry.coordinates;
                     } 
@@ -1087,7 +1192,6 @@ const renderTableContent = (layerName) => {
                 } catch(e) {}
             });
 
-            // Trigger a UI refresh and hard-save to local workspace
             if (count > 0) {
                 autoSaveWorkspace();
                 showToast(`Baked LAT/LONG to ${count} features!`);
@@ -1113,41 +1217,7 @@ const renderTableContent = (layerName) => {
     document.querySelectorAll('.tbl-row').forEach(tr => {
         tr.addEventListener('click', (e) => {
             const rowId = parseInt(e.currentTarget.getAttribute('data-id'), 10);
-            const isAlreadyHighlighted = AppState.highlightLayer && AppState.highlightLayer._row_id === rowId;
-            
-            if (AppState.highlightLayer) {
-                map.removeLayer(AppState.highlightLayer);
-                AppState.highlightLayer = null;
-            }
-
-            document.querySelectorAll('.tbl-row').forEach(row => {
-                row.classList.remove('bg-cyan-100', 'dark:bg-cyan-900/40');
-                row.classList.add('hover:bg-blue-50', 'dark:hover:bg-blue-900/30');
-            });
-
-            if (isAlreadyHighlighted) return;
-
-            const targetFeature = AppState.currentTableFeatures.find(f => f.__row_id === rowId);
-            if (targetFeature && targetFeature.geometry) {
-                if (!map.getPane('highlightPane')) {
-                    map.createPane('highlightPane');
-                    map.getPane('highlightPane').style.zIndex = 2500; 
-                    map.getPane('highlightPane').style.pointerEvents = 'none'; 
-                }
-
-                AppState.highlightLayer = L.geoJSON(targetFeature, {
-                    pane: 'highlightPane', 
-                    interactive: false,
-                    style: { color: '#00ffff', weight: 5, opacity: 1, fillColor: '#00ffff', fillOpacity: 0.3 },
-                    pointToLayer: (feature, latlng) => {
-                        return L.circleMarker(latlng, { pane: 'highlightPane', interactive: false, radius: 10, color: '#00ffff', weight: 4, opacity: 1, fillColor: '#00ffff', fillOpacity: 0.3 });
-                    }
-                }).addTo(map);
-                AppState.highlightLayer._row_id = rowId; 
-            }
-            
-            e.currentTarget.classList.remove('hover:bg-blue-50', 'dark:hover:bg-blue-900/30');
-            e.currentTarget.classList.add('bg-cyan-100', 'dark:bg-cyan-900/40');
+            highlightTableRow(rowId);
         });
     });
 };
@@ -1161,6 +1231,7 @@ export const handleToggleTable = async (e) => {
 
   closeTablePanel();
   AppState.activeTableLayerKey = key;
+  AppState.tableShowAll = false;
   renderAddedLayers(); 
   
   if (!attributeTableContainer) return;
@@ -1176,10 +1247,23 @@ export const handleToggleTable = async (e) => {
 
   try {
     let features = [];
+    
     if (layer.isLocalGeoJSON) {
       features = layer.geoJsonData.features || [];
     } else {
       if (!layer.exportUrl) throw new Error("No data endpoint available.");
+      
+      try {
+          if (!layer.exportUrl.includes('WFS')) {
+              const countUrl = layer.exportUrl.split('query?')[0] + 'query?where=1=1&returnCountOnly=true&f=json';
+              const countRes = await fetch(`/proxy?url=${encodeURIComponent(countUrl)}`);
+              const countData = await countRes.json();
+              if (countData.count !== undefined) layer.remoteFeatureCount = countData.count;
+          }
+      } catch (e) {
+          console.warn("Could not fetch total count", e);
+      }
+
       let queryUrl = layer.exportUrl;
       if (queryUrl.includes('WFS')) queryUrl += '&maxFeatures=100';
       else if (queryUrl.includes('f=geojson')) queryUrl += '&resultRecordCount=100';
@@ -1211,12 +1295,8 @@ export const handleToggleTable = async (e) => {
     });
     
     let headers = Array.from(headerSet);
-    
-    // --- THE FIX: Add LATITUDE and LONGITUDE to the baked columns list ---
     const bakedCols = ['COLOR_FILL', 'COLOR_OUTLINE', 'LATITUDE', 'LONGITUDE'];
     
-    // Because filter() preserves the Set's chronological insertion order, 
-    // whichever button the user clicked LAST will append its columns to the absolute end.
     AppState.currentTableHeaders = headers
         .filter(h => !bakedCols.includes(h))
         .concat(headers.filter(h => bakedCols.includes(h)));
@@ -1224,6 +1304,19 @@ export const handleToggleTable = async (e) => {
     AppState.tableSortCol = null;
     AppState.tableSortAsc = true;
     renderTableContent(layer.displayName);
+
+    if (layer.mapLayer) {
+        const onMapFeatureClick = (clickEvt) => {
+            if (AppState.activeTableLayerKey !== layer.uniqueKey) return;
+            const rowId = clickEvt.layer && clickEvt.layer.feature ? clickEvt.layer.feature.__row_id : null;
+            if (rowId !== null && rowId !== undefined) {
+                highlightTableRow(rowId);
+            }
+        };
+        layer.mapLayer.off('click', onMapFeatureClick);
+        layer.mapLayer.on('click', onMapFeatureClick);
+    }
+
   } catch (err) {
     attributeTableContainer.innerHTML = `
       <div class="table-resizer absolute top-0 left-0 w-full h-1.5 bg-gray-200 hover:bg-blue-400 dark:bg-gray-700 dark:hover:bg-blue-500 cursor-row-resize z-50 transition-colors" title="Drag to resize"></div>
@@ -1236,6 +1329,29 @@ export const handleToggleTable = async (e) => {
   }
 };
 
+// Global array to track Pickr instances so we can destroy them to prevent memory leaks
+window.activePickrs = window.activePickrs || [];
+
+const ensurePickrLoaded = () => {
+    return new Promise((resolve) => {
+        if (typeof Pickr !== 'undefined') return resolve(true);
+        
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'https://cdn.jsdelivr.net/npm/@simonwep/pickr/dist/themes/nano.min.css';
+        document.head.appendChild(link);
+
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/@simonwep/pickr/dist/pickr.min.js';
+        script.onload = () => resolve(true);
+        script.onerror = () => {
+            console.error("Failed to load Pickr from CDN");
+            resolve(false);
+        };
+        document.head.appendChild(script);
+    });
+};
+
 export const handleToggleEdit = async (e, forceStyle = null) => {
     const key = typeof e === 'string' ? e : (e.currentTarget ? e.currentTarget.getAttribute('data-key') : e);
     const layer = AppState.activeLayers.find(l => l.uniqueKey === key);
@@ -1244,6 +1360,10 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
     if (AppState.activeEditLayerKey === key && e && e.currentTarget) { closeSidebarPanels(); return; }
 
     closeSidebarPanels();
+    
+    window.activePickrs.forEach(p => { try { p.destroy(); } catch(err){} });
+    window.activePickrs = [];
+
     AppState.activeEditLayerKey = key;
     renderAddedLayers();
     if (!editPanelContainer) return;
@@ -1253,8 +1373,13 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
     editPanelContainer.classList.add('flex');
     editPanelContainer.innerHTML = '<div class="flex justify-center p-3"><p class="text-xs italic animate-pulse text-gray-500 dark:text-gray-400">Preparing editable vector data...</p></div>';
 
-    const success = await ensureGeoJSON(layer);
+    const [success, pickrLoaded] = await Promise.all([
+        ensureGeoJSON(layer),
+        ensurePickrLoaded()
+    ]);
+    
     if (!success) { closeSidebarPanels(); return; }
+    if (!pickrLoaded) showToast("Color picker library failed to load.", true);
 
     const features = layer.geoJsonData.features || [];
     const colsSet = new Set();
@@ -1270,11 +1395,21 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
 
     const hasPoints = features.some(f => f.geometry && (f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint'));
     const cs = forceStyle ? JSON.parse(JSON.stringify(forceStyle)) : (layer.customStyle || { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 });
+    
     const activeStyleType = cs.type || 'single';
+    const useDataScale = cs.usePointScaleData || false;
+    const activeScaleType = useDataScale ? 'data' : 'single';
+    
+    const currentScaleCurve = cs.pointScaleCurve || 'linear';
+    const currentGradCurve = cs.graduatedCurve || 'linear';
+
+    const minFOp = cs.graduatedMinFillOpacity ?? (cs.graduatedFillOpacity ?? 0.7);
+    const maxFOp = cs.graduatedMaxFillOpacity ?? (cs.graduatedFillOpacity ?? 0.7);
+    const minSOp = cs.graduatedMinStrokeOpacity ?? (cs.graduatedStrokeOpacity ?? 1.0);
+    const maxSOp = cs.graduatedMaxStrokeOpacity ?? (cs.graduatedStrokeOpacity ?? 1.0);
+
     const pasteDisabled = AppState.copiedStyle ? '' : 'disabled';
     const pasteOpacity = AppState.copiedStyle ? '' : 'opacity-50 cursor-not-allowed';
-    const useDataScale = cs.usePointScaleData || false;
-    const currentScaleCurve = cs.pointScaleCurve || 'linear';
 
     editPanelContainer.innerHTML = `
         <div class="p-2 text-xs flex flex-col h-full min-h-0 bg-blue-50/50 dark:bg-transparent">
@@ -1288,167 +1423,203 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
                 </div>
             </div>
             
-            <!-- FLEXIBLE CONFIG BODY -->
-            <div class="flex-1 min-h-0 flex flex-col overflow-y-auto custom-scroll pr-1 pb-1">
+            <div class="flex-1 min-h-0 flex flex-col overflow-y-auto custom-scroll pr-1 pb-1 space-y-3">
                 
-                <!-- POINT STYLE OPTIONS -->
+                <!-- 1. SHAPE BLOCK -->
                 ${hasPoints ? `
-                <div id="point-style-container" class="shrink-0 flex flex-col space-y-2 bg-white dark:bg-gray-800 p-2 rounded border border-blue-100 dark:border-blue-800 mb-2">
-                    <h5 class="text-[9px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">Point Markers</h5>
-                    <div class="flex items-center space-x-2 w-full">
-                        <label class="text-[11px] text-gray-600 dark:text-gray-300 font-bold w-10 shrink-0">Shape:</label>
-                        <select id="edit-point-shape" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
+                <div class="border border-blue-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded p-2 shrink-0 shadow-xs">
+                    <div class="flex items-center space-x-2">
+                        <label class="text-[11px] font-bold text-gray-700 dark:text-gray-300 w-20 shrink-0">Shape Type:</label>
+                        <select id="edit-point-shape" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 font-medium">
                             <option value="circle" ${cs.pointShape === 'circle' ? 'selected' : ''}>Circle</option>
                             <option value="square" ${cs.pointShape === 'square' ? 'selected' : ''}>Square</option>
                             <option value="triangle" ${cs.pointShape === 'triangle' ? 'selected' : ''}>Triangle</option>
                         </select>
                     </div>
+                </div>
+                ` : ''}
 
-                    <div id="constant-scale-container" class="${useDataScale ? 'hidden' : 'flex'} items-center space-x-2 w-full">
-                        <label class="text-[11px] text-gray-600 dark:text-gray-300 font-bold w-10 shrink-0">Scale:</label>
-                        <input type="range" id="edit-point-size" min="2" max="30" step="1" value="${cs.pointSize || 8}" class="flex-1 cursor-pointer accent-blue-600 dark:accent-blue-500">
-                        <span id="point-size-display" class="text-xs font-mono w-4 text-right">${cs.pointSize || 8}</span>
+                <!-- 2. COLOUR BLOCK -->
+                <div class="border border-blue-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded p-2 flex flex-col shrink-0 shadow-xs">
+                    <div class="flex items-center space-x-2 mb-2 pb-2 border-b border-gray-100 dark:border-gray-700 shrink-0">
+                        <label class="text-[11px] font-bold text-gray-700 dark:text-gray-300 w-20 shrink-0">Colour Type:</label>
+                        <select id="edit-style-type" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 font-medium">
+                            <option value="single" ${activeStyleType === 'single' ? 'selected' : ''}>Single Value</option>
+                            <option value="categorical" ${activeStyleType === 'categorical' ? 'selected' : ''}>Category</option>
+                            <option value="graduated" ${activeStyleType === 'graduated' ? 'selected' : ''}>Choropleth</option>
+                        </select>
                     </div>
 
-                    <div class="flex items-center space-x-1.5 pt-1 border-t border-blue-100 dark:border-blue-900">
-                        <input type="checkbox" id="use-data-scale" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-500 rounded cursor-pointer accent-blue-600 dark:accent-blue-500" ${useDataScale ? 'checked' : ''}>
-                        <label for="use-data-scale" class="text-[11px] font-semibold text-gray-700 dark:text-gray-300 cursor-pointer">Use Data for Scale</label>
+                    <!-- Single Colour UI -->
+                    <div id="single-style-container" class="${activeStyleType === 'single' ? 'flex' : 'hidden'} items-center justify-center space-x-6 py-2">
+                        <div class="flex items-center space-x-2">
+                            <label class="text-[11px] text-gray-600 dark:text-gray-400 font-bold">Fill:</label>
+                            <div id="edit-fill-wrapper" class="color-picker-wrapper w-6 h-6 rounded shadow-sm" data-hex="${cs.fillColor || '#2563eb'}" data-opacity="${cs.fillOpacity ?? 0.5}"></div>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <label class="text-[11px] text-gray-600 dark:text-gray-400 font-bold">Outline:</label>
+                            <div id="edit-stroke-wrapper" class="color-picker-wrapper w-6 h-6 rounded shadow-sm" data-hex="${cs.color || '#2563eb'}" data-opacity="${cs.opacity ?? 1.0}"></div>
+                        </div>
                     </div>
 
-                    <div id="data-scale-container" class="${useDataScale ? 'flex' : 'hidden'} flex-col space-y-1.5 bg-blue-50/50 dark:bg-gray-900/50 p-1.5 rounded border border-blue-200 dark:border-blue-800">
-                        <div class="flex items-center space-x-1.5">
+                    <!-- Categorical Colour UI -->
+                    <div id="categorical-style-container" class="${activeStyleType === 'categorical' ? 'flex' : 'hidden'} flex-col flex-1 min-h-0">
+                        <div class="flex items-center space-x-2 mb-1 shrink-0">
                             <label class="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase w-12 shrink-0">Column:</label>
-                            <select id="point-scale-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
+                            <select id="cat-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
+                                <option value="" disabled ${!cs.property ? 'selected' : ''}>Select attribute...</option>
+                                ${cols.map(c => `<option value="${c}" ${(activeStyleType === 'categorical' && cs.property === c) ? 'selected' : ''}>${c}</option>`).join('')}
+                            </select>
+                        </div>
+                        <div id="cat-inner-list" class="flex-1 overflow-y-auto custom-scroll -mx-1 px-1">
+                            <p class="text-[10px] text-gray-400 dark:text-gray-500 italic text-center py-2 mt-2">Select a column to generate categories.</p>
+                        </div>
+                    </div>
+
+                    <!-- Choropleth Colour UI -->
+                    <div id="graduated-style-container" class="${activeStyleType === 'graduated' ? 'flex' : 'hidden'} flex-col flex-1 min-h-0">
+                        <div class="flex items-center space-x-2 mb-2 shrink-0">
+                            <label class="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase w-12 shrink-0">Column:</label>
+                            <select id="graduated-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
+                                <option value="" disabled ${!cs.property ? 'selected' : ''}>Select numeric attribute...</option>
+                                ${numericCols.map(c => `<option value="${c}" ${(activeStyleType === 'graduated' && cs.property === c) ? 'selected' : ''}>${c}</option>`).join('')}
+                            </select>
+                        </div>
+                        
+                        <div class="flex-1 overflow-y-auto custom-scroll space-y-2">
+                            <!-- Low Row -->
+                            <div class="flex items-center justify-between pb-1.5 border-b border-gray-100 dark:border-gray-700/50">
+                                <div class="flex items-center space-x-1 flex-1 pr-1 overflow-hidden">
+                                    <span class="text-[11px] font-bold text-gray-800 dark:text-gray-200 uppercase shrink-0">LOW:</span>
+                                    <input type="text" id="graduated-min-val" readonly value="${cs.graduatedMinVal ?? '0'}" class="w-full bg-transparent font-mono text-[11px] text-gray-500 dark:text-gray-400 truncate">
+                                </div>
+                                <div class="flex space-x-3 items-center shrink-0">
+                                    <div class="flex items-center space-x-1.5">
+                                        <span class="text-[9px] text-gray-500 dark:text-gray-400 font-bold uppercase">Fill:</span>
+                                        <div id="graduated-min-fill-wrapper" class="color-picker-wrapper w-5 h-5 rounded shrink-0 shadow-sm" data-hex="${cs.graduatedMinColor || '#ffeda0'}" data-opacity="${minFOp}"></div>
+                                    </div>
+                                    <div class="flex items-center space-x-1.5 border-l border-gray-200 dark:border-gray-600 pl-3">
+                                        <span class="text-[9px] text-gray-500 dark:text-gray-400 font-bold uppercase">Outline:</span>
+                                        <div id="graduated-min-stroke-wrapper" class="color-picker-wrapper w-5 h-5 rounded shrink-0 shadow-sm" data-hex="${cs.graduatedMinStroke || '#feb24c'}" data-opacity="${minSOp}"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- High Row -->
+                            <div class="flex items-center justify-between pb-1 border-b border-gray-100 dark:border-gray-700/50">
+                                <div class="flex items-center space-x-1 flex-1 pr-1 overflow-hidden">
+                                    <span class="text-[11px] font-bold text-gray-800 dark:text-gray-200 uppercase shrink-0">HIGH:</span>
+                                    <input type="text" id="graduated-max-val" readonly value="${cs.graduatedMaxVal ?? '99'}" class="w-full bg-transparent font-mono text-[11px] text-gray-500 dark:text-gray-400 truncate">
+                                </div>
+                                <div class="flex space-x-3 items-center shrink-0">
+                                    <div class="flex items-center space-x-1.5">
+                                        <span class="text-[9px] text-gray-500 dark:text-gray-400 font-bold uppercase">Fill:</span>
+                                        <div id="graduated-max-fill-wrapper" class="color-picker-wrapper w-5 h-5 rounded shrink-0 shadow-sm" data-hex="${cs.graduatedMaxColor || '#f03b20'}" data-opacity="${maxFOp}"></div>
+                                    </div>
+                                    <div class="flex items-center space-x-1.5 border-l border-gray-200 dark:border-gray-600 pl-3">
+                                        <span class="text-[9px] text-gray-500 dark:text-gray-400 font-bold uppercase">Outline:</span>
+                                        <div id="graduated-max-stroke-wrapper" class="color-picker-wrapper w-5 h-5 rounded shrink-0 shadow-sm" data-hex="${cs.graduatedMaxStroke || '#bd0026'}" data-opacity="${maxSOp}"></div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Graduated Curve -->
+                            <div class="pt-1">
+                                <label class="block text-[9px] font-bold text-gray-500 uppercase tracking-wide mb-1">Gradient Curve Weighting</label>
+                                <div class="grid grid-cols-4 gap-1.5">
+                                    <button type="button" class="btn-grad-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors ${currentGradCurve === 'linear' ? 'bg-blue-600 text-white border-blue-600 shadow-inner' : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600'}" data-curve="linear">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 mr-1 shrink-0"><path d="M4 20 L20 4"/></svg>Linear
+                                    </button>
+                                    <button type="button" class="btn-grad-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors ${currentGradCurve === 'exp' ? 'bg-blue-600 text-white border-blue-600 shadow-inner' : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600'}" data-curve="exp">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 mr-1 shrink-0"><path d="M4 20 Q 16 20, 20 4"/></svg>Exp
+                                    </button>
+                                    <button type="button" class="btn-grad-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors ${currentGradCurve === 'log' ? 'bg-blue-600 text-white border-blue-600 shadow-inner' : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600'}" data-curve="log">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 mr-1 shrink-0"><path d="M4 20 Q 4 8, 20 4"/></svg>Log
+                                    </button>
+                                    <button type="button" class="btn-grad-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors ${currentGradCurve === 'sigmoid' ? 'bg-blue-600 text-white border-blue-600 shadow-inner' : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600'}" data-curve="sigmoid">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 mr-1 shrink-0"><path d="M4 20 C 12 20, 12 4, 20 4"/></svg>Sigmoid
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. SCALE BLOCK -->
+                ${hasPoints ? `
+                <div class="border border-blue-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded p-2 flex flex-col shrink-0 shadow-xs">
+                    <div class="flex items-center space-x-2 mb-2 pb-2 border-b border-gray-100 dark:border-gray-700 shrink-0">
+                        <label class="text-[11px] font-bold text-gray-700 dark:text-gray-300 w-20 shrink-0">Scale Type:</label>
+                        <select id="edit-scale-type" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 font-medium">
+                            <option value="single" ${activeScaleType === 'single' ? 'selected' : ''}>Single Value</option>
+                            <option value="data" ${activeScaleType === 'data' ? 'selected' : ''}>Table Data</option>
+                        </select>
+                    </div>
+
+                    <!-- Single Scale UI -->
+                    <div id="constant-scale-container" class="${activeScaleType === 'single' ? 'flex' : 'hidden'} items-center space-x-3 w-full py-2 px-1">
+                        <label class="text-[11px] text-gray-600 dark:text-gray-400 font-bold w-10 shrink-0">Size:</label>
+                        <input type="range" id="edit-point-size" min="2" max="30" step="1" value="${cs.pointSize || 8}" class="flex-1 cursor-pointer accent-blue-600 dark:accent-blue-500">
+                        <span id="point-size-display" class="text-[11px] font-mono font-bold w-6 text-center text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-900 py-1 rounded">${cs.pointSize || 8}</span>
+                    </div>
+
+                    <!-- Table Data Scale UI -->
+                    <div id="data-scale-container" class="${activeScaleType === 'data' ? 'flex' : 'hidden'} flex-col flex-1 min-h-0">
+                        <div class="flex items-center space-x-2 mb-2 shrink-0">
+                            <label class="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase w-12 shrink-0">Column:</label>
+                            <select id="point-scale-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
                                 <option value="" disabled ${!cs.pointScaleProp ? 'selected' : ''}>Select numeric attribute...</option>
                                 ${numericCols.map(c => `<option value="${c}" ${(useDataScale && cs.pointScaleProp === c) ? 'selected' : ''}>${c}</option>`).join('')}
                             </select>
                         </div>
 
-                        <div class="flex space-x-1.5">
-                            <div class="flex-1">
-                                <label class="block text-[8px] font-bold text-gray-400 uppercase">Min Data Val</label>
-                                <input type="text" id="point-scale-min-data" readonly value="${cs.pointScaleMinData ?? ''}" placeholder="Min" class="w-full px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 font-mono text-[10px] cursor-not-allowed">
+                        <div class="flex-1 overflow-y-auto custom-scroll space-y-2">
+                            <!-- Low Scale Row -->
+                            <div class="flex items-center justify-between pb-1 border-b border-gray-100 dark:border-gray-700/50">
+                                <div class="flex items-center space-x-1 flex-1 pr-1 overflow-hidden">
+                                    <span class="text-[11px] font-bold text-gray-800 dark:text-gray-200 uppercase shrink-0">LOW:</span>
+                                    <input type="text" id="point-scale-min-data" readonly value="${cs.pointScaleMinData ?? '0'}" class="w-full bg-transparent font-mono text-[11px] text-gray-500 dark:text-gray-400 truncate">
+                                </div>
+                                <div class="flex items-center space-x-2 shrink-0">
+                                    <label class="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wide">MIN SIZE:</label>
+                                    <input type="number" id="point-scale-min-target" min="1" max="50" value="${cs.pointScaleMinTarget ?? 4}" class="w-12 px-1.5 py-0.5 bg-gray-50 dark:bg-gray-900 border border-blue-400 dark:border-blue-600 rounded text-gray-900 dark:text-white font-mono text-[11px] text-center focus:ring-1 focus:ring-blue-500">
+                                </div>
                             </div>
-                            <div class="flex-1">
-                                <label class="block text-[8px] font-bold text-gray-400 uppercase">Max Data Val</label>
-                                <input type="text" id="point-scale-max-data" readonly value="${cs.pointScaleMaxData ?? ''}" placeholder="Max" class="w-full px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-gray-600 dark:text-gray-300 font-mono text-[10px] cursor-not-allowed">
-                            </div>
-                        </div>
 
-                        <div class="flex space-x-1.5">
-                            <div class="flex-1">
-                                <label class="block text-[8px] font-bold text-blue-600 dark:text-blue-400 uppercase">Min Scale Size</label>
-                                <input type="number" id="point-scale-min-target" min="1" max="50" value="${cs.pointScaleMinTarget ?? 4}" class="w-full px-1.5 py-0.5 bg-white dark:bg-gray-700 border border-blue-300 dark:border-blue-600 rounded text-gray-900 dark:text-white font-mono text-[10px]">
+                            <!-- High Scale Row -->
+                            <div class="flex items-center justify-between pb-1 border-b border-gray-100 dark:border-gray-700/50">
+                                <div class="flex items-center space-x-1 flex-1 pr-1 overflow-hidden">
+                                    <span class="text-[11px] font-bold text-gray-800 dark:text-gray-200 uppercase shrink-0">HIGH:</span>
+                                    <input type="text" id="point-scale-max-data" readonly value="${cs.pointScaleMaxData ?? '99'}" class="w-full bg-transparent font-mono text-[11px] text-gray-500 dark:text-gray-400 truncate">
+                                </div>
+                                <div class="flex items-center space-x-2 shrink-0">
+                                    <label class="text-[10px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wide">MAX SIZE:</label>
+                                    <input type="number" id="point-scale-max-target" min="1" max="100" value="${cs.pointScaleMaxTarget ?? 24}" class="w-12 px-1.5 py-0.5 bg-gray-50 dark:bg-gray-900 border border-blue-400 dark:border-blue-600 rounded text-gray-900 dark:text-white font-mono text-[11px] text-center focus:ring-1 focus:ring-blue-500">
+                                </div>
                             </div>
-                            <div class="flex-1">
-                                <label class="block text-[8px] font-bold text-blue-600 dark:text-blue-400 uppercase">Max Scale Size</label>
-                                <input type="number" id="point-scale-max-target" min="1" max="100" value="${cs.pointScaleMaxTarget ?? 24}" class="w-full px-1.5 py-0.5 bg-white dark:bg-gray-700 border border-blue-300 dark:border-blue-600 rounded text-gray-900 dark:text-white font-mono text-[10px]">
-                            </div>
-                        </div>
 
-                        <div class="pt-0.5">
-                            <label class="block text-[8px] font-bold text-gray-500 uppercase mb-0.5">Curve Weighting</label>
-                            <div class="grid grid-cols-4 gap-1">
-                                <button type="button" class="btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors ${currentScaleCurve === 'linear' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="linear">Linear</button>
-                                <button type="button" class="btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors ${currentScaleCurve === 'exp' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="exp">Exp</button>
-                                <button type="button" class="btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors ${currentScaleCurve === 'log' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="log">Log</button>
-                                <button type="button" class="btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors ${currentScaleCurve === 'sigmoid' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600'}" data-curve="sigmoid">Sigmoid</button>
+                            <!-- Scale Curve -->
+                            <div class="pt-1">
+                                <label class="block text-[9px] font-bold text-gray-500 uppercase tracking-wide mb-1">Gradient Curve Weighting</label>
+                                <div class="grid grid-cols-4 gap-1.5">
+                                    <button type="button" class="btn-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'linear' ? 'bg-blue-600 text-white border-blue-600 shadow-inner' : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600'}" data-curve="linear">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 mr-1 shrink-0"><path d="M4 20 L20 4"/></svg>Linear
+                                    </button>
+                                    <button type="button" class="btn-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'exp' ? 'bg-blue-600 text-white border-blue-600 shadow-inner' : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600'}" data-curve="exp">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 mr-1 shrink-0"><path d="M4 20 Q 16 20, 20 4"/></svg>Exp
+                                    </button>
+                                    <button type="button" class="btn-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'log' ? 'bg-blue-600 text-white border-blue-600 shadow-inner' : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600'}" data-curve="log">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 mr-1 shrink-0"><path d="M4 20 Q 4 8, 20 4"/></svg>Log
+                                    </button>
+                                    <button type="button" class="btn-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors ${currentScaleCurve === 'sigmoid' ? 'bg-blue-600 text-white border-blue-600 shadow-inner' : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600'}" data-curve="sigmoid">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3 mr-1 shrink-0"><path d="M4 20 C 12 20, 12 4, 20 4"/></svg>Sigmoid
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
                 ` : ''}
-
-                <!-- STYLE TYPE SELECTOR -->
-                <div class="shrink-0 flex items-center space-x-1.5 bg-white dark:bg-gray-800 p-1.5 border border-blue-100 dark:border-blue-800 rounded mb-2">
-                    <label class="text-[11px] font-semibold text-gray-700 dark:text-gray-300 shrink-0 px-1">Style Type:</label>
-                    <select id="edit-style-type" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs focus:ring-1 focus:ring-blue-500 font-medium">
-                        <option value="single" ${activeStyleType === 'single' ? 'selected' : ''}>Single Color</option>
-                        <option value="categorical" ${activeStyleType === 'categorical' ? 'selected' : ''}>Categorical (Text)</option>
-                        <option value="graduated" ${activeStyleType === 'graduated' ? 'selected' : ''}>Graduated Choropleth (Numeric)</option>
-                    </select>
-                </div>
-
-                <!-- 1. SINGLE STYLE (SHRINK-0) -->
-                <div id="single-style-container" class="${activeStyleType === 'single' ? 'flex' : 'hidden'} shrink-0 flex-col space-y-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700">
-                    <div class="flex items-center space-x-2 w-full">
-                        <label class="text-[11px] text-gray-600 dark:text-gray-300 font-bold w-10 shrink-0">Fill:</label>
-                        <input type="color" id="edit-fill-color" value="${cs.fillColor || '#2563eb'}" class="w-6 h-6 p-0 border-0 rounded cursor-pointer shrink-0 bg-transparent">
-                        <input type="range" id="edit-fill-opacity" min="0" max="1" step="0.05" value="${cs.fillOpacity ?? 0.5}" class="flex-1 cursor-pointer accent-blue-600 dark:accent-blue-500">
-                    </div>
-                    <div class="flex items-center space-x-2 w-full">
-                        <label class="text-[11px] text-gray-600 dark:text-gray-300 font-bold w-10 shrink-0">Outline:</label>
-                        <input type="color" id="edit-stroke-color" value="${cs.color || '#2563eb'}" class="w-6 h-6 p-0 border-0 rounded cursor-pointer shrink-0 bg-transparent">
-                        <input type="range" id="edit-stroke-opacity" min="0" max="1" step="0.05" value="${cs.opacity ?? 1.0}" class="flex-1 cursor-pointer accent-blue-600 dark:accent-blue-500">
-                    </div>
-                </div>
-
-                <!-- 2. CATEGORICAL STYLE (FLEX-1 MIN-H-[100px]) -->
-                <div id="categorical-style-container" class="${activeStyleType === 'categorical' ? 'flex' : 'hidden'} flex-1 flex-col min-h-[100px] border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800">
-                    <div class="shrink-0 p-1.5 border-b border-gray-100 dark:border-gray-700 flex items-center space-x-1.5">
-                        <label class="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase w-12 shrink-0">Column:</label>
-                        <select id="cat-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
-                            <option value="" disabled ${!cs.property ? 'selected' : ''}>Select attribute...</option>
-                            ${cols.map(c => `<option value="${c}" ${(activeStyleType === 'categorical' && cs.property === c) ? 'selected' : ''}>${c}</option>`).join('')}
-                        </select>
-                    </div>
-                    <div id="cat-inner-list" class="flex-1 overflow-y-auto custom-scroll p-1.5">
-                        <p class="text-xs text-gray-400 dark:text-gray-500 italic text-center py-1 mt-2">Select an attribute column to map colors.</p>
-                    </div>
-                </div>
-
-                <!-- 3. GRADUATED STYLE (FLEX-1 MIN-H-[100px]) -->
-                <div id="graduated-style-container" class="${activeStyleType === 'graduated' ? 'flex' : 'hidden'} flex-1 flex-col min-h-[100px] border border-gray-200 dark:border-gray-700 rounded bg-white dark:bg-gray-800">
-                    <div class="shrink-0 p-1.5 border-b border-gray-100 dark:border-gray-700 flex items-center space-x-1.5">
-                        <label class="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase w-12 shrink-0">Numeric:</label>
-                        <select id="graduated-col-select" class="flex-1 border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
-                            <option value="" disabled ${!cs.property ? 'selected' : ''}>Select numeric attribute...</option>
-                            ${numericCols.map(c => `<option value="${c}" ${(activeStyleType === 'graduated' && cs.property === c) ? 'selected' : ''}>${c}</option>`).join('')}
-                        </select>
-                    </div>
-                    
-                    <div class="flex-1 overflow-y-auto custom-scroll p-1.5 space-y-2">
-                        <!-- Min config -->
-                        <div class="p-1.5 bg-gray-50 dark:bg-gray-900/50 rounded border border-gray-200 dark:border-gray-700">
-                            <div class="flex justify-between items-center mb-1">
-                                <span class="text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase">Low Value</span>
-                                <input type="text" id="graduated-min-val" readonly value="${cs.graduatedMinVal ?? 'N/A'}" class="w-20 bg-transparent text-right font-mono text-[10px] text-gray-500">
-                            </div>
-                            <div class="flex items-center space-x-2">
-                                <span class="text-[9px] font-bold text-gray-400 w-10">Fill:</span>
-                                <input type="color" id="graduated-min-fill" value="${cs.graduatedMinColor || '#ffeda0'}" class="w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent">
-                                <span class="text-[9px] font-bold text-gray-400 ml-2">Outline:</span>
-                                <input type="color" id="graduated-min-stroke" value="${cs.graduatedMinStroke || '#feb24c'}" class="w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent">
-                            </div>
-                        </div>
-                        
-                        <!-- Max config -->
-                        <div class="p-1.5 bg-gray-50 dark:bg-gray-900/50 rounded border border-gray-200 dark:border-gray-700">
-                            <div class="flex justify-between items-center mb-1">
-                                <span class="text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase">High Value</span>
-                                <input type="text" id="graduated-max-val" readonly value="${cs.graduatedMaxVal ?? 'N/A'}" class="w-20 bg-transparent text-right font-mono text-[10px] text-gray-500">
-                            </div>
-                            <div class="flex items-center space-x-2">
-                                <span class="text-[9px] font-bold text-gray-400 w-10">Fill:</span>
-                                <input type="color" id="graduated-max-fill" value="${cs.graduatedMaxColor || '#f03b20'}" class="w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent">
-                                <span class="text-[9px] font-bold text-gray-400 ml-2">Outline:</span>
-                                <input type="color" id="graduated-max-stroke" value="${cs.graduatedMaxStroke || '#bd0026'}" class="w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent">
-                            </div>
-                        </div>
-                        
-                        <!-- Opacities -->
-                        <div class="pt-1">
-                            <div class="flex items-center space-x-2 w-full mb-1">
-                                <span class="text-[9px] font-bold text-gray-500 dark:text-gray-400 w-12">Fill Op:</span>
-                                <input type="range" id="graduated-fill-opacity" min="0" max="1" step="0.05" value="${cs.graduatedFillOpacity ?? 0.7}" class="flex-1 cursor-pointer accent-blue-600">
-                            </div>
-                            <div class="flex items-center space-x-2 w-full">
-                                <span class="text-[9px] font-bold text-gray-500 dark:text-gray-400 w-12">Stroke Op:</span>
-                                <input type="range" id="graduated-stroke-opacity" min="0" max="1" step="0.05" value="${cs.graduatedStrokeOpacity ?? 1.0}" class="flex-1 cursor-pointer accent-blue-600">
-                            </div>
-                        </div>
-                    </div>
-                </div>
 
             </div> <!-- END FLEX BODY -->
 
@@ -1461,13 +1632,67 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
                     <button id="btn-refresh-colors" class="${activeStyleType === 'categorical' ? '' : 'hidden'} bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-1 rounded transition-colors font-medium border border-gray-300 dark:border-gray-600">
                         <i class="fa-solid fa-arrows-rotate mr-1"></i> Refresh
                     </button>
-                    <button id="btn-apply-edit" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1.5 rounded transition-colors font-semibold shadow-xs">Apply Style</button>
+                    <button id="btn-apply-edit" class="bg-blue-600 hover:bg-blue-700 text-white text-xs px-4 py-1.5 rounded transition-colors font-semibold shadow-md">Apply Style</button>
                 </div>
             </div>
         </div>
     `;
 
+    const initPickers = (container) => {
+        if (typeof Pickr === 'undefined') return console.error("Pickr failed to initialize!");
+        
+        container.querySelectorAll('.color-picker-wrapper').forEach(wrapper => {
+            if (wrapper.dataset.initialized) return; 
+            wrapper.dataset.initialized = "true";
+
+            const initialHex = wrapper.getAttribute('data-hex') || '#2563eb';
+            const initialOp = parseFloat(wrapper.getAttribute('data-opacity') || 1.0);
+            
+            const targetEl = document.createElement('div');
+            wrapper.appendChild(targetEl);
+            
+            const p = Pickr.create({
+                el: targetEl,
+                theme: 'nano',
+                default: hexAlpha(initialHex, initialOp),
+                position: 'left-middle',
+                components: {
+                    preview: true,
+                    opacity: true,
+                    hue: true,
+                    interaction: { input: true, save: true }
+                }
+            });
+            
+            p.on('save', (color, instance) => {
+                const rgba = color.toRGBA();
+                wrapper.setAttribute('data-hex', color.toHEXA().toString().slice(0, 7));
+                wrapper.setAttribute('data-opacity', rgba[3].toFixed(2));
+                instance.hide();
+            }).on('change', (color) => {
+                const rgba = color.toRGBA();
+                wrapper.setAttribute('data-hex', color.toHEXA().toString().slice(0, 7));
+                wrapper.setAttribute('data-opacity', rgba[3].toFixed(2));
+            });
+            
+            wrapper.pickrInstance = p;
+            window.activePickrs.push(p);
+        });
+    };
+
+    initPickers(editPanelContainer);
+
     let activeScaleCurve = currentScaleCurve;
+    let activeGradCurve = currentGradCurve;
+
+    const getPickerData = (selector, context = document) => {
+        const el = context.querySelector(selector);
+        if (!el) return { hex: '#2563eb', opacity: 0.5 };
+        return {
+            hex: el.getAttribute('data-hex') || '#2563eb',
+            opacity: parseFloat(el.getAttribute('data-opacity') || 0.5)
+        };
+    };
 
     const extractStyleFromUI = () => {
         const shapeEl = getEl('edit-point-shape');
@@ -1475,10 +1700,10 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
         const pShape = shapeEl ? shapeEl.value : (layer.customStyle?.pointShape || 'circle');
         const pSize = sizeEl ? parseInt(sizeEl.value, 10) : (layer.customStyle?.pointSize || 8);
 
-        const chkDataScale = getEl('use-data-scale');
-        const isScaleData = chkDataScale ? chkDataScale.checked : false;
-        const pScaleCol = isScaleData ? getEl('point-scale-col-select')?.value : null;
+        const scaleTypeSel = getEl('edit-scale-type');
+        const isScaleData = scaleTypeSel ? (scaleTypeSel.value === 'data') : false;
         
+        const pScaleCol = isScaleData ? getEl('point-scale-col-select')?.value : null;
         let pMinData = parseFloat(getEl('point-scale-min-data')?.value);
         let pMaxData = parseFloat(getEl('point-scale-max-data')?.value);
         let pMinTarget = parseFloat(getEl('point-scale-min-target')?.value);
@@ -1502,16 +1727,14 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
             const newCategories = {};
             document.querySelectorAll('.cat-row').forEach(row => {
                 const val = row.getAttribute('data-val');
-                const fillEl = row.querySelector('.cat-fill');
-                const fillOpEl = row.querySelector('.cat-fill-op');
-                const strokeEl = row.querySelector('.cat-stroke');
-                const strokeOpEl = row.querySelector('.cat-stroke-op');
+                const fillData = getPickerData('.cat-fill-wrapper', row);
+                const strokeData = getPickerData('.cat-stroke-wrapper', row);
 
                 newCategories[val] = { 
-                    fillColor: fillEl ? fillEl.value : '#2563eb', 
-                    fillOpacity: fillOpEl ? parseFloat(fillOpEl.value) : 0.5, 
-                    color: strokeEl ? strokeEl.value : '#2563eb', 
-                    opacity: strokeOpEl ? parseFloat(strokeOpEl.value) : 1.0 
+                    fillColor: fillData.hex, 
+                    fillOpacity: fillData.opacity, 
+                    color: strokeData.hex, 
+                    opacity: strokeData.opacity 
                 };
             });
             return { 
@@ -1527,26 +1750,36 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
             let minData = parseFloat(getEl('graduated-min-val')?.value);
             let maxData = parseFloat(getEl('graduated-max-val')?.value);
             
+            const minFill = getPickerData('#graduated-min-fill-wrapper');
+            const minStroke = getPickerData('#graduated-min-stroke-wrapper');
+            const maxFill = getPickerData('#graduated-max-fill-wrapper');
+            const maxStroke = getPickerData('#graduated-max-stroke-wrapper');
+
             return {
                 type: 'graduated', property: prop,
                 graduatedMinVal: isNaN(minData) ? 0 : minData,
                 graduatedMaxVal: isNaN(maxData) ? 1 : maxData,
-                graduatedMinColor: getEl('graduated-min-fill')?.value || '#ffeda0',
-                graduatedMaxColor: getEl('graduated-max-fill')?.value || '#f03b20',
-                graduatedMinStroke: getEl('graduated-min-stroke')?.value || '#feb24c',
-                graduatedMaxStroke: getEl('graduated-max-stroke')?.value || '#bd0026',
-                graduatedFillOpacity: parseFloat(getEl('graduated-fill-opacity')?.value ?? 0.7),
-                graduatedStrokeOpacity: parseFloat(getEl('graduated-stroke-opacity')?.value ?? 1.0),
+                graduatedMinColor: minFill.hex,
+                graduatedMaxColor: maxFill.hex,
+                graduatedMinStroke: minStroke.hex,
+                graduatedMaxStroke: maxStroke.hex,
+                graduatedMinFillOpacity: minFill.opacity,
+                graduatedMaxFillOpacity: maxFill.opacity,
+                graduatedMinStrokeOpacity: minStroke.opacity,
+                graduatedMaxStrokeOpacity: maxStroke.opacity,
+                graduatedCurve: activeGradCurve || 'linear',
                 pointShape: pShape, pointSize: pSize,
                 ...scaleStateObj
             };
         } else {
+            const fillData = getPickerData('#edit-fill-wrapper');
+            const strokeData = getPickerData('#edit-stroke-wrapper');
             return { 
                 type: 'single', 
-                fillColor: getEl('edit-fill-color')?.value || '#2563eb', 
-                fillOpacity: parseFloat(getEl('edit-fill-opacity')?.value ?? 0.5), 
-                color: getEl('edit-stroke-color')?.value || '#2563eb', 
-                opacity: parseFloat(getEl('edit-stroke-opacity')?.value ?? 1.0), 
+                fillColor: fillData.hex, 
+                fillOpacity: fillData.opacity, 
+                color: strokeData.hex, 
+                opacity: strokeData.opacity, 
                 pointShape: pShape, pointSize: pSize,
                 ...scaleStateObj 
             }; 
@@ -1554,7 +1787,7 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
     };
 
     if (hasPoints) {
-        const chkDataScale = getEl('use-data-scale');
+        const scaleTypeSelect = getEl('edit-scale-type');
         const constantScaleContainer = getEl('constant-scale-container');
         const dataScaleContainer = getEl('data-scale-container');
         const pointScaleColSelect = getEl('point-scale-col-select');
@@ -1566,13 +1799,13 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
             if (disp) disp.textContent = e.target.value;
         });
 
-        chkDataScale?.addEventListener('change', (e) => {
-            if (e.target.checked) {
-                constantScaleContainer?.classList.add('hidden'); constantScaleContainer?.classList.remove('flex');
-                dataScaleContainer?.classList.remove('hidden'); dataScaleContainer?.classList.add('flex');
+        scaleTypeSelect?.addEventListener('change', (e) => {
+            if (e.target.value === 'data') {
+                constantScaleContainer?.classList.replace('flex', 'hidden');
+                dataScaleContainer?.classList.replace('hidden', 'flex');
             } else {
-                constantScaleContainer?.classList.remove('hidden'); constantScaleContainer?.classList.add('flex');
-                dataScaleContainer?.classList.add('hidden'); dataScaleContainer?.classList.remove('flex');
+                constantScaleContainer?.classList.replace('hidden', 'flex');
+                dataScaleContainer?.classList.replace('flex', 'hidden');
             }
         });
 
@@ -1604,13 +1837,23 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
         document.querySelectorAll('.btn-curve-type').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 document.querySelectorAll('.btn-curve-type').forEach(b => {
-                    b.className = 'btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600';
+                    b.className = 'btn-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600';
                 });
-                e.currentTarget.className = 'btn-curve-type text-[9px] py-0.5 border rounded font-semibold transition-colors bg-blue-600 text-white border-blue-600';
+                e.currentTarget.className = 'btn-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors bg-blue-600 text-white border-blue-600 shadow-inner';
                 activeScaleCurve = e.currentTarget.getAttribute('data-curve');
             });
         });
     }
+
+    document.querySelectorAll('.btn-grad-curve-type').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.btn-grad-curve-type').forEach(b => {
+                b.className = 'btn-grad-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600';
+            });
+            e.currentTarget.className = 'btn-grad-curve-type flex items-center justify-center text-[10px] py-1 border rounded font-semibold transition-colors bg-blue-600 text-white border-blue-600 shadow-inner';
+            activeGradCurve = e.currentTarget.getAttribute('data-curve');
+        });
+    });
 
     const styleTypeSelect = getEl('edit-style-type');
     const singleContainer = getEl('single-style-container');
@@ -1649,7 +1892,7 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
         let uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties ? f.properties[propName] : undefined))].filter(v => v !== null && v !== undefined);
         if (uniqueVals.length > 200 && !confirm(`Generate color pickers for ${uniqueVals.length} unique values?`)) return;
         if (!catInnerList) return;
-        if (uniqueVals.length === 0) { catInnerList.innerHTML = '<p class="text-xs text-gray-400 italic text-center py-1 mt-2">No unique values.</p>'; return; }
+        if (uniqueVals.length === 0) { catInnerList.innerHTML = '<p class="text-[10px] text-gray-400 dark:text-gray-500 italic text-center py-2 mt-2">No unique values.</p>'; return; }
 
         let html = '';
         uniqueVals.forEach(val => {
@@ -1663,20 +1906,23 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
                 }
             }
             html += `
-                <div class="flex items-center justify-between mb-1 pb-1 border-b border-gray-100 dark:border-gray-700 last:border-0 cat-row" data-val="${val}">
-                    <span class="text-xs text-gray-700 dark:text-gray-300 truncate flex-1 pr-1" title="${val}">${val}</span>
-                    <div class="flex space-x-1 items-center shrink-0">
-                        <span class="text-[9px] text-gray-400 font-bold">F:</span>
-                        <input type="color" class="cat-fill w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent" value="${fCol}">
-                        <input type="range" class="cat-fill-op w-16 cursor-pointer accent-blue-600" min="0" max="1" step="0.05" value="${fOp}">
-                        <span class="text-[9px] text-gray-400 font-bold ml-1">O:</span>
-                        <input type="color" class="cat-stroke w-5 h-5 p-0 border-0 rounded cursor-pointer bg-transparent" value="${sCol}">
-                        <input type="range" class="cat-stroke-op w-16 cursor-pointer accent-blue-600" min="0" max="1" step="0.05" value="${sOp}">
+                <div class="flex items-center justify-between py-1.5 border-b border-gray-100 dark:border-gray-700/50 last:border-0 cat-row" data-val="${val}">
+                    <span class="text-[11px] text-gray-700 dark:text-gray-300 font-medium truncate flex-1 pr-1" title="${val}">${val}</span>
+                    <div class="flex space-x-3 items-center shrink-0">
+                        <div class="flex items-center space-x-1.5">
+                            <span class="text-[9px] text-gray-500 dark:text-gray-400 font-bold uppercase">Fill:</span>
+                            <div class="color-picker-wrapper cat-fill-wrapper w-5 h-5 rounded shrink-0 shadow-sm" data-hex="${fCol}" data-opacity="${fOp}"></div>
+                        </div>
+                        <div class="flex items-center space-x-1.5 border-l border-gray-200 dark:border-gray-600 pl-3">
+                            <span class="text-[9px] text-gray-500 dark:text-gray-400 font-bold uppercase">Outline:</span>
+                            <div class="color-picker-wrapper cat-stroke-wrapper w-5 h-5 rounded shrink-0 shadow-sm" data-hex="${sCol}" data-opacity="${sOp}"></div>
+                        </div>
                     </div>
                 </div>
             `;
         });
         catInnerList.innerHTML = html;
+        initPickers(catInnerList);
     };
 
     catColSelect?.addEventListener('change', renderCategoryPickers);
@@ -1685,10 +1931,17 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
     btnRefreshColors?.addEventListener('click', () => {
         document.querySelectorAll('.cat-row').forEach(row => {
             const newFill = '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0');
-            const fillIn = row.querySelector('.cat-fill');
-            const strokeIn = row.querySelector('.cat-stroke');
-            if (fillIn) fillIn.value = newFill;
-            if (strokeIn) strokeIn.value = darkenHex(newFill, 0.3);
+            const newStroke = darkenHex(newFill, 0.3);
+            
+            const fillWrapper = row.querySelector('.cat-fill-wrapper');
+            const strokeWrapper = row.querySelector('.cat-stroke-wrapper');
+            
+            if (fillWrapper && fillWrapper.pickrInstance) {
+                fillWrapper.pickrInstance.setColor(hexAlpha(newFill, parseFloat(fillWrapper.getAttribute('data-opacity'))));
+            }
+            if (strokeWrapper && strokeWrapper.pickrInstance) {
+                strokeWrapper.pickrInstance.setColor(hexAlpha(newStroke, parseFloat(strokeWrapper.getAttribute('data-opacity'))));
+            }
         });
     });
 
@@ -1721,7 +1974,6 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
         e.preventDefault();
         const styleToCopy = extractStyleFromUI() || layer.customStyle;
         AppState.copiedStyle = JSON.parse(JSON.stringify(styleToCopy));
-        
         showToast("Style copied to clipboard!");
         
         const pasteBtn = getEl('btn-paste-style');
@@ -1741,9 +1993,7 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
         map.removeLayer(layer.mapLayer);
         const paneName = 'pane-' + layer.uniqueKey;
         const existingPane = map.getPane(paneName);
-        if (existingPane) {
-            existingPane.innerHTML = ''; 
-        }
+        if (existingPane) existingPane.innerHTML = ''; 
 
         const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
         if (layer.isVisible) newMapLayer.addTo(map);
@@ -1764,9 +2014,7 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
         const paneName = 'pane-' + layer.uniqueKey;
         
         const existingPane = map.getPane(paneName);
-        if (existingPane) {
-            existingPane.innerHTML = ''; 
-        }
+        if (existingPane) existingPane.innerHTML = ''; 
 
         const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
         if (layer.isVisible) newMapLayer.addTo(map);
@@ -1802,12 +2050,25 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
                 if (!isNaN(rawVal)) {
                     const min = typeof currentStyle.graduatedMinVal === 'number' && !isNaN(currentStyle.graduatedMinVal) ? currentStyle.graduatedMinVal : 0;
                     const max = typeof currentStyle.graduatedMaxVal === 'number' && !isNaN(currentStyle.graduatedMaxVal) ? currentStyle.graduatedMaxVal : 1;
+                    
                     let t = (max > min) ? (rawVal - min) / (max - min) : 0.5;
                     t = Math.max(0, Math.min(1, isNaN(t) ? 0.5 : t)); 
+                    
+                    const curve = currentStyle.graduatedCurve || 'linear';
+                    if (curve === 'exp') t = Math.pow(t, 2);
+                    else if (curve === 'log') t = Math.sqrt(t);
+                    else if (curve === 'sigmoid') t = 1 / (1 + Math.exp(-10 * (t - 0.5)));
+
                     fColor = interpolateColor(currentStyle.graduatedMinColor || '#ffeda0', currentStyle.graduatedMaxColor || '#f03b20', t);
                     sColor = interpolateColor(currentStyle.graduatedMinStroke || '#feb24c', currentStyle.graduatedMaxStroke || '#bd0026', t);
-                    fOp = currentStyle.graduatedFillOpacity ?? 0.7;
-                    sOp = currentStyle.graduatedStrokeOpacity ?? 1.0;
+                    
+                    const minFOp = currentStyle.graduatedMinFillOpacity ?? (currentStyle.graduatedFillOpacity ?? 0.7);
+                    const maxFOp = currentStyle.graduatedMaxFillOpacity ?? (currentStyle.graduatedFillOpacity ?? 0.7);
+                    const minSOp = currentStyle.graduatedMinStrokeOpacity ?? (currentStyle.graduatedStrokeOpacity ?? 1.0);
+                    const maxSOp = currentStyle.graduatedMaxStrokeOpacity ?? (currentStyle.graduatedStrokeOpacity ?? 1.0);
+                    
+                    fOp = minFOp + (maxFOp - minFOp) * t;
+                    sOp = minSOp + (maxSOp - minSOp) * t;
                 } else {
                     fColor = currentStyle.defaultFill || '#cccccc';
                     sColor = currentStyle.defaultColor || '#999999';
@@ -2017,7 +2278,6 @@ const triggerSearch = () => {
   else btnClearSearch?.classList.remove('hidden');
   
   if (term === '') {
-      // Clear Search: Restore default collapsed state
       document.querySelectorAll('.folder-item, .available-layer-item').forEach(item => {
           item.classList.remove('hidden');
       });
@@ -2029,17 +2289,14 @@ const triggerSearch = () => {
           i.classList.add('fa-folder');
       });
   } else {
-      // Active Search: Hide everything first
       document.querySelectorAll('.folder-item, .available-layer-item').forEach(item => {
           item.classList.add('hidden');
       });
 
-      // Show matches and auto-expand their parent folders
       document.querySelectorAll('.folder-item, .available-layer-item').forEach(item => {
         if (item.getAttribute('data-search') && item.getAttribute('data-search').includes(term)) { 
             item.classList.remove('hidden'); 
             
-            // Traverse upwards and expand parent folders
             let parentBlock = item.parentElement.closest('.folder-item');
             while (parentBlock) {
                 parentBlock.classList.remove('hidden');
@@ -2055,7 +2312,6 @@ const triggerSearch = () => {
                 parentBlock = parentBlock.parentElement.closest('.folder-item');
             }
             
-            // If the matching item IS a folder, expand its children to show the contents
             if (item.classList.contains('folder-item')) {
                  item.querySelectorAll('.available-layer-item, .folder-item').forEach(child => {
                      child.classList.remove('hidden');
@@ -2181,9 +2437,6 @@ const renderAvailableLayers = () => {
       }
   });
 
-  // --- THE FIX: Flatten Overkill Folders ---
-  // If a service only contains a single feature layer, remove it from the folder system
-  // and display it directly in the root list to save clicks and screen space.
   Object.keys(servicesMap).forEach(sUrl => {
       const srv = servicesMap[sUrl];
       if (srv.layers.length === 1 && !srv.layers[0].isGroup) {
@@ -2192,21 +2445,16 @@ const renderAvailableLayers = () => {
       }
   });
 
-  // Sort standalone layers alphabetically so they are easy to find
   standaloneLayers.sort((a, b) => a.title.localeCompare(b.title));
 
   const createFormatDropdown = (layer) => {
-      // Only render the dropdown if it is a CKAN layer AND it has more than 1 format available
       if (layer.type === 'CKAN' && layer.resources && layer.resources.length > 1) {
           const options = layer.resources.map(r => `<option value="${r.url}" data-ext="${r.ext}">${r.display}</option>`).join('');
           return `<select id="sel-${layer.id}" class="ml-2 border border-gray-300 dark:border-gray-600 bg-blue-50 dark:bg-gray-700 text-blue-700 dark:text-gray-200 text-[10px] font-bold rounded px-1 py-0.5 cursor-pointer focus:outline-none shrink-0 transition-colors hover:bg-blue-100 dark:hover:bg-gray-600 shadow-xs" title="Select format to download">${options}</select>`;
       }
-      
-      // Otherwise, return nothing
       return '';
   };
 
-  // Reusable component builder for Layers
   const buildLayerItem = (layer, parentContainer) => {
       const div = document.createElement('div');
       div.className = 'available-layer-item flex mb-1 rounded border transition-colors bg-white border-gray-100 shadow-xs dark:bg-gray-800 dark:border-gray-700 overflow-hidden';
@@ -2232,7 +2480,6 @@ const renderAvailableLayers = () => {
       parentContainer.appendChild(div);
   };
 
-  // Reusable component builder for Folders
   const buildFolderItem = (title, searchStr, parentContainer) => {
       const folderWrapper = document.createElement('div');
       folderWrapper.className = 'folder-item mb-1 border border-gray-300 dark:border-gray-600 rounded bg-gray-100 dark:bg-gray-800 shadow-xs flex flex-col overflow-hidden';
@@ -2274,10 +2521,8 @@ const renderAvailableLayers = () => {
       return childrenDiv;
   };
 
-  // 1. Render Standalone Layers
   standaloneLayers.forEach(layer => buildLayerItem(layer, availableLayerList));
 
-  // 2. Render Structured Services
   const sortedServices = Object.values(servicesMap).sort((a,b) => a.serviceName.localeCompare(b.serviceName));
 
   sortedServices.forEach(service => {
@@ -2325,7 +2570,6 @@ const addLayerToMap = (layerId, switchTabAfter = true) => {
     const meta = AppState.fetchedLayers.find(l => l.id === layerId);
     if (!meta) return;
 
-    // THE CKAN INTERCEPT: Read the UI dropdown!
     if (meta.type === 'CKAN') {
         const sel = getEl(`sel-${layerId}`);
         let targetUrl = meta.resources[0].url;
@@ -2337,7 +2581,6 @@ const addLayerToMap = (layerId, switchTabAfter = true) => {
             targetExt = selectedOption.getAttribute('data-ext');
         }
         
-        // Pass the explicitly selected URL and Extension to the downloader
         const targetMeta = { ...meta, url: targetUrl, format: targetExt };
         return fetchAndProcessCKANLayer(targetMeta);
     }
@@ -2400,6 +2643,20 @@ const handleFetchLayers = async () => {
   fetchSpinner?.classList.remove('hidden'); 
   if (fetchText) fetchText.textContent = 'Fetching...';
 
+  // --- THE FIX: Immediate visual feedback in the list area ---
+  switchTab('available');
+  if (availableLayerList) {
+      availableLayerList.innerHTML = `
+          <div class="flex flex-col items-center justify-center py-12 text-blue-600 dark:text-blue-500">
+              <i class="fa-solid fa-circle-notch fa-spin text-3xl mb-3 opacity-80"></i>
+              <p class="text-xs font-bold uppercase tracking-wider animate-pulse">Scanning Directory...</p>
+              <p class="text-[10px] text-gray-500 dark:text-gray-400 mt-2 text-center max-w-[200px]">Large remote catalogs may take up to 15 seconds to fully index.</p>
+          </div>
+      `;
+  }
+  searchContainer?.classList.add('hidden');
+  // -----------------------------------------------------------
+
   try {
     if (AppState.currentServerType === 'OVERPASS') {
         const key = getEl('osm-key')?.value.trim();
@@ -2423,7 +2680,6 @@ const handleFetchLayers = async () => {
 
         if (fetchText) fetchText.textContent = 'Querying Grid...';
         
-        // Let Python handle the heavy lifting and grid splitting
         const response = await fetch('/api/overpass_search', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2434,7 +2690,6 @@ const handleFetchLayers = async () => {
         if (!response.ok) throw new Error(data.error || "Overpass API failed.");
         if (!data.elements || data.elements.length === 0) throw new Error("No data found for this query.");
 
-        // Parse the combined data back into GeoJSON locally
         const geoJson = osmtogeojson(data, { flatProperties: true });
         geoJson.features.forEach(f => {
             if (f.properties) { 
@@ -2493,7 +2748,6 @@ const handleFetchLayers = async () => {
     const toolsContainer = getEl('osm-available-tools');
     if (toolsContainer) { toolsContainer.classList.add('hidden'); toolsContainer.classList.remove('flex'); }
 
-    // --- CKAN FETCH INTERCEPT ---
     if (AppState.currentServerType === 'CKAN') {
         showToast("Sniffing out CKAN API & loading catalog...");
         try {
@@ -2521,7 +2775,6 @@ const handleFetchLayers = async () => {
         }
     }
 
-    // --- ESRI / ARCGIS FETCH INTERCEPT ---
     if (AppState.currentServerType === 'ARCGIS' || AppState.currentServerType === 'ESRI') {
         showToast("Scanning ArcGIS Server / Directory...");
         try {
@@ -2549,7 +2802,6 @@ const handleFetchLayers = async () => {
         }
     }
 
-    // --- ESRI / WFS FETCH LOGIC ---
     let targetUrl = new URL(rawUrl);
     if (AppState.currentServerType === 'WFS') { targetUrl.searchParams.set('service', 'WFS'); targetUrl.searchParams.set('request', 'GetCapabilities'); } 
     else { targetUrl.searchParams.set('f', 'json'); }
@@ -3418,7 +3670,6 @@ async function fetchAndProcessCKANLayer(meta) {
         const response = await fetch(proxyUrl);
         
         if (!response.ok) {
-            // NEW: Actually read the JSON error message Python sends back!
             let errMsg = `${response.status} ${response.statusText}`;
             try {
                 const errData = await response.json();
