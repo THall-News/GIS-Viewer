@@ -149,13 +149,36 @@ const handleRedo = () => {
 getEl('btn-undo')?.addEventListener('click', handleUndo);
 getEl('btn-redo')?.addEventListener('click', handleRedo);
 
+let unreadErrors = 0;
+
 const showToast = (msg, isError=false) => {
-  if (!toast) return;
-  toast.className = `fixed bottom-6 right-6 px-4 py-3 rounded shadow-xl transform transition-all duration-300 z-50 max-w-sm ${isError ? 'bg-red-600 text-white' : 'bg-gray-800 dark:bg-gray-700 text-white'}`;
-  const msgEl = getEl('toast-message');
-  if (msgEl) msgEl.textContent = msg;
-  toast.classList.remove('translate-y-20', 'opacity-0');
-  setTimeout(() => toast.classList.add('translate-y-20', 'opacity-0'), 5000);
+    const output = getEl('console-output');
+    if (!output) return;
+    
+    const now = new Date();
+    const time = now.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    
+    const colorClass = isError ? 'text-red-400 font-bold bg-red-900/10' : 'text-gray-300 hover:bg-gray-800/50';
+    const icon = isError ? '<i class="fa-solid fa-circle-exclamation text-red-500 mr-2"></i>' : '<i class="fa-solid fa-angle-right text-blue-500 mr-2 opacity-50"></i>';
+    
+    const logEntry = document.createElement('div');
+    logEntry.className = `border-b border-gray-800/50 py-1 px-1 transition-colors ${colorClass}`;
+    logEntry.innerHTML = `<span class="text-gray-600 mr-3 select-none">[${time}]</span>${icon} <span>${msg}</span>`;
+    
+    output.appendChild(logEntry);
+    output.scrollTop = output.scrollHeight; 
+
+    const appConsole = getEl('app-console');
+    const isConsoleOpen = !appConsole.classList.contains('translate-y-full');
+    
+    if (isError && !isConsoleOpen) {
+        unreadErrors++;
+        const badge = getEl('console-badge');
+        if (badge) {
+            badge.textContent = unreadErrors > 9 ? '9+' : unreadErrors;
+            badge.classList.remove('hidden');
+        }
+    }
 };
 
 const updateSoloView = () => {
@@ -369,7 +392,8 @@ export const togglePreviewLayer = (layerId, isVisible) => {
             pane: previewPaneName,
             renderer: previewRenderer,
             style: createGeoJsonStyleFunction(customStyle),
-            pointToLayer: createGeoJsonPointToLayer(customStyle, previewPaneName, previewRenderer)
+            pointToLayer: createGeoJsonPointToLayer(customStyle, previewPaneName, previewRenderer),
+            onEachFeature: attachPopupsToFeatures // <-- FIX 1: RESTORED POPUP HANDLER
         });
     } else {
         const baseUrl = meta.serviceUrl || meta.url || AppState.currentServerUrl.split('?')[0];
@@ -1138,7 +1162,8 @@ const renderTableContent = (layerName) => {
             featuresToExport.forEach(f => {
                 if (f.properties) Object.keys(f.properties).forEach(k => headerSet.add(k));
             });
-            const headers = Array.from(headerSet);
+            // FILTER OUT the internal row ID from the exported CSV
+            const headers = Array.from(headerSet).filter(h => h !== '__row_id');
 
             let csvString = headers.join(',') + '\n';
             featuresToExport.forEach(f => {
@@ -1292,7 +1317,12 @@ export const handleToggleTable = async (e) => {
       return;
     }
 
-    features.forEach((f, i) => f.__row_id = i);
+    // THE FIX: Inject row_id deep into properties so Leaflet's internal copies can access it
+    features.forEach((f, i) => {
+        f.__row_id = i;
+        if (!f.properties) f.properties = {};
+        f.properties.__row_id = i; 
+    });
     AppState.currentTableFeatures = features;
 
     const headerSet = new Set();
@@ -1300,7 +1330,8 @@ export const handleToggleTable = async (e) => {
         if (f.properties) Object.keys(f.properties).forEach(k => headerSet.add(k));
     });
     
-    let headers = Array.from(headerSet);
+    // Hide the internal row_id from the UI headers
+    let headers = Array.from(headerSet).filter(h => h !== '__row_id');
     const bakedCols = ['COLOR_FILL', 'COLOR_OUTLINE', 'LATITUDE', 'LONGITUDE'];
     
     AppState.currentTableHeaders = headers
@@ -1312,15 +1343,24 @@ export const handleToggleTable = async (e) => {
     renderTableContent(layer.displayName);
 
     if (layer.mapLayer) {
-        const onMapFeatureClick = (clickEvt) => {
+        // THE FIX: Remove old click listener gracefully to prevent duplicates
+        if (layer._onMapFeatureClick) {
+            layer.mapLayer.off('click', layer._onMapFeatureClick);
+        }
+        
+        // Setup stable listener reference
+        layer._onMapFeatureClick = (clickEvt) => {
             if (AppState.activeTableLayerKey !== layer.uniqueKey) return;
-            const rowId = clickEvt.layer && clickEvt.layer.feature ? clickEvt.layer.feature.__row_id : null;
+            
+            // Check the deeply injected property first
+            const rowId = clickEvt.layer?.feature?.properties?.__row_id ?? clickEvt.layer?.feature?.__row_id;
+            
             if (rowId !== null && rowId !== undefined) {
                 highlightTableRow(rowId);
             }
         };
-        layer.mapLayer.off('click', onMapFeatureClick);
-        layer.mapLayer.on('click', onMapFeatureClick);
+        
+        layer.mapLayer.on('click', layer._onMapFeatureClick);
     }
 
   } catch (err) {
@@ -1334,6 +1374,33 @@ export const handleToggleTable = async (e) => {
     attachTableResizer();
   }
 };
+
+// --- Console Controls ---
+getEl('btn-toggle-console')?.addEventListener('click', () => {
+    const appConsole = getEl('app-console');
+    if (!appConsole) return;
+    
+    appConsole.classList.toggle('translate-y-full');
+    
+    // Clear notification badge when opened
+    if (!appConsole.classList.contains('translate-y-full')) {
+        const badge = getEl('console-badge');
+        if (badge) badge.classList.add('hidden');
+        unreadErrors = 0;
+    }
+});
+
+getEl('btn-close-console')?.addEventListener('click', () => {
+    getEl('app-console')?.classList.add('translate-y-full');
+});
+
+getEl('btn-clear-console')?.addEventListener('click', () => {
+    const output = getEl('console-output');
+    if (output) output.innerHTML = '<div class="text-gray-500 italic border-b border-gray-800 pb-1 mb-1">Console cleared.</div>';
+    unreadErrors = 0;
+    const badge = getEl('console-badge');
+    if (badge) badge.classList.add('hidden');
+});
 
 // Global array to track Pickr instances so we can destroy them to prevent memory leaks
 window.activePickrs = window.activePickrs || [];
@@ -2663,7 +2730,6 @@ const handleFetchLayers = async () => {
 
   try {
     if (AppState.currentServerType === 'OVERPASS') {
-        // --- NEW: Parse the dynamic tag builder rows ---
         const tagRows = document.querySelectorAll('.osm-tag-row');
         const tags = [];
         tagRows.forEach(row => {
@@ -2724,7 +2790,6 @@ const handleFetchLayers = async () => {
             } catch(e) {} 
         }
 
-        // --- NEW: Generate a smart layer name based on tags ---
         const firstTag = tags[0];
         let layerName = `OSM: ${firstTag.key}${firstTag.val ? '=' + firstTag.val : ''}`;
         if (tags.length > 1) layerName += ` (+${tags.length - 1})`;
@@ -2836,11 +2901,16 @@ const handleFetchLayers = async () => {
     renderAvailableLayers(); switchTab('available');
 
   } catch(e) {
+    // 1. Log to the system console
     showToast(e.message || "Fetch failed. Check console.", true);
-    if (AppState.currentServerType !== 'OVERPASS' && availableLayerList) {
-        availableLayerList.innerHTML = `<p class="text-xs text-red-500 italic text-center mt-3">Failed to fetch. Check server URL.</p>`; searchContainer?.classList.add('hidden');
+    
+    // 2. Remove the spinner and show the error in the list UI (now applies to OSM too!)
+    if (availableLayerList) {
+        availableLayerList.innerHTML = `<p class="text-[11px] text-red-500 font-semibold italic text-center mt-4 px-3">${e.message || "Failed to fetch. Check parameters."}</p>`; 
+        searchContainer?.classList.add('hidden');
     }
   } finally {
+    // 3. Reset the button
     fetchSpinner?.classList.add('hidden'); 
     if (fetchText) fetchText.textContent = AppState.currentServerType === 'OVERPASS' ? 'Fetch OSM Data' : 'Fetch Layers';
   }

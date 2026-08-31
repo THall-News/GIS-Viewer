@@ -672,7 +672,7 @@ def proxy_download():
 def overpass_search():
     data = request.json or {}
     
-    # 1. Parse the new tags array
+    # 1. Parse the tags array
     tags = data.get('tags', [])
     feat_name = data.get('featName')
     loc = data.get('loc')
@@ -750,7 +750,6 @@ def overpass_search():
         q += "out body;\n>;\nout skel qt;"
         return q
 
-    # --- BULLETPROOF FALLBACK SERVER LOGIC ---
     overpass_endpoints = [
         "https://overpass-api.de/api/interpreter",
         "https://lz4.overpass-api.de/api/interpreter",
@@ -770,12 +769,10 @@ def overpass_search():
                     time.sleep(3)
                     res = requests.post(url, data={"data": query_string}, headers=headers, timeout=45)
                 
-                # NEW: If the server answers, but it's an error code (500, 502, 503, 504), skip to the next server!
                 if res.status_code in [500, 502, 503, 504]:
                     print(f"  -> Server {url} returned HTTP {res.status_code}. Trying backup server...")
                     continue
 
-                # If it's a 400 error (Syntax/Bad Query), Overpass usually sends a helpful message
                 if res.status_code == 400:
                     print(f"  -> Bad Request! Overpass says: {res.text}")
 
@@ -804,28 +801,34 @@ def overpass_search():
         else:
             s, w, n, e = target_bbox
             
-            area_sq_deg = (n - s) * (e - w)
-            if area_sq_deg > 2.0:
-                return jsonify({"error": "Map area is too massive for Overpass. Please zoom in closer."}), 400
+            H = max(n - s, 0.0001)
+            W = max(e - w, 0.0001)
 
-            grid_size = 0.1
+            # Ideal chunk size is ~11km (0.1 degrees)
+            ideal_grid_size = 0.1
+            ideal_lat_steps = max(1, math.ceil(H / ideal_grid_size))
+            ideal_lon_steps = max(1, math.ceil(W / ideal_grid_size))
 
-            lat_steps = max(1, math.ceil((n - s) / grid_size))
-            lon_steps = max(1, math.ceil((e - w) / grid_size))
+            # --- DYNAMIC GRID CALCULATION ---
+            if ideal_lat_steps * ideal_lon_steps <= max_chunks:
+                # If area is small enough, use the standard 0.1 degree chunks
+                lat_steps = ideal_lat_steps
+                lon_steps = ideal_lon_steps
+            else:
+                # If area is too massive, calculate new rows/cols to exactly hit max_chunks limit
+                ratio = W / H
+                lat_steps = max(1, int(round(math.sqrt(max_chunks / ratio))))
+                lon_steps = max(1, int(max_chunks // lat_steps))
 
             total_cells = lat_steps * lon_steps
-            if total_cells > max_chunks:
-                 return jsonify({"error": f"Map area requires too many grid chunks ({total_cells}). Please zoom in closer or increase the Grid Overload Limit in Advanced Settings."}), 400
-
-            lat_step_size = (n - s) / lat_steps
-            lon_step_size = (e - w) / lon_steps
-
+            lat_step_size = H / lat_steps
+            lon_step_size = W / lon_steps
+            
             all_elements = []
             seen_ids = set()
-
             current_cell = 0
             
-            print(f"\n[Overpass Grid] Slicing query into {total_cells} sub-regions...")
+            print(f"\n[Overpass Grid] Slicing query into {total_cells} dynamic sub-regions...")
 
             for i in range(lat_steps):
                 for j in range(lon_steps):
@@ -844,7 +847,7 @@ def overpass_search():
 
                     if res.status_code == 504:
                          print(f"  -> Cell {current_cell} timed out! Data is too dense.")
-                         return jsonify({"error": "Overpass API timed out on a grid cell. The data is too dense, please zoom in."}), 504
+                         return jsonify({"error": f"Overpass API timed out on grid cell {current_cell}/{total_cells}. The data is too dense for the current chunk size. Try increasing the Max Grid Chunks to slice the area smaller."}), 504
 
                     res.raise_for_status()
                     
