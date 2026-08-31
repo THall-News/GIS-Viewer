@@ -11,7 +11,6 @@ import {
 } from './mapEngine.js';
 import { saveLayerToCache, deleteCachedLayer, getCachedLayers } from './db.js';
 
-// Sync layer state whenever a layer is added, cropped, or re-styled
 export const syncLayerCache = async (layerKey) => {
     const layerObj = AppState.activeLayers.find(l => l.key === layerKey);
     if (!layerObj) return;
@@ -27,12 +26,10 @@ export const syncLayerCache = async (layerKey) => {
     });
 };
 
-// Hook into layer removal
 export const removeLayerFromCache = async (layerKey) => {
     await deleteCachedLayer(layerKey);
 };
 
-// Safely Query DOM Elements
 const getEl = (id) => document.getElementById(id);
 
 const tabBtnAvailable = getEl('tab-btn-available');
@@ -75,8 +72,6 @@ const osmInspectContainer = getEl('osm-inspect-container');
 const osmInspectResults = getEl('osm-inspect-results');
 const btnCloseInspect = getEl('btn-close-inspect');
 const osmInspectStatus = getEl('osm-inspect-status');
-
-const toast = getEl('toast');
 
 const commonOsmTags = {
   'boundary': ['administrative', 'aboriginal_lands', 'postal_code', 'protected_area', 'national_park', 'census', 'maritime'],
@@ -149,17 +144,49 @@ const handleRedo = () => {
 getEl('btn-undo')?.addEventListener('click', handleUndo);
 getEl('btn-redo')?.addEventListener('click', handleRedo);
 
+
+// --- NEW: DYNAMIC STACKING MANAGER ---
+export const updateStacking = () => {
+    const appConsole = getEl('app-console');
+    const attrTable = getEl('attribute-table-container');
+    
+    if (!appConsole) return;
+    
+    // Check for the translation class, NOT the hidden class
+    const isConsoleOpen = !appConsole.classList.contains('translate-y-full');
+    
+    if (attrTable) {
+        attrTable.style.transition = 'bottom 0.3s ease-in-out';
+        if (isConsoleOpen) {
+            attrTable.style.bottom = `${appConsole.offsetHeight}px`;
+            attrTable.style.borderBottom = '2px solid #1f2937'; 
+        } else {
+            attrTable.style.bottom = '0px';
+            attrTable.style.borderBottom = 'none';
+        }
+    }
+};
+
+// --- NEW: LOGGING SYSTEM ---
 let unreadErrors = 0;
 
-const showToast = (msg, isError=false) => {
+export const showToast = (msg, isError=false, isServer=false) => {
     const output = getEl('console-output');
     if (!output) return;
     
     const now = new Date();
     const time = now.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
     
-    const colorClass = isError ? 'text-red-400 font-bold bg-red-900/10' : 'text-gray-300 hover:bg-gray-800/50';
-    const icon = isError ? '<i class="fa-solid fa-circle-exclamation text-red-500 mr-2"></i>' : '<i class="fa-solid fa-angle-right text-blue-500 mr-2 opacity-50"></i>';
+    let colorClass = 'text-gray-300 hover:bg-gray-800/50';
+    let icon = '<i class="fa-solid fa-angle-right text-blue-500 mr-2 opacity-50"></i>';
+    
+    if (isError) {
+        colorClass = 'text-red-400 font-bold bg-red-900/10';
+        icon = '<i class="fa-solid fa-circle-exclamation text-red-500 mr-2"></i>';
+    } else if (isServer || String(msg).includes('[WARN]')) {
+        colorClass = 'text-yellow-400 hover:bg-yellow-900/10';
+        icon = '<i class="fa-solid fa-triangle-exclamation text-yellow-500 mr-2 opacity-70"></i>';
+    }
     
     const logEntry = document.createElement('div');
     logEntry.className = `border-b border-gray-800/50 py-1 px-1 transition-colors ${colorClass}`;
@@ -169,9 +196,10 @@ const showToast = (msg, isError=false) => {
     output.scrollTop = output.scrollHeight; 
 
     const appConsole = getEl('app-console');
-    const isConsoleOpen = !appConsole.classList.contains('translate-y-full');
+    // Check for translation class
+    const isConsoleOpen = appConsole && !appConsole.classList.contains('translate-y-full');
     
-    if (isError && !isConsoleOpen) {
+    if ((isError || isServer || String(msg).includes('[WARN]')) && !isConsoleOpen) {
         unreadErrors++;
         const badge = getEl('console-badge');
         if (badge) {
@@ -180,6 +208,48 @@ const showToast = (msg, isError=false) => {
         }
     }
 };
+
+// --- NEW: BROWSER TERMINAL UNIFICATION ---
+// Intercepts all standard console prints so they render directly in the UI panel
+const safeStringify = (obj) => {
+    try {
+        if (obj instanceof Error) return obj.toString();
+        return typeof obj === 'object' ? JSON.stringify(obj) : String(obj);
+    } catch(e) { return Object.prototype.toString.call(obj); }
+};
+
+const originalLog = console.log;
+const originalWarn = console.warn;
+const originalError = console.error;
+
+console.log = (...args) => {
+    originalLog(...args);
+    showToast(args.map(safeStringify).join(' '));
+};
+
+console.warn = (...args) => {
+    originalWarn(...args);
+    showToast(`[WARN] ${args.map(safeStringify).join(' ')}`, false, true);
+};
+
+console.error = (...args) => {
+    originalError(...args);
+    showToast(args.map(safeStringify).join(' '), true);
+};
+
+// Start Polling server logs quietly in the background
+setInterval(async () => {
+    try {
+        const res = await fetch('/api/logs');
+        if (res.ok) {
+            const data = await res.json();
+            if (data.logs && data.logs.length > 0) {
+                data.logs.forEach(logMsg => showToast(logMsg, false, true));
+            }
+        }
+    } catch(e) {}
+}, 1000);
+
 
 const updateSoloView = () => {
     if (!AppState.currentSoloLayerKey) {
@@ -263,6 +333,7 @@ const closeTablePanel = () => {
     }
     
     if (AppState.activeLayers.length > 0) renderAddedLayers();
+    updateStacking();
 };
 window.closeTablePanel = closeTablePanel;
 
@@ -393,7 +464,7 @@ export const togglePreviewLayer = (layerId, isVisible) => {
             renderer: previewRenderer,
             style: createGeoJsonStyleFunction(customStyle),
             pointToLayer: createGeoJsonPointToLayer(customStyle, previewPaneName, previewRenderer),
-            onEachFeature: attachPopupsToFeatures // <-- FIX 1: RESTORED POPUP HANDLER
+            onEachFeature: attachPopupsToFeatures 
         });
     } else {
         const baseUrl = meta.serviceUrl || meta.url || AppState.currentServerUrl.split('?')[0];
@@ -633,7 +704,6 @@ const executeOsmInspect = async (bounds) => {
         });
         results.innerHTML = html;
         
-        // --- NEW: Map to the new QGIS-style query builder ---
         document.querySelectorAll('.inspect-tag-item').forEach(item => {
             item.addEventListener('click', (e) => {
                 const el = e.currentTarget;
@@ -930,6 +1000,7 @@ const attachTableResizer = () => {
             
             attributeTableContainer.style.maxHeight = 'none';
             attributeTableContainer.style.height = `${newHeight}px`;
+            updateStacking();
         };
 
         const stopDrag = () => {
@@ -1162,7 +1233,6 @@ const renderTableContent = (layerName) => {
             featuresToExport.forEach(f => {
                 if (f.properties) Object.keys(f.properties).forEach(k => headerSet.add(k));
             });
-            // FILTER OUT the internal row ID from the exported CSV
             const headers = Array.from(headerSet).filter(h => h !== '__row_id');
 
             let csvString = headers.join(',') + '\n';
@@ -1275,6 +1345,7 @@ export const handleToggleTable = async (e) => {
         <p class="text-xs text-gray-500 dark:text-gray-400 italic animate-pulse">Fetching attributes...</p>
     </div>`;
   attachTableResizer();
+  updateStacking(); // Ensure it pushes up smoothly immediately
 
   try {
     let features = [];
@@ -1317,7 +1388,6 @@ export const handleToggleTable = async (e) => {
       return;
     }
 
-    // THE FIX: Inject row_id deep into properties so Leaflet's internal copies can access it
     features.forEach((f, i) => {
         f.__row_id = i;
         if (!f.properties) f.properties = {};
@@ -1330,7 +1400,6 @@ export const handleToggleTable = async (e) => {
         if (f.properties) Object.keys(f.properties).forEach(k => headerSet.add(k));
     });
     
-    // Hide the internal row_id from the UI headers
     let headers = Array.from(headerSet).filter(h => h !== '__row_id');
     const bakedCols = ['COLOR_FILL', 'COLOR_OUTLINE', 'LATITUDE', 'LONGITUDE'];
     
@@ -1343,23 +1412,18 @@ export const handleToggleTable = async (e) => {
     renderTableContent(layer.displayName);
 
     if (layer.mapLayer) {
-        // THE FIX: Remove old click listener gracefully to prevent duplicates
         if (layer._onMapFeatureClick) {
             layer.mapLayer.off('click', layer._onMapFeatureClick);
         }
         
-        // Setup stable listener reference
         layer._onMapFeatureClick = (clickEvt) => {
             if (AppState.activeTableLayerKey !== layer.uniqueKey) return;
-            
-            // Check the deeply injected property first
             const rowId = clickEvt.layer?.feature?.properties?.__row_id ?? clickEvt.layer?.feature?.__row_id;
             
             if (rowId !== null && rowId !== undefined) {
                 highlightTableRow(rowId);
             }
         };
-        
         layer.mapLayer.on('click', layer._onMapFeatureClick);
     }
 
@@ -1374,33 +1438,6 @@ export const handleToggleTable = async (e) => {
     attachTableResizer();
   }
 };
-
-// --- Console Controls ---
-getEl('btn-toggle-console')?.addEventListener('click', () => {
-    const appConsole = getEl('app-console');
-    if (!appConsole) return;
-    
-    appConsole.classList.toggle('translate-y-full');
-    
-    // Clear notification badge when opened
-    if (!appConsole.classList.contains('translate-y-full')) {
-        const badge = getEl('console-badge');
-        if (badge) badge.classList.add('hidden');
-        unreadErrors = 0;
-    }
-});
-
-getEl('btn-close-console')?.addEventListener('click', () => {
-    getEl('app-console')?.classList.add('translate-y-full');
-});
-
-getEl('btn-clear-console')?.addEventListener('click', () => {
-    const output = getEl('console-output');
-    if (output) output.innerHTML = '<div class="text-gray-500 italic border-b border-gray-800 pb-1 mb-1">Console cleared.</div>';
-    unreadErrors = 0;
-    const badge = getEl('console-badge');
-    if (badge) badge.classList.add('hidden');
-});
 
 // Global array to track Pickr instances so we can destroy them to prevent memory leaks
 window.activePickrs = window.activePickrs || [];
@@ -2742,12 +2779,13 @@ const handleFetchLayers = async () => {
 
         const timeout = parseInt(getEl('osm-timeout')?.value) || 25;
         const maxChunks = parseInt(getEl('osm-max-chunks')?.value) || 16;
+        const maxArea = parseFloat(getEl('osm-max-area')?.value) || 2.0; 
         const loc = getEl('osm-location')?.value.trim();
         const geomType = getEl('osm-geom')?.value;
 
         const bounds = map.getBounds();
         const payload = {
-            tags, loc, geomType, timeout, maxChunks,
+            tags, loc, geomType, timeout, maxChunks, maxArea,
             bbox: {
                 south: bounds.getSouth(),
                 west: bounds.getWest(),
@@ -2884,7 +2922,11 @@ const handleFetchLayers = async () => {
     else { targetUrl.searchParams.set('f', 'json'); }
 
     const proxyRes = await fetch(`/proxy?url=${encodeURIComponent(targetUrl.toString())}`);
-    if (!proxyRes.ok) throw new Error("Proxy error");
+    if (!proxyRes.ok) {
+        let errData;
+        try { errData = await proxyRes.json(); } catch(e) {}
+        throw new Error((errData && errData.error) ? errData.error : "Proxy error connecting to server.");
+    }
 
     if (AppState.currentServerType === 'WFS') {
       const xml = new DOMParser().parseFromString(await proxyRes.text(), 'text/xml');
@@ -2901,16 +2943,13 @@ const handleFetchLayers = async () => {
     renderAvailableLayers(); switchTab('available');
 
   } catch(e) {
-    // 1. Log to the system console
     showToast(e.message || "Fetch failed. Check console.", true);
     
-    // 2. Remove the spinner and show the error in the list UI (now applies to OSM too!)
     if (availableLayerList) {
         availableLayerList.innerHTML = `<p class="text-[11px] text-red-500 font-semibold italic text-center mt-4 px-3">${e.message || "Failed to fetch. Check parameters."}</p>`; 
         searchContainer?.classList.add('hidden');
     }
   } finally {
-    // 3. Reset the button
     fetchSpinner?.classList.add('hidden'); 
     if (fetchText) fetchText.textContent = AppState.currentServerType === 'OVERPASS' ? 'Fetch OSM Data' : 'Fetch Layers';
   }
@@ -2931,6 +2970,91 @@ getEl('toggle-database')?.addEventListener('click', () => {
     getEl('content-database')?.classList.toggle('hidden');
     getEl('icon-database')?.classList.toggle('-rotate-90');
 });
+
+// --- NEW: Console Control Listeners & Resizer ---
+getEl('btn-toggle-console')?.addEventListener('click', () => {
+    const appConsole = getEl('app-console');
+    if (!appConsole) return;
+    
+    appConsole.classList.toggle('translate-y-full');
+    
+    if (!appConsole.classList.contains('translate-y-full')) {
+        const badge = getEl('console-badge');
+        if (badge) badge.classList.add('hidden');
+        unreadErrors = 0;
+    }
+    
+    updateStacking();
+});
+
+getEl('btn-close-console')?.addEventListener('click', () => {
+    const appConsole = getEl('app-console');
+    if (appConsole) {
+        // Push it offscreen instead of hiding it instantly
+        appConsole.classList.add('translate-y-full');
+    }
+    updateStacking();
+});
+
+getEl('btn-clear-console')?.addEventListener('click', () => {
+    const output = getEl('console-output');
+    if (output) output.innerHTML = '<div class="text-gray-500 italic border-b border-gray-800 pb-1 mb-1">Console cleared.</div>';
+    unreadErrors = 0;
+    const badge = getEl('console-badge');
+    if (badge) badge.classList.add('hidden');
+});
+
+const attachConsoleResizer = () => {
+    const appConsole = getEl('app-console');
+    if (!appConsole) return;
+    
+    let resizer = appConsole.querySelector('.console-resizer');
+    if (!resizer) {
+        resizer = document.createElement('div');
+        resizer.className = 'console-resizer absolute top-0 left-0 w-full h-1.5 bg-gray-700 hover:bg-blue-500 cursor-row-resize z-[2050] transition-colors';
+        appConsole.appendChild(resizer);
+    }
+    
+    let isResizing = false;
+    resizer.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        isResizing = true;
+        document.body.classList.add('select-none', 'cursor-row-resize');
+
+        const startY = e.clientY;
+        const startHeight = appConsole.offsetHeight;
+
+        const doDrag = (moveEvt) => {
+            if (!isResizing) return;
+            
+            const attrTable = getEl('attribute-table-container');
+            if (attrTable) attrTable.style.transition = 'none';
+
+            const dy = startY - moveEvt.clientY;
+            const newHeight = Math.max(100, Math.min(window.innerHeight - 100, startHeight + dy));
+            
+            appConsole.style.height = `${newHeight}px`;
+            updateStacking();
+        };
+
+        const stopDrag = () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.classList.remove('select-none', 'cursor-row-resize');
+                window.removeEventListener('mousemove', doDrag);
+                window.removeEventListener('mouseup', stopDrag);
+                
+                const attrTable = getEl('attribute-table-container');
+                if (attrTable) attrTable.style.transition = 'bottom 0.3s ease-in-out';
+            }
+        };
+
+        window.addEventListener('mousemove', doDrag);
+        window.addEventListener('mouseup', stopDrag);
+    });
+};
+attachConsoleResizer();
+
 
 tabBtnAvailable?.addEventListener('click', () => switchTab('available'));
 tabBtnAdded?.addEventListener('click', () => switchTab('added'));
@@ -3348,7 +3472,6 @@ if (addedSearchContainerDOM && btnUndoDom && btnRedoDom && searchInputDiv) {
     addedSearchContainerDOM.insertBefore(btnUndoDom, btnRedoDom);
 }
 
-// --- NEW: Dynamic Tag Builder Handlers ---
 const updateRemoveButtons = () => {
     const rows = document.querySelectorAll('.osm-tag-row');
     rows.forEach((row) => {
@@ -3399,7 +3522,6 @@ const initOsmDatalists = () => {
     const keysList = getEl('osm-keys');
     if (keysList) keysList.innerHTML = Object.keys(commonOsmTags).map(k => `<option value="${k}">`).join('');
 
-    // Event delegation so dynamically added inputs still get autocomplete
     document.addEventListener('input', (e) => {
         if (e.target.classList.contains('osm-key')) {
             const key = e.target.value.toLowerCase().trim();
@@ -3587,7 +3709,47 @@ if (searchNode && searchNode.parentNode) {
     searchNode.parentNode.insertBefore(searchNode, searchNode.parentNode.firstChild);
 }
 
-// --- OFFLINE CACHING: INDEXEDDB HELPERS ---
+// ==========================================
+// 11b. INTEGRATED CONSOLE BUTTON (ATTACHED TO ZOOM)
+// ==========================================
+const zoomContainer = map.zoomControl ? map.zoomControl.getContainer() : null;
+if (zoomContainer) {
+    const consoleBtn = L.DomUtil.create('a', '', zoomContainer);
+    consoleBtn.href = '#';
+    consoleBtn.title = 'Toggle System Console';
+    
+    // Flexbox ensures the icon is perfectly centered like the + and - signs
+    consoleBtn.style.display = 'flex';
+    consoleBtn.style.alignItems = 'center';
+    consoleBtn.style.justifyContent = 'center';
+    consoleBtn.style.position = 'relative';
+    
+    consoleBtn.innerHTML = `
+        <i class="fa-solid fa-terminal text-[13px]"></i>
+        <span id="console-badge" class="absolute -top-1 -right-1 bg-red-500 border border-gray-800 text-white text-[9px] font-bold w-4 h-4 flex items-center justify-center rounded-full hidden" style="line-height: 1;">0</span>
+    `;
+
+    L.DomEvent.disableClickPropagation(consoleBtn);
+    L.DomEvent.on(consoleBtn, 'click', (e) => {
+        L.DomEvent.stop(e); // Prevent map click
+        const appConsole = getEl('app-console');
+        if (!appConsole) return;
+        
+        appConsole.classList.toggle('translate-y-full');
+        
+        if (!appConsole.classList.contains('translate-y-full')) {
+            const badge = getEl('console-badge');
+            if (badge) badge.classList.add('hidden');
+            unreadErrors = 0;
+        }
+        
+        updateStacking();
+    });
+}
+
+// ==========================================
+// 12. OFFLINE CACHING: INDEXEDDB HELPERS
+// ==========================================
 function initWorkspaceDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open("GIS_Workspace_DB", 1);
@@ -3651,7 +3813,7 @@ async function clearWorkspaceDB() {
 }
 
 // ==========================================
-// 12. SERVICE WORKER REGISTRATION
+// 13. SERVICE WORKER REGISTRATION
 // ==========================================
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => {
@@ -3662,7 +3824,7 @@ if ('serviceWorker' in navigator) {
 }
 
 // ==========================================
-// 13. LOCAL FILE UPLOAD & PARSING
+// 14. LOCAL FILE UPLOAD & PARSING
 // ==========================================
 getEl('local-file-input')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
@@ -3790,7 +3952,7 @@ function addLocalGeoJsonToMap(geoJsonData, layerName) {
 }
 
 // ==========================================
-// 14. CKAN PROXY DOWNLOADER
+// 15. CKAN PROXY DOWNLOADER
 // ==========================================
 async function fetchAndProcessCKANLayer(meta) {
     showToast(`Downloading ${meta.title}...`);

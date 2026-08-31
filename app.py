@@ -13,6 +13,16 @@ import geopandas as gpd
 import pandas as pd
 import math
 import time
+import sys
+import io
+import logging
+
+# Silence the repetitive /api/logs polling in the terminal
+class MuteApiLogsFilter(logging.Filter):
+    def filter(self, record):
+        return '/api/logs' not in record.getMessage()
+
+logging.getLogger('werkzeug').addFilter(MuteApiLogsFilter())
 
 # Suppress unverified SSL warnings for government portals
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -20,10 +30,54 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 app = Flask(__name__)
 
 # --- 1. ABSOLUTE PATH SETUP ---
-# This guarantees it ONLY writes/reads from the exact folder your code is in
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SERVERS_FILE = os.path.join(BASE_DIR, 'gis_servers.json')
 DEFAULT_SERVERS_FILE = os.path.join(BASE_DIR, 'default_servers.json')
+
+# --- NEW: GLOBAL OVERPASS LIST ---
+GLOBAL_OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+    "https://z.overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.osm.ch/api/interpreter"
+]
+
+# ==========================================
+# SYSTEM LOG CATCHER
+# ==========================================
+class LogCatcher(io.StringIO):
+    def __init__(self, original_stdout):
+        super().__init__()
+        self.original_stdout = original_stdout
+        self.logs = []
+
+    def write(self, message):
+        # 1. Print to the OSX Terminal normally
+        self.original_stdout.write(message)
+        
+        # 2. Save a copy for the Web UI (ignoring empty newlines)
+        if message.strip():
+            self.logs.append(message.strip())
+
+    def flush(self):
+        self.original_stdout.flush()
+
+    def get_and_clear_logs(self):
+        # Return current logs and empty the queue
+        current_logs = self.logs[:]
+        self.logs.clear()
+        return current_logs
+
+# Hijack standard output
+sys_logger = LogCatcher(sys.stdout)
+sys.stdout = sys_logger
+sys.stderr = sys_logger # Capture Python errors/tracebacks too
+
+@app.route('/api/logs', methods=['GET'])
+def get_logs():
+    return jsonify({"logs": sys_logger.get_and_clear_logs()})
 
 # --- 2. DYNAMIC SEED DATA ---
 if not os.path.exists(SERVERS_FILE):
@@ -750,17 +804,8 @@ def overpass_search():
         q += "out body;\n>;\nout skel qt;"
         return q
 
-    overpass_endpoints = [
-        "https://overpass-api.de/api/interpreter",
-        "https://lz4.overpass-api.de/api/interpreter",
-        "https://z.overpass-api.de/api/interpreter",
-        "https://overpass.kumi.systems/api/interpreter",
-        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-        "https://overpass.osm.ch/api/interpreter"
-    ]
-
     def execute_overpass_query(query_string):
-        for url in overpass_endpoints:
+        for url in GLOBAL_OVERPASS_ENDPOINTS:
             try:
                 res = requests.post(url, data={"data": query_string}, headers=headers, timeout=45)
                 
@@ -768,6 +813,10 @@ def overpass_search():
                     print(f"  -> Rate limited by {url}! Sleeping 3s...")
                     time.sleep(3)
                     res = requests.post(url, data={"data": query_string}, headers=headers, timeout=45)
+                    
+                    if res.status_code == 429:
+                        print(f"  -> {url} is still rate limiting. Skipping to backup server...")
+                        continue
                 
                 if res.status_code in [500, 502, 503, 504]:
                     print(f"  -> Server {url} returned HTTP {res.status_code}. Trying backup server...")
@@ -775,6 +824,13 @@ def overpass_search():
 
                 if res.status_code == 400:
                     print(f"  -> Bad Request! Overpass says: {res.text}")
+                    return res
+
+                # --- NEW: Bump known-good server to the top of the global list ---
+                if GLOBAL_OVERPASS_ENDPOINTS[0] != url:
+                    GLOBAL_OVERPASS_ENDPOINTS.remove(url)
+                    GLOBAL_OVERPASS_ENDPOINTS.insert(0, url)
+                    print(f"  -> ⭐ Bumping known-good server to top: {url}")
 
                 return res
 
