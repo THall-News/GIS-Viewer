@@ -4,7 +4,7 @@ import io
 import logging
 import sys
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, send_from_directory
 
 from config import ensure_storage_files
 from routes.proxy import proxy_bp
@@ -49,6 +49,10 @@ def create_app() -> Flask:
     sys.stdout = sys_logger
     sys.stderr = sys_logger
     app.config['SYS_LOGGER'] = sys_logger
+
+    @app.route('/sw.js')
+    def serve_service_worker():
+        return send_from_directory(app.static_folder, 'sw.js')
 
     @app.route('/api/logs', methods=['GET'])
     def get_logs():

@@ -1371,7 +1371,7 @@ export const handleToggleTable = async (e) => {
       else if (queryUrl.includes('f=geojson')) queryUrl += '&resultRecordCount=100';
 
       const res = await fetch(`/proxy?url=${encodeURIComponent(queryUrl)}`);
-      if (!res.ok) throw new Error("Failed to fetch attributes.");
+      if (!res.ok) throw new Error
       const data = await res.json();
       features = data.features || [];
     }
@@ -1748,7 +1748,7 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
         </div>
     `;
 
-    const initPickers = (container) => {
+    const initPickrs = (container) => {
         if (typeof Pickr === 'undefined') return console.error("Pickr failed to initialize!");
         
         container.querySelectorAll('.color-picker-wrapper').forEach(wrapper => {
@@ -1790,7 +1790,7 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
         });
     };
 
-    initPickers(editPanelContainer);
+    initPickrs(editPanelContainer);
 
     let activeScaleCurve = currentScaleCurve;
     let activeGradCurve = currentGradCurve;
@@ -2032,7 +2032,7 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
             `;
         });
         catInnerList.innerHTML = html;
-        initPickers(catInnerList);
+        initPickrs(catInnerList);
     };
 
     catColSelect?.addEventListener('change', renderCategoryPickers);
@@ -2102,6 +2102,7 @@ export const handleToggleEdit = async (e, forceStyle = null) => {
         
         map.removeLayer(layer.mapLayer);
         const paneName = 'pane-' + layer.uniqueKey;
+        
         const existingPane = map.getPane(paneName);
         if (existingPane) existingPane.innerHTML = ''; 
 
@@ -2258,43 +2259,29 @@ export const handleToggleSplit = async (e) => {
         if (!splitCol) return showToast("Select an attribute column first.", true);
         
         const uniqueVals = [...new Set(layer.geoJsonData.features.map(f => f.properties ? f.properties[splitCol] : undefined))];
-        if (uniqueVals.length > 50 && !confirm(`Create ${uniqueVals.length} layers?`)) return;
-
-        const folderKey = 'folder_' + Math.random().toString(36).substr(2,9);
-        const newFolder = {
-            isFolder: true, uniqueKey: folderKey, displayName: `Split: ${layer.displayName} [${splitCol}]`,
-            isVisible: true, isExpanded: true, parentId: layer.parentId || null
-        };
-        
-        const newLayers = [];
-        let createdCount = 0;
-
+        if (uniqueVals.length > 50 && !confirm(`This will unpack ${uniqueVals.length} layers into the list below. Proceed?`)) return;
+    
+        clearAllPreviews(); 
+        AppState.fetchedLayers = []; 
+    
         uniqueVals.forEach(val => {
             const filteredFeats = layer.geoJsonData.features.filter(f => f.properties && f.properties[splitCol] === val);
             if (filteredFeats.length === 0) return;
-
-            const newGeoJson = JSON.parse(JSON.stringify({ type: "FeatureCollection", features: filteredFeats }));
-            const splitStyleState = layer.customStyle ? JSON.parse(JSON.stringify(layer.customStyle)) : { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1.0, pointShape: 'circle', pointSize: 8 };
-
-            const uniqueKey = Math.random().toString(36).substr(2,9);
-            const paneName = 'pane-' + uniqueKey;
-
-            const newMapLayer = createCustomGeoJSONLayer(newGeoJson, splitStyleState, paneName).addTo(map);
-
-            newLayers.push({
-                uniqueKey: uniqueKey, id: `${layer.id}_${val}`, displayName: `${layer.displayName} [${val}]`,
-                mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJson,
-                customStyle: splitStyleState, isVisible: true, parentId: folderKey, isFolder: false 
-            });
-            createdCount++;
+            
+            const displayVal = (val === null || val === undefined || val === '') ? 'null' : val;
+            let extraName = '';
+            if (filteredFeats.length === 1 && filteredFeats[0].properties.name && splitCol !== 'name') {
+                extraName = ` - ${filteredFeats[0].properties.name}`;
+            }
+            
+            AppState.fetchedLayers = [...AppState.fetchedLayers, {
+                id: `osm_${Date.now()}_${Math.random().toString(36).substr(2,5)}`,
+                title: `${AppState.lastFetchedOsmLayerName} [${splitCol}: ${displayVal}]${extraName}`,
+                geoJsonData: { type: "FeatureCollection", features: filteredFeats }
+            }];
         });
-        
-        AppState.activeLayers = [newFolder, ...newLayers, ...AppState.activeLayers];
-        layer.isVisible = false;
-        map.removeLayer(layer.mapLayer);
-        
-        closeSidebarPanels(); renderAddedLayers(); updateMapLayerOrder();
-        showToast(`Split into ${createdCount} new layers inside folder!`);
+        renderAvailableLayers();
+        showToast(`Successfully unpacked into ${AppState.fetchedLayers.length} sub-layers!`);
     });
 };
 
@@ -2539,7 +2526,7 @@ const renderAvailableLayers = () => {
       if (!layer.serviceName) {
           standaloneLayers.push(layer);
       } else {
-          const sUrl = layer.serviceUrl || layer.serviceName;
+          const sUrl = layer.serviceName || layer.serviceUrl;
           if (!servicesMap[sUrl]) {
               servicesMap[sUrl] = { serviceName: layer.serviceName, layers: [] };
           }
@@ -2795,64 +2782,87 @@ const handleFetchLayers = async () => {
         };
 
         if (fetchText) fetchText.textContent = 'Querying Grid...';
-        
-        const response = await fetch('/api/overpass_search', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
 
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Overpass API failed.");
-        if (!data.elements || data.elements.length === 0) throw new Error("No data found for this query.");
-
-        const geoJson = osmtogeojson(data, { flatProperties: true });
-        geoJson.features.forEach(f => {
-            if (f.properties) { 
-                if (f.properties.id) f.properties.osm_id = f.properties.id; 
-                delete f.properties.id; delete f.properties['@id']; 
-                delete f.properties['@relations']; delete f.properties.meta; 
+        const stopProgressPolling = pollOverpassProgress((latestMsg) => {
+            const cellMatch = latestMsg.match(/cell\s+(\d+)\/(\d+)/i) || latestMsg.match(/(\d+)\/(\d+)/);
+            if (cellMatch) {
+                const current = cellMatch[1] || cellMatch[0].split('/')[0];
+                const total = cellMatch[2] || cellMatch[0].split('/')[1];
+                setAvailableListStatus(`Grid chunk ${current}/${total}`);
+            } else if (/Overpass Grid/i.test(latestMsg)) {
+                setAvailableListStatus('Preparing OSM grid...');
+            } else if (/Fetching cell/i.test(latestMsg)) {
+                setAvailableListStatus('Querying OSM grid...');
             }
         });
-        
-        if (geomType === 'lines_polygons') geoJson.features = geoJson.features.filter(f => !['Point', 'MultiPoint'].includes(f.geometry?.type));
-        else if (geomType === 'points') geoJson.features = geoJson.features.filter(f => ['Point', 'MultiPoint'].includes(f.geometry?.type));
 
-        if (!geoJson.features || geoJson.features.length === 0) throw new Error("No renderable geometry found.");
-        
-        if (loc) { 
-            try { 
-                const tempLayer = L.geoJSON(geoJson); 
-                const layerBounds = tempLayer.getBounds(); 
-                if(layerBounds.isValid()) map.fitBounds(layerBounds); 
-            } catch(e) {} 
+        try {
+            const response = await fetch('/api/overpass_search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || "Overpass API failed.");
+            if (!data.elements || data.elements.length === 0) throw new Error("No data found for this query.");
+
+            stopProgressPolling();
+            setAvailableListStatus('Processing OSM results...');
+
+            const geoJson = osmtogeojson(data, { flatProperties: true });
+            geoJson.features.forEach(f => {
+                if (f.properties) { 
+                    if (f.properties.id) f.properties.osm_id = f.properties.id; 
+                    delete f.properties.id; delete f.properties['@id']; 
+                    delete f.properties['@relations']; delete f.properties.meta; 
+                }
+            });
+            
+            if (geomType === 'lines_polygons') geoJson.features = geoJson.features.filter(f => !['Point', 'MultiPoint'].includes(f.geometry?.type));
+            else if (geomType === 'points') geoJson.features = geoJson.features.filter(f => ['Point', 'MultiPoint'].includes(f.geometry?.type));
+
+            if (!geoJson.features || geoJson.features.length === 0) throw new Error("No renderable geometry found.");
+            
+            if (loc) { 
+                try { 
+                    const tempLayer = L.geoJSON(geoJson); 
+                    const layerBounds = tempLayer.getBounds(); 
+                    if(layerBounds.isValid()) map.fitBounds(layerBounds); 
+                } catch(e) {} 
+            }
+
+            const firstTag = tags[0];
+            let layerName = `OSM: ${firstTag.key}${firstTag.val ? '=' + firstTag.val : ''}`;
+            if (tags.length > 1) layerName += ` (+${tags.length - 1})`;
+            if (loc) layerName = `OSM: ${loc} (${firstTag.key})`;
+
+            AppState.fetchedLayers = [{ id: `osm_${Date.now()}`, title: layerName, geoJsonData: geoJson }];
+            AppState.lastFetchedOsmGeoJson = geoJson; 
+            AppState.lastFetchedOsmLayerName = layerName;
+            
+            const toolsContainer = getEl('osm-available-tools');
+            if (toolsContainer) { toolsContainer.classList.remove('hidden'); toolsContainer.classList.add('flex'); }
+
+            const cols = new Set();
+            geoJson.features.forEach(f => { if(f.properties) Object.keys(f.properties).forEach(k => cols.add(k)); });
+            
+            const sel = getEl('available-split-col');
+            if (sel) {
+                sel.innerHTML = '<option value="" disabled selected>Select attribute...</option>';
+                Array.from(cols).sort().forEach(c => { sel.innerHTML += `<option value="${c}">${c}</option>`; });
+            }
+
+            renderAvailableLayers(); 
+            switchTab('available'); 
+            showToast(`Fetched & Merged ${geoJson.features.length} OSM features!`);
+            return;
+        } catch (e) {
+            stopProgressPolling();
+            throw e;
+        } finally {
+            stopProgressPolling();
         }
-
-        const firstTag = tags[0];
-        let layerName = `OSM: ${firstTag.key}${firstTag.val ? '=' + firstTag.val : ''}`;
-        if (tags.length > 1) layerName += ` (+${tags.length - 1})`;
-        if (loc) layerName = `OSM: ${loc} (${firstTag.key})`;
-
-        AppState.fetchedLayers = [{ id: `osm_${Date.now()}`, title: layerName, geoJsonData: geoJson }];
-        AppState.lastFetchedOsmGeoJson = geoJson; 
-        AppState.lastFetchedOsmLayerName = layerName;
-        
-        const toolsContainer = getEl('osm-available-tools');
-        if (toolsContainer) { toolsContainer.classList.remove('hidden'); toolsContainer.classList.add('flex'); }
-
-        const cols = new Set();
-        geoJson.features.forEach(f => { if(f.properties) Object.keys(f.properties).forEach(k => cols.add(k)); });
-        
-        const sel = getEl('available-split-col');
-        if (sel) {
-            sel.innerHTML = '<option value="" disabled selected>Select attribute...</option>';
-            Array.from(cols).sort().forEach(c => { sel.innerHTML += `<option value="${c}">${c}</option>`; });
-        }
-
-        renderAvailableLayers(); 
-        switchTab('available'); 
-        showToast(`Fetched & Merged ${geoJson.features.length} OSM features!`);
-        return;
     }
 
     const sUrl = getEl('server-url');
@@ -3983,4 +3993,29 @@ async function fetchAndProcessCKANLayer(meta) {
         console.error("CKAN Download Error:", err);
         showToast(`Failed to download: ${err.message}`, true);
     }
+}
+
+function setAvailableListStatus(message, isLoading = true) {
+    if (!availableLayerList) return;
+    const spinner = isLoading ? '<i class="fa-solid fa-circle-notch fa-spin text-3xl mb-3 opacity-80"></i>' : '';
+    const text = message || 'Scanning Directory...';
+    availableLayerList.innerHTML = '<div class="flex flex-col items-center justify-center py-12 text-blue-600 dark:text-blue-500">' + spinner + '<p class="text-xs font-bold uppercase tracking-wider animate-pulse">' + text + '</p><p class="text-[10px] text-gray-500 dark:text-gray-400 mt-2 text-center max-w-[200px]">Large remote catalogs may take up to 15 seconds to fully index.</p></div>';
+}
+
+function pollOverpassProgress(onMessage) {
+    let timer = null;
+    const tick = async () => {
+        try {
+            const res = await fetch('/api/logs');
+            if (!res.ok) return;
+            const data = await res.json();
+            if (!data.logs || !data.logs.length) return;
+            const latest = data.logs[data.logs.length - 1];
+            if (latest) onMessage(latest);
+        } catch (e) {}
+    };
+    timer = setInterval(tick, 400);
+    return () => {
+        if (timer) clearInterval(timer);
+    };
 }

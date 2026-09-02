@@ -35,49 +35,29 @@ def build_query(tags, feat_name=None, geom_type='all', area_id=None, bbox=None, 
     if bbox is None:
         raise ValueError('bbox is required when no area_id is supplied')
 
-    s, w, n, e = bbox
-    H = max(n - s, 0.0001)
-    W = max(e - w, 0.0001)
-    ideal_grid_size = 0.1
-    ideal_lat_steps = max(1, math.ceil(H / ideal_grid_size))
-    ideal_lon_steps = max(1, math.ceil(W / ideal_grid_size))
-    max_chunks = 16
+    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+        s, w, n, e = bbox
+        bbox_str = f"{s},{w},{n},{e}"
+        q = f"[out:json][timeout:{timeout_val}];\n(\n"
+        if geom_type in ['all', 'points']:
+            q += f"  node{tag_query}({bbox_str});\n"
+        if geom_type in ['all', 'lines_polygons']:
+            q += f"  way{tag_query}({bbox_str});\n"
+            q += f"  relation{tag_query}({bbox_str});\n"
+        q += ");\n"
+        q += 'out body;\n>;\nout skel qt;'
+        return q
 
-    if ideal_lat_steps * ideal_lon_steps <= max_chunks:
-        lat_steps = ideal_lat_steps
-        lon_steps = ideal_lon_steps
-    else:
-        ratio = W / H
-        lat_steps = max(1, int(round(math.sqrt(max_chunks / ratio))))
-        lon_steps = max(1, int(max_chunks // lat_steps))
-
-    total_cells = lat_steps * lon_steps
-    lat_step_size = H / lat_steps
-    lon_step_size = W / lon_steps
-
-    queries = []
-    for i in range(lat_steps):
-        for j in range(lon_steps):
-            cell_s = s + i * lat_step_size
-            cell_n = cell_s + lat_step_size
-            cell_w = w + j * lon_step_size
-            cell_e = cell_w + lon_step_size
-            cell_bbox = f"{cell_s},{cell_w},{cell_n},{cell_e}"
-            q = f"[out:json][timeout:{timeout_val}];\n(\n"
-            if geom_type in ['all', 'points']:
-                q += f"  node{tag_query}({cell_bbox});\n"
-            if geom_type in ['all', 'lines_polygons']:
-                q += f"  way{tag_query}({cell_bbox});\n"
-                q += f"  relation{tag_query}({cell_bbox});\n"
-            q += ");\n"
-            q += 'out body;\n>;\nout skel qt;'
-            queries.append((cell_bbox, q))
-    return queries
+    raise ValueError('bbox must be a four-value [south, west, north, east] list')
 
 
 def execute_overpass_query(query_string):
     headers = {'User-Agent': 'GIS-Layer-Previewer/1.0 (Python/Requests)'}
-    for url in GLOBAL_OVERPASS_ENDPOINTS:
+    # Work on a per-request copy so one search cannot corrupt the shared
+    # endpoint order for later searches.
+    endpoints = list(GLOBAL_OVERPASS_ENDPOINTS)
+
+    for url in endpoints:
         try:
             res = requests.post(url, data={'data': query_string}, headers=headers, timeout=45)
 
@@ -97,9 +77,8 @@ def execute_overpass_query(query_string):
                 print(f'  -> Bad Request! Overpass says: {res.text}')
                 return res
 
-            if GLOBAL_OVERPASS_ENDPOINTS[0] != url:
-                GLOBAL_OVERPASS_ENDPOINTS.remove(url)
-                GLOBAL_OVERPASS_ENDPOINTS.insert(0, url)
+            if GLOBAL_OVERPASS_ENDPOINTS and GLOBAL_OVERPASS_ENDPOINTS[0] != url:
+                GLOBAL_OVERPASS_ENDPOINTS[:] = [url] + [ep for ep in GLOBAL_OVERPASS_ENDPOINTS if ep != url]
                 print(f'  -> ⭐ Bumping known-good server to top: {url}')
 
             return res
@@ -154,20 +133,30 @@ def search_overpass(tags, feat_name=None, loc=None, geom_type='all', bbox=None, 
     ideal_grid_size = 0.1
     ideal_lat_steps = max(1, math.ceil(H / ideal_grid_size))
     ideal_lon_steps = max(1, math.ceil(W / ideal_grid_size))
+    max_chunks = max(1, int(max_chunks))
 
     if ideal_lat_steps * ideal_lon_steps <= max_chunks:
         lat_steps = ideal_lat_steps
         lon_steps = ideal_lon_steps
     else:
-        ratio = W / H
-        lat_steps = max(1, int(round(math.sqrt(max_chunks / ratio))))
-        lon_steps = max(1, int(max_chunks // lat_steps))
+        lat_steps = max(1, min(ideal_lat_steps, int(round(math.sqrt(max_chunks * (H / W))))))
+        lon_steps = max(1, int(math.ceil(max_chunks / lat_steps)))
+        while lat_steps * lon_steps > max_chunks:
+            if lon_steps > 1:
+                lon_steps -= 1
+            elif lat_steps > 1:
+                lat_steps -= 1
+                lon_steps = max(1, int(math.ceil(max_chunks / lat_steps)))
+            else:
+                break
 
     total_cells = lat_steps * lon_steps
     lat_step_size = H / lat_steps
     lon_step_size = W / lon_steps
     all_elements = []
     seen_ids = set()
+
+    print(f"\n[Overpass Grid] Slicing query into {total_cells} dynamic sub-regions...")
 
     for i in range(lat_steps):
         for j in range(lon_steps):
@@ -177,11 +166,16 @@ def search_overpass(tags, feat_name=None, loc=None, geom_type='all', bbox=None, 
             cell_e = cell_w + lon_step_size
             cell_bbox = [cell_s, cell_w, cell_n, cell_e]
             query = build_query(tags=tags, feat_name=feat_name, geom_type=geom_type, bbox=cell_bbox, timeout_val=timeout_val)
+            current_cell = (i * lon_steps) + j + 1
+            print(f"  -> Fetching cell {current_cell}/{total_cells}...")
             res = execute_overpass_query(query)
             if res.status_code == 504:
-                raise TimeoutError(f'Overpass API timed out on grid cell {i + 1}/{total_cells}. The data is too dense for the current chunk size.')
+                print(f"  -> Cell {current_cell} timed out! Data is too dense.")
+                raise TimeoutError(f'Overpass API timed out on grid cell {current_cell}/{total_cells}. The data is too dense for the current chunk size.')
             res.raise_for_status()
             data = res.json()
+            elements_found = len(data.get('elements', []))
+            print(f"  -> Cell {current_cell} complete. Found {elements_found} elements.")
             for el in data.get('elements', []):
                 uid = f"{el['type']}_{el['id']}"
                 if uid not in seen_ids:
@@ -189,4 +183,5 @@ def search_overpass(tags, feat_name=None, loc=None, geom_type='all', bbox=None, 
                     all_elements.append(el)
             time.sleep(0.5)
 
+    print(f"[Overpass Grid] Successfully stitched {len(all_elements)} unique elements.")
     return {'elements': all_elements}
