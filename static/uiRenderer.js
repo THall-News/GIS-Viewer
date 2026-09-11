@@ -10,7 +10,7 @@ export const renderAddedLayers = () => {
     const tabBtnAdded = document.getElementById('tab-btn-added');
     const addedLayerSearch = document.getElementById('added-layer-search');
 
-    if (tabBtnAdded) tabBtnAdded.textContent = `Added (${AppState.activeLayers.length})`;
+    if (tabBtnAdded) tabBtnAdded.textContent = `LAYERS (${AppState.activeLayers.length})`;
     if (!addedLayerList) return;
     addedLayerList.innerHTML = '';
 
@@ -110,10 +110,12 @@ export const renderAddedLayers = () => {
                 const isSplitActive = (AppState.activeSplitLayerKey === node.uniqueKey);
                 const isCropActive = (AppState.activeCropLayerKey === node.uniqueKey);
                 const isRasterImage = Boolean(node.isRasterImage);
+                const isGeometryEditActive = Boolean(AppState.geometryEdit?.active && AppState.geometryEdit.layerKey === node.uniqueKey);
+                const canEditGeometry = !isRasterImage && Boolean(node.geoJsonData?.features?.length);
                 const rasterOpacity = Math.round(Math.max(0, Math.min(1, Number(node.rasterOpacity ?? 0.8))) * 100);
                 
                 let bgClass = 'bg-white border-gray-100 shadow-xs dark:bg-gray-800 dark:border-gray-700';
-                if (isTableActive || isEditActive || isSplitActive || isCropActive) {
+                if (isTableActive || isEditActive || isSplitActive || isCropActive || isGeometryEditActive) {
                     bgClass = 'bg-blue-50 border-blue-300 shadow-sm dark:bg-blue-900/30 dark:border-blue-600';
                 }
 
@@ -180,6 +182,14 @@ export const renderAddedLayers = () => {
                                         data-key="${node.uniqueKey}" aria-label="Attribute table" data-hover-context="Attribute table">
                                     <i class="fa-solid fa-table text-[10px]"></i>
                                 </button>
+
+                                ${canEditGeometry ? `<button class="transition-colors btn-geometry-edit ${isGeometryEditActive ? '' : 'text-gray-400 dark:text-gray-500'}"
+                                        style="${isGeometryEditActive ? 'color: #71A4F4;' : ''}"
+                                        onmouseenter="this.style.color='#71A4F4'"
+                                        onmouseleave="this.style.color='${isGeometryEditActive ? '#71A4F4' : ''}'"
+                                        data-key="${node.uniqueKey}" aria-label="Edit geometry" data-hover-context="Edit geometry">
+                                    <i class="fa-solid fa-pen-to-square text-[10px]"></i>
+                                </button>` : ''}
                                 
                                 <button class="transition-colors btn-edit ${isEditActive ? '' : 'text-gray-400 dark:text-gray-500'}" 
                                         style="${isEditActive ? 'color: #71A4F4;' : ''}" 
@@ -273,6 +283,7 @@ export const renderAddedLayers = () => {
     });
 
     document.querySelectorAll('.btn-table').forEach(btn => btn.addEventListener('click', e => emitWorkspaceAction('handleToggleTable', e)));
+    document.querySelectorAll('.btn-geometry-edit').forEach(btn => btn.addEventListener('click', e => emitWorkspaceAction('handleToggleGeometryEdit', e)));
     document.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', e => emitWorkspaceAction('handleToggleEdit', e)));
     document.querySelectorAll('.btn-split').forEach(btn => btn.addEventListener('click', e => emitWorkspaceAction('handleToggleSplit', e)));
     document.querySelectorAll('.btn-crop').forEach(btn => btn.addEventListener('click', e => emitWorkspaceAction('handleToggleCrop', e)));

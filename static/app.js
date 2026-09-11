@@ -40,6 +40,7 @@ import { parsePgwText, pgwToEpsg3857Bounds } from './geoReferencedRaster.js';
 // behavior centralized here.
 const workspaceActionHandlers = {
     handleToggleTable: e => handleToggleTable(e),
+    handleToggleGeometryEdit: e => handleToggleGeometryEdit(e),
     handleToggleEdit: e => handleToggleEdit(e),
     handleToggleSplit: e => handleToggleSplit(e),
     handleToggleCrop: e => handleToggleCrop(e),
@@ -2291,7 +2292,7 @@ const expandDataSourcesForOsm = () => {
     builder?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
 };
 
-const populateOsmBuilderFromElement = (element, point) => {
+const populateOsmBuilderFromElement = (element, point, { autoFetch = false } = {}) => {
     const identity = osmIdentityTags(element);
     const scopeBbox = expandedOsmSearchBbox(point);
     const tagsContainer = getEl('osm-tags-container');
@@ -2327,9 +2328,26 @@ const populateOsmBuilderFromElement = (element, point) => {
     };
     expandDataSourcesForOsm();
     const label = element?.tags?.name || element?.tags?.ref || `${element?.type || 'OSM element'} ${element?.id ?? ''}`;
-    showToast?.(identity.mode === 'named'
-        ? `Prepared OSM search for ${label}. Click Fetch OSM Data to retrieve the nearby feature.`
-        : `Prepared an exact OSM search for ${label}. Click Fetch OSM Data to retrieve it.`);
+    showToast?.(autoFetch
+        ? `Fetching OSM data for ${label}...`
+        : identity.mode === 'named'
+            ? `Prepared OSM search for ${label}. Click Fetch OSM Data to retrieve the nearby feature.`
+            : `Prepared an exact OSM search for ${label}. Click Fetch OSM Data to retrieve it.`);
+};
+
+const isAdministrativeOsmElement = element => (
+    String(element?.type || '').toLowerCase() === 'relation'
+    && String(element?.tags?.boundary || '').toLowerCase() === 'administrative'
+);
+
+const handleOsmElementSelection = (element, point) => {
+    const autoFetch = isAdministrativeOsmElement(element);
+    populateOsmBuilderFromElement(element, point, { autoFetch });
+    if (autoFetch) {
+        // Let the builder finish expanding and updating the server type before
+        // starting the same fetch that the button would trigger.
+        window.setTimeout(() => handleFetchLayers(), 0);
+    }
 };
 
 const renderOsmPointInspectResults = (data, point) => {
@@ -2355,7 +2373,7 @@ const renderOsmPointInspectResults = (data, point) => {
             row.className = 'w-full rounded px-0.5 text-left hover:bg-blue-100 dark:hover:bg-blue-900/40';
             row.setAttribute('aria-label', `Prepare a whole-feature search for ${area?.name || 'administrative area'} admin level ${area?.admin_level || ''}`);
             row.textContent = `${area?.name || 'Unnamed administrative area'} — admin_level ${area?.admin_level || '—'}`;
-            row.addEventListener('click', () => populateOsmBuilderFromElement(administrativeAreaToOsmElement(area), point));
+            row.addEventListener('click', () => handleOsmElementSelection(administrativeAreaToOsmElement(area), point));
             adminList.appendChild(row);
         });
     } else {
@@ -2394,10 +2412,10 @@ createMapContextMenuController({
     map,
     showToast,
     onOsmResults: renderOsmPointInspectResults,
-    onOsmElementSelected: populateOsmBuilderFromElement,
+    onOsmElementSelected: handleOsmElementSelection,
     shouldSuppressContextMenu: () => AppState.drawShape.active || AppState.roadRoute.active,
     onSuppressedContextMenu: () => {
-        if (!AppState.drawShape.active) return;
+        if (!AppState.drawShape.active || AppState.geometryEdit.active) return;
         const state = AppState.drawShape;
         if (state.points.length < 3) {
             showToast('A shape needs at least 3 points.', false, true);
@@ -5446,6 +5464,7 @@ const enterFeatureSelectionMode = async () => {
     }
     if (AppState.roadRoute.active) exitRouteDrawing();
     if (AppState.magneticLasso.active) exitMagneticLassoMode();
+    if (AppState.geometryEdit.active) exitGeometryEditing(true);
     if (AppState.drawingMode) {
         AppState.drawingMode = null;
         AppState.tempShape = null;
@@ -5719,6 +5738,11 @@ const btnDrawShape = getEl('btn-draw-shape');
 const btnDrawShapeClose = getEl('btn-draw-shape-close');
 const btnDrawShapeSave = getEl('btn-draw-shape-save');
 const btnDrawShapeClear = getEl('btn-draw-shape-clear');
+const geometryEditPanel = getEl('geometry-edit-panel');
+const geometryEditStatus = getEl('geometry-edit-status');
+const btnGeometryEditClose = getEl('btn-geometry-edit-close');
+const btnGeometryEditSave = getEl('btn-geometry-edit-save');
+const btnGeometryEditCancel = getEl('btn-geometry-edit-cancel');
 const shapePreviewPaneName = 'shapePreviewPane';
 const shapeVertexPaneName = 'shapeVertexPane';
 if (!map.getPane(shapePreviewPaneName)) map.createPane(shapePreviewPaneName);
@@ -5736,6 +5760,13 @@ const stopShapeEvent = event => {
 const updateShapePanel = () => {
     const state = AppState.drawShape;
     if (!state.active) return;
+    if (AppState.geometryEdit.active) {
+        drawShapePanel?.classList.add('hidden');
+        geometryEditPanel?.classList.remove('hidden');
+        if (geometryEditStatus) geometryEditStatus.textContent = `Editing geometry · ${state.points.length} points`;
+        return;
+    }
+    geometryEditPanel?.classList.add('hidden');
     const count = state.points.length;
     drawShapeStatus.textContent = state.completed ? `Shape ready · ${count} points` : `${count} point${count === 1 ? '' : 's'} · ${count < 3 ? 'add more points' : 'right-click to finish'}`;
     btnDrawShapeSave?.classList.toggle('hidden', !state.completed || count < 3);
@@ -5747,7 +5778,9 @@ const shapeSegmentIndex = latlng => {
     const point = map.latLngToLayerPoint(latlng);
     let best = { index: -1, distance: Infinity };
     const points = state.points;
-    const segmentCount = state.completed ? points.length : points.length - 1;
+    const isClosedShape = state.completed
+        && !(AppState.geometryEdit.active && AppState.geometryEdit.geometryType === 'LineString');
+    const segmentCount = isClosedShape ? points.length : points.length - 1;
     points.slice(0, segmentCount).forEach((candidate, index) => {
         const a = map.latLngToLayerPoint(candidate);
         const b = map.latLngToLayerPoint(points[(index + 1) % points.length]);
@@ -5764,12 +5797,14 @@ const renderShapePreview = () => {
     shapeLineLayer = null;
     shapeCursorMarker = null;
     const state = AppState.drawShape;
-    const previewPoints = state.completed
+    const isClosedShape = state.completed
+        && !(AppState.geometryEdit.active && AppState.geometryEdit.geometryType === 'LineString');
+    const previewPoints = isClosedShape
         ? [...state.points, state.points[0]]
         : [...state.points, ...(state.points.length > 0 && shapeCursorPoint ? [shapeCursorPoint] : [])];
     if (previewPoints.length >= 2) {
-        const points = state.completed ? previewPoints : previewPoints;
-        shapeLineLayer = state.completed
+        const points = previewPoints;
+        shapeLineLayer = isClosedShape
             ? L.polygon(points, { pane: shapePreviewPaneName, color: '#2563eb', weight: 3, opacity: 0.9, fillColor: '#60a5fa', fillOpacity: 0.25 })
             : L.polyline(points, { pane: shapePreviewPaneName, color: '#2563eb', weight: 3, opacity: 0.9 });
         shapeLineLayer.on('click', event => {
@@ -5796,13 +5831,24 @@ const renderShapePreview = () => {
             icon: L.divIcon({ className: 'gis-shape-vertex', html: '<span></span>', iconSize: [vertexSize, vertexSize], iconAnchor: [vertexSize / 2, vertexSize / 2] }),
             zIndexOffset: 1100
         });
-        marker.bindTooltip(`Shape point ${index + 1}`, { direction: 'top', opacity: 0.9 });
         marker.on('click', event => {
             const currentState = AppState.drawShape;
             const isModifierClick = event.originalEvent?.metaKey || event.originalEvent?.ctrlKey;
             if (isModifierClick) {
+                const minimumPoints = AppState.geometryEdit.active
+                    ? (AppState.geometryEdit.geometryType === 'Polygon' ? 3 : 2)
+                    : 0;
+                if (currentState.points.length <= minimumPoints) {
+                    showToast(`A ${AppState.geometryEdit.geometryType === 'Polygon' ? 'polygon' : 'line'} needs at least ${minimumPoints} points.`, false, true);
+                    stopShapeEvent(event);
+                    return;
+                }
                 const points = currentState.points.filter((_, pointIndex) => pointIndex !== index);
-                AppState.drawShape = { ...currentState, points, completed: points.length >= 3 && currentState.completed };
+                AppState.drawShape = {
+                    ...currentState,
+                    points,
+                    completed: AppState.geometryEdit.active ? true : points.length >= 3 && currentState.completed
+                };
                 renderShapePreview();
             } else if (isFirstPoint && !currentState.completed && currentState.points.length >= 3) {
                 // The first vertex is an enlarged close target. Closing keeps
@@ -5823,7 +5869,9 @@ const renderShapePreview = () => {
             const points = [...currentState.points];
             points[index] = event.target.getLatLng();
             AppState.drawShape = { ...currentState, points };
-            if (shapeLineLayer) shapeLineLayer.setLatLngs(currentState.completed ? [...points, points[0]] : points);
+            const isClosedShape = currentState.completed
+                && !(AppState.geometryEdit.active && AppState.geometryEdit.geometryType === 'LineString');
+            if (shapeLineLayer) shapeLineLayer.setLatLngs(isClosedShape ? [...points, points[0]] : points);
             stopShapeEvent(event);
         });
         marker.on('dragend', event => {
@@ -5867,6 +5915,7 @@ const clearShapeDrawing = () => {
 const exitShapeDrawing = () => {
     clearShapeDrawing();
     AppState.drawShape = { ...AppState.drawShape, active: false };
+    geometryEditPanel?.classList.add('hidden');
     setSavedLayerInteractionForDrawing(true);
     updateSoloView();
     drawShapePanel?.classList.add('hidden');
@@ -5875,7 +5924,125 @@ const exitShapeDrawing = () => {
     map.getContainer().style.cursor = '';
 };
 
+const editableGeometryFromLayer = layer => {
+    const features = layer?.geoJsonData?.features || [];
+    const featureIndex = features.findIndex(feature => ['Polygon', 'LineString'].includes(feature?.geometry?.type));
+    if (featureIndex < 0) return null;
+    const feature = features[featureIndex];
+    const geometryType = feature.geometry.type;
+    const coordinates = geometryType === 'Polygon'
+        ? feature.geometry.coordinates?.[0]
+        : feature.geometry.coordinates;
+    if (!Array.isArray(coordinates) || coordinates.length < (geometryType === 'Polygon' ? 4 : 2)) return null;
+    const openCoordinates = geometryType === 'Polygon'
+        && coordinates.length > 1
+        && coordinates[0][0] === coordinates[coordinates.length - 1]?.[0]
+        && coordinates[0][1] === coordinates[coordinates.length - 1]?.[1]
+        ? coordinates.slice(0, -1)
+        : coordinates;
+    const points = openCoordinates
+        .filter(coordinate => Array.isArray(coordinate) && coordinate.length >= 2)
+        .map(([lng, lat]) => L.latLng(Number(lat), Number(lng)));
+    return points.length >= (geometryType === 'Polygon' ? 3 : 2)
+        ? { featureIndex, geometryType, points }
+        : null;
+};
+
+const commitGeometryEdit = () => {
+    const editState = AppState.geometryEdit;
+    const layer = AppState.activeLayers.find(item => item.uniqueKey === editState.layerKey);
+    const feature = layer?.geoJsonData?.features?.[editState.featureIndex];
+    const points = AppState.drawShape.points;
+    if (!layer || !feature || !points.length) return false;
+
+    const coordinates = points.map(point => [point.lng, point.lat]);
+    feature.geometry.coordinates = editState.geometryType === 'Polygon'
+        ? [[...coordinates, coordinates[0]]]
+        : coordinates;
+
+    if (layer.mapLayer) map.removeLayer(layer.mapLayer);
+    const paneName = `pane-${layer.uniqueKey}`;
+    const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
+    if (layer.isVisible) newMapLayer.addTo(map);
+    layer.mapLayer = newMapLayer;
+    updateMapLayerOrder();
+    autoSaveWorkspace();
+    return true;
+};
+
+const exitGeometryEditing = (save = false) => {
+    if (!AppState.geometryEdit.active) return;
+    if (save && !commitGeometryEdit()) {
+        showToast('Could not save this geometry edit.', true);
+        return;
+    }
+    shapePreviewGroup.clearLayers();
+    shapeLineLayer = null;
+    shapeCursorPoint = null;
+    AppState.geometryEdit = {
+        active: false,
+        layerKey: null,
+        featureIndex: null,
+        geometryType: null,
+        points: [],
+        originalPoints: []
+    };
+    AppState.drawShape = { ...AppState.drawShape, active: false, points: [], completed: false };
+    setSavedLayerInteractionForDrawing(true);
+    updateSoloView();
+    geometryEditPanel?.classList.add('hidden');
+    map.getContainer().style.cursor = '';
+    renderAddedLayers();
+};
+
+const enterGeometryEditing = async layerKey => {
+    if (AppState.geometryEdit.active) exitGeometryEditing(true);
+    const layer = AppState.activeLayers.find(item => item.uniqueKey === layerKey);
+    if (!layer?.geoJsonData) {
+        showToast('This layer does not contain editable GeoJSON geometry.', true);
+        return;
+    }
+    const editable = editableGeometryFromLayer(layer);
+    if (!editable) {
+        showToast('Only Polygon and LineString geometry can be edited.', true);
+        return;
+    }
+    if (AppState.drawShape.active) exitShapeDrawing();
+    if (AppState.roadRoute.active) exitRouteDrawing();
+    if (AppState.featureSelection.active) exitFeatureSelectionMode();
+    if (AppState.magneticLasso.active) exitMagneticLassoMode();
+    closeSidebarPanels();
+
+    const points = editable.points.map(point => L.latLng(point.lat, point.lng));
+    AppState.geometryEdit = {
+        active: true,
+        layerKey,
+        featureIndex: editable.featureIndex,
+        geometryType: editable.geometryType,
+        points,
+        originalPoints: points.map(point => L.latLng(point.lat, point.lng))
+    };
+    AppState.drawShape = { ...AppState.drawShape, active: true, points, completed: true };
+    shapeCursorPoint = null;
+    setSavedLayerInteractionForDrawing(false);
+    setMapHoverContext('Edit geometry');
+    geometryEditPanel?.classList.remove('hidden');
+    renderAddedLayers();
+    renderShapePreview();
+};
+
+export const handleToggleGeometryEdit = event => {
+    const layerKey = typeof event === 'string' ? event : event?.currentTarget?.getAttribute('data-key');
+    if (!layerKey) return;
+    if (AppState.geometryEdit.active && AppState.geometryEdit.layerKey === layerKey) {
+        exitGeometryEditing(true);
+        return;
+    }
+    enterGeometryEditing(layerKey);
+};
+
 const enterShapeDrawing = () => {
+    if (AppState.geometryEdit.active) exitGeometryEditing(true);
     if (AppState.drawShape.active) { exitShapeDrawing(); return; }
     getEl('map-context-menu')?.classList.add('hidden');
     if (AppState.featureSelection.active) exitFeatureSelectionMode();
@@ -5964,17 +6131,29 @@ btnDrawShape?.addEventListener('click', enterShapeDrawing);
 btnDrawShapeClose?.addEventListener('click', exitShapeDrawing);
 btnDrawShapeClear?.addEventListener('click', clearShapeDrawing);
 btnDrawShapeSave?.addEventListener('click', saveDrawnShape);
-[drawShapePanel, btnDrawShape].forEach(element => { if (element) L.DomEvent.disableClickPropagation(element); });
+btnGeometryEditClose?.addEventListener('click', () => exitGeometryEditing(false));
+btnGeometryEditCancel?.addEventListener('click', () => exitGeometryEditing(false));
+btnGeometryEditSave?.addEventListener('click', () => exitGeometryEditing(true));
+[drawShapePanel, geometryEditPanel, btnDrawShape].forEach(element => { if (element) L.DomEvent.disableClickPropagation(element); });
 document.addEventListener('keydown', event => {
     if (!AppState.drawShape.active) return;
     if (event.key === 'Escape') {
-        exitShapeDrawing();
+        if (AppState.geometryEdit.active) exitGeometryEditing(false);
+        else exitShapeDrawing();
         return;
     }
-    if ((event.key === 'Backspace' || event.key === 'Delete') && !AppState.drawShape.completed) {
+    if ((event.key === 'Backspace' || event.key === 'Delete')
+        && (!AppState.drawShape.completed || AppState.geometryEdit.active)) {
         event.preventDefault();
+        const minimumPoints = AppState.geometryEdit.active
+            ? (AppState.geometryEdit.geometryType === 'Polygon' ? 3 : 2)
+            : 0;
+        if (AppState.drawShape.points.length <= minimumPoints) {
+            if (AppState.geometryEdit.active) showToast(`A ${AppState.geometryEdit.geometryType === 'Polygon' ? 'polygon' : 'line'} needs at least ${minimumPoints} points.`, false, true);
+            return;
+        }
         const points = AppState.drawShape.points.slice(0, -1);
-        AppState.drawShape = { ...AppState.drawShape, points };
+        AppState.drawShape = { ...AppState.drawShape, points, completed: AppState.geometryEdit.active || false };
         renderShapePreview();
     }
 });
@@ -6269,6 +6448,7 @@ const enterRouteDrawing = async () => {
     }
     if (AppState.featureSelection.active) exitFeatureSelectionMode();
     if (AppState.magneticLasso.active) exitMagneticLassoMode();
+    if (AppState.geometryEdit.active) exitGeometryEditing(true);
     if (AppState.drawShape.active) exitShapeDrawing();
     if (AppState.drawingMode) {
         AppState.drawingMode = null;
@@ -6654,6 +6834,7 @@ const enterMagneticLassoMode = async () => {
     }
     if (AppState.featureSelection.active) exitFeatureSelectionMode();
     if (AppState.roadRoute.active) exitRouteDrawing();
+    if (AppState.geometryEdit.active) exitGeometryEditing(true);
     if (AppState.drawingMode) {
         AppState.drawingMode = null;
         AppState.tempShape = null;

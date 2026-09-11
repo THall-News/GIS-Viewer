@@ -28,7 +28,7 @@
   </div>
 
   <button id="btn-road-route" type="button" class="absolute top-2 left-2 z-[5000] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded shadow px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Click snapped road points to draw a driving route">
-    <i class="fa-solid fa-route mr-1"></i>Draw route
+    <i class="fa-solid fa-route mr-1"></i>Draw Route
   </button>
 
   <button id="btn-draw-shape" type="button" class="absolute top-11 left-2 z-[5000] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded shadow px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Click to add polygon points; right-click to finish">
@@ -36,7 +36,7 @@
   </button>
 
   <button id="btn-feature-selection" type="button" class="absolute top-20 left-2 z-[5000] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded shadow px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Click one rendered feature; Ctrl/Cmd-click expands its loaded fragments">
-    <i class="fa-solid fa-layer-group mr-1"></i>Select features
+    <i class="fa-solid fa-layer-group mr-1"></i>Select Features
   </button>
 
   <div id="road-route-panel" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[5000] bg-white/95 dark:bg-gray-800/95 border border-gray-300 dark:border-gray-600 rounded shadow-lg px-2 py-1.5 text-xs min-w-56">
@@ -60,6 +60,18 @@
     <div class="flex gap-1 mt-1.5">
       <button id="btn-draw-shape-save" type="button" class="hidden flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 font-semibold">Save shape</button>
       <button id="btn-draw-shape-clear" type="button" class="border border-gray-300 dark:border-gray-600 rounded px-2 py-1">Clear</button>
+    </div>
+  </div>
+
+  <div id="geometry-edit-panel" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[5000] bg-white/95 dark:bg-gray-800/95 border border-gray-300 dark:border-gray-600 rounded shadow-lg px-2 py-1.5 text-xs min-w-56">
+    <div class="flex items-center justify-between gap-3">
+      <span id="geometry-edit-status" class="font-semibold text-gray-700 dark:text-gray-200">Edit geometry</span>
+      <button id="btn-geometry-edit-close" type="button" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Close geometry editing"><i class="fa-solid fa-times"></i></button>
+    </div>
+    <div class="mt-1 text-[10px] text-gray-500 dark:text-gray-400">Drag vertices · click an edge to insert · Cmd/Ctrl-click to remove · Backspace/Delete removes the last vertex</div>
+    <div class="flex gap-1 mt-1.5">
+      <button id="btn-geometry-edit-save" type="button" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 font-semibold">Save geometry</button>
+      <button id="btn-geometry-edit-cancel" type="button" class="border border-gray-300 dark:border-gray-600 rounded px-2 py-1">Cancel</button>
     </div>
   </div>
 

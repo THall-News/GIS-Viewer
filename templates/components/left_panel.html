@@ -159,8 +159,8 @@
 
     <!-- Navigation Tabs -->
     <div class="flex shrink-0 bg-gray-100 dark:bg-gray-900/60 pt-1">
-        <button id="tab-btn-available" data-hover-context="Show available layers" class="flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200 font-bold bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border-t-[3px] border-t-blue-600 dark:border-t-blue-400 border-b border-b-transparent opacity-100 z-10">Available</button>
-        <button id="tab-btn-added" data-hover-context="Show added layers" class="flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200 font-medium bg-transparent text-gray-400 dark:text-gray-500 border-t-[3px] border-t-transparent border-b border-b-gray-200 dark:border-b-gray-700 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/80 opacity-60 hover:opacity-100 shadow-inner cursor-pointer">Added (0)</button>
+        <button id="tab-btn-available" data-hover-context="Show catalog" class="flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200 font-bold bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border-t-[3px] border-t-blue-600 dark:border-t-blue-400 border-b border-b-transparent opacity-100 z-10">CATALOG</button>
+        <button id="tab-btn-added" data-hover-context="Show layers" class="flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200 font-medium bg-transparent text-gray-400 dark:text-gray-500 border-t-[3px] border-t-transparent border-b border-b-gray-200 dark:border-b-gray-700 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/80 opacity-60 hover:opacity-100 shadow-inner cursor-pointer">LAYERS (0)</button>
     </div>
 
     <!-- Main Layers List Container -->
@@ -168,7 +168,7 @@
         <!-- Tab 1: Available Layers -->
         <div id="tab-available" class="flex flex-col h-full p-2 min-h-0">
             <div id="search-container" class="relative mb-1.5 hidden shrink-0">
-                <input type="text" id="layer-search" placeholder="Search available layers..." class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded pl-7 pr-7 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none">
+                <input type="text" id="layer-search" placeholder="Search available features..." class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded pl-7 pr-7 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none">
                 <i class="fa-solid fa-magnifying-glass absolute left-2 top-1.5 text-gray-400 text-[10px]"></i>
                 <button id="btn-clear-search" class="absolute right-2 top-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hidden text-xs"><i class="fa-solid fa-times"></i></button>
             </div>

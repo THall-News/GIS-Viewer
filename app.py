@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import sys
 
 from flask import Flask, jsonify, make_response, render_template, send_from_directory
@@ -16,7 +17,14 @@ from routes.servers import servers_bp
 
 class MuteApiLogsFilter(logging.Filter):
     def filter(self, record):
-        return '/api/logs' not in record.getMessage()
+        message = record.getMessage()
+        if '/api/logs' in message:
+            return False
+
+        # Keep only failed HTTP access records in the terminal. Application
+        # logs and tracebacks still pass through normally.
+        match = re.search(r'"\s+(\d{3})\s+', message)
+        return not match or int(match.group(1)) >= 400
 
 
 class LogCatcher(io.StringIO):

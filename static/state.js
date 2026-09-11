@@ -57,6 +57,14 @@ const rawState = {
         active: false,
         points: [],
         completed: false
+    },
+    geometryEdit: {
+        active: false,
+        layerKey: null,
+        featureIndex: null,
+        geometryType: null,
+        points: [],
+        originalPoints: []
     }
 };
 
