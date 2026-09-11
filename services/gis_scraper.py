@@ -59,7 +59,7 @@ def fetch_server_metadata(url, server_type, user_name):
     try:
         if metadata['type'] in ['ESRI', 'ARCGIS']:
             base_url = url.split('?')[0]
-            resp = requests.get(f"{base_url}?f=json", headers=REQUEST_HEADERS, timeout=10, verify=False)
+            resp = requests.get(f"{base_url}?f=json", headers=REQUEST_HEADERS, timeout=10, verify=True)
             resp.raise_for_status()
             data = resp.json()
 
@@ -91,7 +91,7 @@ def fetch_server_metadata(url, server_type, user_name):
             parsed_url = urlparse(url)
             sep = '&' if parsed_url.query else '?'
             req_url = f"{url}{sep}service=WFS&request=GetCapabilities"
-            resp = requests.get(req_url, headers=REQUEST_HEADERS, timeout=15, verify=False)
+            resp = requests.get(req_url, headers=REQUEST_HEADERS, timeout=15, verify=True)
             resp.raise_for_status()
             root = ET.fromstring(resp.content)
 
@@ -122,7 +122,7 @@ def fetch_server_metadata(url, server_type, user_name):
                 clean_url = clean_url.split('/api/3/action')[0]
 
             status_url = f"{clean_url}/api/3/action/status_show"
-            resp = requests.get(status_url, headers=REQUEST_HEADERS, timeout=10, verify=False)
+            resp = requests.get(status_url, headers=REQUEST_HEADERS, timeout=10, verify=True)
             if resp.ok:
                 data = resp.json()
                 if data.get('success'):
@@ -141,7 +141,7 @@ def fetch_server_metadata(url, server_type, user_name):
                 center_lat = (bbox[1] + bbox[3]) / 2
                 try:
                     nom_url = f"https://nominatim.openstreetmap.org/reverse?lat={center_lat}&lon={center_lon}&format=json&zoom=10"
-                    nom_resp = requests.get(nom_url, headers={'User-Agent': 'GIS-AI-Agent-Scraper'}, timeout=5, verify=False)
+                    nom_resp = requests.get(nom_url, headers={'User-Agent': 'GIS-AI-Agent-Scraper'}, timeout=5, verify=True)
                     if nom_resp.ok:
                         nom_data = nom_resp.json()
                         if 'display_name' in nom_data:

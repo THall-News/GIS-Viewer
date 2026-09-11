@@ -65,7 +65,7 @@ def search_esri_portal(raw_url):
     clean_url = clean_url.split('?')[0].rstrip('/')
 
     try:
-        resp = requests.get(f'{clean_url}?f=json', headers=REQUEST_HEADERS, verify=False, timeout=15)
+        resp = requests.get(f'{clean_url}?f=json', headers=REQUEST_HEADERS, verify=True, timeout=15)
         resp.raise_for_status()
         root_json = resp.json()
 
@@ -121,7 +121,7 @@ def search_esri_portal(raw_url):
                 continue
             folder_url = f'{base_rest_url}/{folder}?f=json'
             try:
-                f_res = requests.get(folder_url, headers=REQUEST_HEADERS, verify=False, timeout=10)
+                f_res = requests.get(folder_url, headers=REQUEST_HEADERS, verify=True, timeout=10)
                 if f_res.ok:
                     extract_services_from_catalog(f_res.json())
             except Exception:
@@ -136,7 +136,7 @@ def search_esri_portal(raw_url):
             s_type = s_info['type']
             s_name_full = s_info['name']
             try:
-                res = requests.get(f'{s_url}?f=json', headers=REQUEST_HEADERS, verify=False, timeout=12)
+                res = requests.get(f'{s_url}?f=json', headers=REQUEST_HEADERS, verify=True, timeout=12)
                 if not res.ok:
                     return []
                 s_data = res.json()

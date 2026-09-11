@@ -17,13 +17,44 @@
     {% include 'components/map_panel.html' %}
   </div>
 
+  <!-- Application-level status bar. It is above the console so the live map
+       position is always visible, even while the console is open. -->
+  <div id="map-status-bar" role="status" class="gis-map-status-bar flex items-center gap-2 border-t border-gray-300 dark:border-gray-700 bg-white/95 dark:bg-gray-800/95 pl-0 pr-2 text-[10px] text-gray-600 dark:text-gray-300 shadow-inner select-none pointer-events-auto">
+    <div class="flex items-center gap-1 shrink-0">
+      <button id="btn-map-workspace" type="button" class="w-6 h-6 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-gray-700 dark:hover:text-blue-300" title="Import, export, or reset workspace" aria-label="Import, export, or reset workspace" data-hover-context="Import, export, or reset workspace">
+        <i class="fa-solid fa-folder-open text-[10px]"></i>
+      </button>
+    </div>
+    <div id="map-hover-context" class="min-w-0 flex-1 truncate text-center px-2" aria-live="polite">Move over the map or a control for context</div>
+    <div class="flex items-center gap-2 shrink-0">
+      <div id="map-coordinate-readout" class="shrink-0 font-mono text-gray-500 dark:text-gray-400 whitespace-nowrap" aria-live="polite">Lat — · Lon — · Zoom —</div>
+      <button id="btn-map-console" type="button" class="relative w-6 h-6 rounded border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-gray-700 dark:hover:text-blue-300" title="Open system console" aria-label="Open system console" data-hover-context="Open system console">
+        <i class="fa-solid fa-terminal text-[10px]"></i>
+        <span id="console-badge" class="absolute -top-1 -right-1 bg-red-500 border border-white dark:border-gray-800 text-white text-[8px] font-bold min-w-3.5 h-3.5 px-0.5 flex items-center justify-center rounded-full hidden" style="line-height: 1;">0</span>
+      </button>
+    </div>
+    <div id="map-workspace-menu" class="hidden absolute bottom-9 left-2 z-[1200] w-44 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-1 shadow-xl">
+      <div class="px-2 py-1 text-[9px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Import / Export / Reset</div>
+      <button id="btn-export-workspace" type="button" class="w-full flex items-center gap-2 rounded px-2 py-1.5 text-left text-[10px] text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Export current workspace state to JSON" data-hover-context="Export current workspace state to JSON">
+        <i class="fa-solid fa-download w-3 text-blue-600 dark:text-blue-400"></i><span>Export workspace</span>
+      </button>
+      <label id="lbl-import-workspace" class="w-full flex items-center gap-2 rounded px-2 py-1.5 text-left text-[10px] text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700 cursor-pointer" title="Import workspace session JSON" data-hover-context="Import workspace session JSON">
+        <i class="fa-solid fa-upload w-3 text-blue-600 dark:text-blue-400"></i><span>Import workspace</span>
+        <input type="file" id="file-import-workspace" accept=".json" class="hidden">
+      </label>
+      <button id="btn-clear-workspace" type="button" class="w-full flex items-center gap-2 rounded px-2 py-1.5 text-left text-[10px] text-gray-700 dark:text-gray-200 hover:bg-red-50 hover:text-red-700 dark:hover:bg-gray-700" title="Reset workspace" data-hover-context="Reset workspace">
+        <i class="fa-solid fa-trash-can w-3 text-red-600 dark:text-red-400"></i><span>Reset workspace</span>
+      </button>
+    </div>
+  </div>
+
   <div id="toast" class="fixed bottom-6 right-6 bg-gray-800 dark:bg-gray-700 text-white px-4 py-3 rounded shadow-xl transform transition-all duration-300 translate-y-20 opacity-0 z-50 flex items-center max-w-sm pointer-events-none">
     <span id="toast-message" class="text-sm break-words"></span>
   </div>
 
   <script type="module" src="static/app.js"></script>
   <!-- System Console Panel -->
-    <div id="app-console" class="fixed bottom-0 left-0 md:left-80 lg:left-96 right-0 h-56 bg-gray-900 text-gray-300 z-[2000] border-t-2 border-gray-700 flex flex-col transform translate-y-full transition-transform duration-300 shadow-2xl">
+    <div id="app-console" hidden class="console-closed fixed left-0 right-0 h-56 bg-gray-900 text-gray-300 z-[2000] border-t-2 border-gray-700 flex flex-col transform transition-transform duration-300 shadow-2xl">
         <div class="flex justify-between items-center bg-gray-800 px-4 py-1.5 border-b border-gray-700 shrink-0 select-none">
             <span class="text-xs font-bold font-mono text-gray-200"><i class="fa-solid fa-terminal mr-2 text-blue-400"></i>System Console</span>
             <div class="flex space-x-4 items-center">

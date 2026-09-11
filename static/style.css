@@ -7,6 +7,77 @@
 .custom-scroll::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
 .custom-scroll::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
 
+/* Keep the initial OSM tag row identical to rows added at runtime. The
+   minmax columns let long keys/values shrink before the action buttons are
+   pushed outside the builder panel. */
+.osm-tag-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 1.5rem 1.5rem;
+    align-items: center;
+    gap: 0.25rem;
+    width: 100%;
+    min-width: 0;
+}
+
+.osm-tag-row > .osm-key,
+.osm-tag-row > .osm-val {
+    width: 100%;
+    min-width: 0;
+}
+
+.osm-tag-row > .btn-add-tag,
+.osm-tag-row > .btn-remove-tag {
+    width: 1.5rem;
+    min-width: 1.5rem;
+    max-width: 1.5rem;
+    height: 1.5rem;
+    min-height: 1.5rem;
+    max-height: 1.5rem;
+    padding: 0;
+}
+
+/* Keep the console closed before Tailwind or the application module finish
+   loading. The map status bar must remain visible at startup. */
+#app-console.console-closed { transform: translateY(calc(100% + 2px)); }
+#app-console.console-open { transform: translateY(0); }
+#app-console[hidden] { display: none !important; }
+
+/* The status bar is application-level rather than nested inside Leaflet's
+   stacking context. This keeps it visible above every map overlay and above
+   the console panel. */
+.gis-map-status-bar {
+    position: fixed;
+    left: var(--map-status-left, 0px);
+    right: 0;
+    bottom: 0;
+    height: 32px;
+    min-height: 32px;
+    z-index: 4000;
+}
+
+#app-console { bottom: 32px; }
+
+/* Keep both the Leaflet and MapLibre attribution controls above the fixed
+   application status bar instead of allowing the bar to cover them. */
+.leaflet-bottom .leaflet-control-attribution {
+    margin-bottom: 32px;
+}
+
+.maplibregl-ctrl-bottom-left,
+.maplibregl-ctrl-bottom-right {
+    bottom: 32px !important;
+}
+
+/* The map point inspector is a temporary diagnostic overlay. Keep its
+   internal scroll independent from Leaflet's map gestures. */
+#map-context-menu {
+  width: 14rem;
+  overscroll-behavior: contain;
+}
+#map-context-menu.map-context-menu-expanded {
+  width: min(30rem, calc(100vw - 1rem));
+}
+
 /* Custom Scrollbars - Dark */
 .dark .custom-scroll::-webkit-scrollbar-track { background: #374151; }
 .dark .custom-scroll::-webkit-scrollbar-thumb { background: #4B5563; border-radius: 4px; }
@@ -60,4 +131,57 @@
 /* Optional: slightly dim the contents of the shadow box so it's clearly a placeholder */
 .sortable-ghost * {
     opacity: 0.5 !important;
+}
+
+/* Draggable OSRM route waypoints */
+.gis-route-waypoint {
+    background: transparent;
+    border: 0;
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.gis-route-waypoint span {
+    align-items: center;
+    background: #7c3aed;
+    border: 2px solid #ffffff;
+    border-radius: 9999px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+    color: #ffffff;
+    display: flex;
+    font-size: 12px;
+    font-weight: 700;
+    height: 28px;
+    justify-content: center;
+    width: 28px;
+}
+
+.gis-route-waypoint:active {
+    cursor: grabbing;
+}
+
+/* Draggable polygon vertices */
+.gis-shape-vertex {
+    background: transparent;
+    border: 0;
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.gis-shape-vertex span {
+    background: #2563eb;
+    border: 2px solid #ffffff;
+    border-radius: 9999px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+    display: block;
+    height: 14px;
+    width: 14px;
+}
+
+.gis-shape-vertex:active {
+    cursor: grabbing;
 }

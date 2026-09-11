@@ -5,8 +5,91 @@ import { AppState } from './state.js';
 // ==========================================
 // 1. MAP INITIALIZATION ("The Canvas")
 // ==========================================
-export const map = L.map('map', { preferCanvas: true }).setView([0, 0], 2);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+export const map = L.map('map', {
+    preferCanvas: true,
+    // The binding recommends avoiding zoom 0 synchronization edge cases.
+    minZoom: 1
+}).setView([0, 0], 2);
+
+const openFreeMapStyle = 'https://tiles.openfreemap.org/styles/liberty';
+const maplibreLayerFactory = window.maplibreGL || window.L?.maplibreGL;
+const openFreeMapAttribution = '© OpenFreeMap · © OpenMapTiles · © OpenStreetMap contributors';
+
+// The binding keeps Leaflet as the map and adds MapLibre as one Leaflet layer.
+// Existing Leaflet overlays, panes, drawing, WMS, Esri, and popups therefore
+// continue to use the same map instance and coordinate system.
+export let vectorBasemapLayer = null;
+let rasterFallbackLayer = null;
+
+const addRasterFallback = () => {
+    if (rasterFallbackLayer && map.hasLayer(rasterFallbackLayer)) return;
+    rasterFallbackLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+};
+
+try {
+    if (maplibreLayerFactory) {
+        vectorBasemapLayer = maplibreLayerFactory({
+            style: openFreeMapStyle,
+            attributionControl: { customAttribution: openFreeMapAttribution }
+        }).addTo(map);
+
+        // A loaded adapter can still fail while fetching the style. If that
+        // happens, remove the empty GL layer and restore the known-good OSM
+        // raster basemap instead of leaving the map blank.
+        const glMap = vectorBasemapLayer.getMaplibreMap?.();
+        let glBasemapHealthy = false;
+        const restoreRasterIfNeeded = () => {
+            if (glBasemapHealthy || !vectorBasemapLayer) return;
+            try { map.removeLayer(vectorBasemapLayer); } catch (error) {}
+            vectorBasemapLayer = null;
+            addRasterFallback();
+        };
+        glMap?.once('idle', () => { glBasemapHealthy = true; });
+        glMap?.on('error', event => {
+            if (event?.error?.status >= 400 || !glMap.isStyleLoaded?.()) restoreRasterIfNeeded();
+        });
+        // Do not leave a failed vector-style request as a blank map forever.
+        window.setTimeout(restoreRasterIfNeeded, 12000);
+    }
+} catch (error) {
+    console.warn('MapLibre basemap initialization failed; using OSM raster tiles.', error);
+    vectorBasemapLayer = null;
+}
+
+// Keep the app usable when CDN assets are unavailable or the app is offline.
+if (!vectorBasemapLayer) addRasterFallback();
+
+export const getMapLibreMap = () => vectorBasemapLayer?.getMaplibreMap?.() || null;
+
+export const getRoadLayerIds = () => {
+    const glMap = getMapLibreMap();
+    if (!glMap?.isStyleLoaded?.()) return [];
+    return (glMap.getStyle()?.layers || [])
+        .filter(layer => layer.type === 'line' && layer['source-layer'] === 'transportation')
+        .map(layer => layer.id);
+};
+
+export const whenMapLibreReady = () => new Promise(resolve => {
+    const glMap = getMapLibreMap();
+    if (!glMap) { resolve(null); return; }
+    if (glMap.isStyleLoaded?.()) { resolve(glMap); return; }
+    glMap.once('load', () => resolve(glMap));
+});
+
+// Route drawing only needs the rendered transportation layers to be loaded;
+// it does not add a second map or any persistent MapLibre selection layers.
+export const ensureRouteRoadQueryReady = () => whenMapLibreReady();
+
+export const getInteractiveFeatureLayerIds = () => {
+    const glMap = getMapLibreMap();
+    if (!glMap?.isStyleLoaded?.()) return [];
+    return (glMap.getStyle()?.layers || [])
+        .filter(layer => ['fill', 'fill-extrusion', 'line', 'circle'].includes(layer.type) && layer['source-layer'])
+        .map(layer => layer.id);
+};
 
 // Force Leaflet's built-in popups to render above all custom dynamic layers
 map.getPane('popupPane').style.zIndex = 3000;
@@ -213,7 +296,7 @@ export const createGeoJsonPointToLayer = (styleState, paneName, customRenderer) 
         if (shape === 'circle') {
             return L.circleMarker(latlng, { 
                 pane: paneName, renderer: customRenderer, interactive: true,
-                radius: size, fillColor: fColor, color: sColor, weight: 2, 
+                radius: size, fillColor: fColor, color: sColor, weight: 2,
                 opacity: sOp, fillOpacity: fOp 
             });
         } else {

@@ -1,0 +1,37 @@
+# Generated / machine state
+.git/
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
+
+# Frontend/build artifacts
+node_modules/
+dist/
+build/
+coverage/
+static/*.map
+
+# Large or rarely useful project state
+.agents/
+.codex/
+gis_servers_backup.json
+
+# Optional: ignore vendorized assets and logs
+logs/
+*.log
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

@@ -1,3 +1,7 @@
 __pycache__/
 gis_servers.json
 venv/
+headless.sqlite3
+catalog.sqlite3
+semantic_search_cache.json
+gis_catalog_cache.json

@@ -4,9 +4,11 @@ import io
 import logging
 import sys
 
-from flask import Flask, jsonify, render_template, send_from_directory
+from flask import Flask, jsonify, make_response, render_template, send_from_directory
 
 from config import ensure_storage_files
+from routes.headless import headless_bp
+from routes.geometry import geometry_bp
 from routes.proxy import proxy_bp
 from routes.search import search_bp
 from routes.servers import servers_bp
@@ -52,7 +54,9 @@ def create_app() -> Flask:
 
     @app.route('/sw.js')
     def serve_service_worker():
-        return send_from_directory(app.static_folder, 'sw.js')
+        response = make_response(send_from_directory(app.static_folder, 'sw.js'))
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        return response
 
     @app.route('/api/logs', methods=['GET'])
     def get_logs():
@@ -60,11 +64,15 @@ def create_app() -> Flask:
 
     @app.route('/')
     def index():
-        return render_template('index.html')
+        response = make_response(render_template('index.html'))
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        return response
 
     app.register_blueprint(servers_bp)
     app.register_blueprint(search_bp)
     app.register_blueprint(proxy_bp)
+    app.register_blueprint(headless_bp)
+    app.register_blueprint(geometry_bp)
 
     return app
 

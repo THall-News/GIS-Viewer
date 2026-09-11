@@ -47,8 +47,4 @@ def handle_servers():
     else:
         servers.append(enriched_server_data)
         msg = 'New server scraped and saved'
-
-    with open(SERVERS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(servers, f, indent=2)
-
-    return {'message': msg}, 201
+ 

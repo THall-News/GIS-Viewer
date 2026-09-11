@@ -32,7 +32,7 @@ def _build_api_endpoint(raw_url):
 
 def search_ckan_portal(raw_url):
     api_endpoint = _build_api_endpoint(raw_url)
-    res = requests.get(api_endpoint, params={'q': '*:*', 'rows': 1000}, headers=REQUEST_HEADERS, verify=False, timeout=20)
+    res = requests.get(api_endpoint, params={'q': '*:*', 'rows': 1000}, headers=REQUEST_HEADERS, verify=True, timeout=20)
     res.raise_for_status()
     try:
         res_json = res.json()

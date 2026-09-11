@@ -1,9 +1,45 @@
 <!-- Left Control Panel Container -->
 <div id="left-panel" class="w-80 sm:w-96 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col h-full z-20 shadow-lg shrink-0">
     
+    <!-- Map assistant controls -->
+    <div class="p-2.5 border-b border-gray-200 dark:border-gray-700 shrink-0">
+        <div class="flex justify-between items-center cursor-pointer select-none mb-1.5" id="toggle-agent" data-hover-context="Map assistant section">
+            <h3 class="font-bold text-[11px] uppercase tracking-wider text-gray-700 dark:text-gray-200 flex items-center space-x-1.5">
+                <i class="fa-solid fa-wand-magic-sparkles text-blue-600 dark:text-blue-400"></i>
+                <span>Map assistant</span>
+            </h3>
+            <i class="fa-solid fa-chevron-down text-gray-400 text-[10px] transition-transform duration-200" id="icon-agent"></i>
+        </div>
+        <div id="content-agent" class="hidden mt-2 space-y-1.5">
+            <fieldset class="rounded border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/30 px-2 py-1.5">
+                <legend class="px-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">Search with</legend>
+                <div class="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-700 dark:text-gray-200">
+                    <label class="inline-flex items-center gap-1 cursor-pointer">
+                        <input id="headless-source-catalog" type="checkbox" checked class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <span>GIS catalog</span>
+                    </label>
+                    <label class="inline-flex items-center gap-1 cursor-pointer">
+                        <input id="headless-source-osm" type="checkbox" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                        <span>OpenStreetMap feature</span>
+                    </label>
+                </div>
+            </fieldset>
+            <label id="headless-prompt-label" for="headless-prompt" class="block text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">What data are you looking for?</label>
+            <div id="headless-original-request" class="hidden rounded border border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-900/20 px-2 py-1.5 text-[10px] text-blue-900 dark:text-blue-100"></div>
+            <div id="headless-clarification" class="hidden rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-2 py-1.5 text-[10px] text-amber-900 dark:text-amber-100"></div>
+            <div id="headless-progress" class="hidden space-y-1 text-[10px]"></div>
+            <textarea id="headless-prompt" rows="3" placeholder="Try: fire evacuation zones in British Columbia, or parks near Halifax" title="Describe the GIS data you want in ordinary language." class="w-full resize-none border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1.5 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none"></textarea>
+            <div class="flex gap-1.5">
+                <button id="btn-headless-new-chat" type="button" class="w-8 bg-white hover:bg-blue-50 active:bg-blue-100 dark:bg-gray-700 dark:hover:bg-gray-600 dark:active:bg-gray-500 text-blue-700 dark:text-blue-200 border border-blue-300 dark:border-blue-700 text-xs rounded font-semibold transition-colors shadow-xs" title="Start a new chat" aria-label="Start a new chat"><i class="fa-solid fa-message"></i></button>
+                <button id="btn-headless-run" type="button" class="flex-1 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs py-1.5 rounded font-semibold transition-colors shadow-xs">Find data</button>
+            </div>
+            <div id="headless-status" class="text-[10px] text-gray-500 dark:text-gray-400 italic">Choose a source and describe the GIS data you want to find.</div>
+        </div>
+    </div>
+
     <!-- Data Sources Config Section -->
     <div class="p-2.5 border-b border-gray-200 dark:border-gray-700 shrink-0">
-        <div class="flex justify-between items-center cursor-pointer select-none mb-1.5" id="toggle-database">
+        <div class="flex justify-between items-center cursor-pointer select-none mb-1.5" id="toggle-database" data-hover-context="Data Sources Config section">
             <h3 class="font-bold text-[11px] uppercase tracking-wider text-gray-700 dark:text-gray-200 flex items-center space-x-1.5">
                 <i class="fa-solid fa-database text-blue-600 dark:text-blue-400"></i>
                 <span>Data Sources Config</span>
@@ -12,12 +48,6 @@
         </div>
 
         <div id="content-database" class="space-y-2">
-            <div>
-                <select id="saved-servers-select" class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none">
-                    <option value="" disabled selected>-- Load saved server --</option>
-                </select>
-            </div>
-
             <div class="flex space-x-1.5">
                 <select id="server-type" class="w-1/3 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none font-medium">
                     <option value="ARCGIS">ESRI/REST</option>
@@ -36,8 +66,17 @@
 
                 <!-- Hidden Local File Upload Container -->
                 <div id="local-upload-container" class="hidden flex-1 flex space-x-1">
-                    <input type="file" id="local-file-input" accept=".geojson,.json,.kml,.csv,.zip" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded py-0.5 text-xs focus:outline-none file:mr-2 file:py-1 file:px-2 file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-gray-600 dark:file:text-white cursor-pointer">
+                    <input type="file" id="local-file-input" multiple accept=".geojson,.json,.kml,.csv,.zip,.png,.pgw" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded py-0.5 text-xs focus:outline-none file:mr-2 file:py-1 file:px-2 file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-gray-600 dark:file:text-white cursor-pointer">
                 </div>
+            </div>
+
+            <div id="saved-server-config">
+                <select id="saved-servers-select" class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-1 text-xs focus:ring-1 focus:ring-blue-500 focus:outline-none">
+                    <option value="" disabled selected>-- Load saved server --</option>
+                </select>
+                <a href="/catalog-admin" target="_blank" rel="noopener" class="mt-1 inline-flex items-center gap-1 text-[10px] font-semibold text-blue-600 dark:text-blue-400 hover:underline" title="Open the separate catalog administration service">
+                    <i class="fa-solid fa-arrow-up-right-from-square"></i><span>Manage indexed GIS catalog</span>
+                </a>
             </div>
 
             <!-- Overpass OSM Builder -->
@@ -48,9 +87,9 @@
                     <label class="block text-[10px] font-bold text-gray-500 uppercase tracking-wide mb-1">Tags (Key / Value)</label>
                     <div id="osm-tags-container" class="space-y-1">
                         <!-- Initial Row -->
-                        <div class="flex items-center space-x-1 osm-tag-row">
-                            <input type="text" class="osm-key flex-1 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500 focus:outline-none" placeholder="Key (e.g. amenity)" list="osm-keys">
-                            <input type="text" class="osm-val flex-1 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500 focus:outline-none" placeholder="Value (e.g. cafe)" list="osm-values">
+                        <div class="osm-tag-row">
+                            <input type="text" class="osm-key px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500 focus:outline-none" placeholder="Key (e.g. amenity)" list="osm-keys">
+                            <input type="text" class="osm-val px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500 focus:outline-none" placeholder="Value (e.g. cafe)" list="osm-values">
                             <button type="button" class="btn-add-tag bg-emerald-100 hover:bg-emerald-200 text-emerald-700 dark:bg-emerald-900/50 dark:hover:bg-emerald-800 dark:text-emerald-400 w-6 h-6 rounded flex items-center justify-center transition-colors shrink-0"><i class="fa-solid fa-plus text-[10px]"></i></button>
                             <button type="button" class="btn-remove-tag bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/50 dark:hover:bg-red-800 dark:text-red-400 w-6 h-6 rounded flex items-center justify-center transition-colors shrink-0 opacity-50 cursor-not-allowed" disabled><i class="fa-solid fa-minus text-[10px]"></i></button>
                         </div>
@@ -68,11 +107,10 @@
                         <option value="lines_polygons">Lines/Polygons</option>
                      </select>
                 </div>
-
                 <!-- Advanced Settings (Now open by default) -->
-                <details open class="text-xs group border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
+                <details class="text-xs group border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
                     <summary class="font-bold text-gray-600 dark:text-gray-300 cursor-pointer p-1.5 select-none flex items-center hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                        <i class="fa-solid fa-caret-right mr-2 transition-transform group-open:rotate-90 text-[10px] w-2 text-center"></i> Advanced Options
+                        <i class="fa-solid fa-caret-right mr-2 transition-transform group-open:rotate-90 text-[10px] w-2 text-center"></i> Advanced
                     </summary>
                     <div class="p-2 border-t border-gray-200 dark:border-gray-700 space-y-2 bg-gray-50 dark:bg-gray-800/50">
                         <div class="flex items-center justify-between">
@@ -89,28 +127,24 @@
                     </div>
                 </details>
 
-                <!-- INSPECT | FETCH OSM DATA -->
+                <!-- FETCH OSM DATA -->
                 <div class="flex space-x-1.5 pt-0.5">
-                    <button id="btn-osm-inspect" type="button" class="w-1/3 bg-white hover:bg-gray-50 dark:bg-gray-800 dark:hover:bg-gray-700 text-blue-600 dark:text-blue-400 border border-gray-300 dark:border-gray-600 px-2 py-1.5 rounded text-xs font-semibold flex items-center justify-center space-x-1 transition-colors shadow-xs" title="Click and drag a box on the map to scan and inspect all OSM tags in that area.">
-                        <i class="fa-solid fa-vector-square text-[11px]"></i>
-                        <span>Inspect</span>
-                    </button>
-                    <button id="btn-fetch" class="btn-trigger-fetch flex-1 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold text-xs px-3 py-1.5 rounded shadow-xs transition-colors flex items-center justify-center space-x-1.5">
+                    <button id="btn-fetch" class="btn-trigger-fetch w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold text-xs px-3 py-1.5 rounded shadow-xs transition-colors flex items-center justify-center space-x-1.5">
                         <i id="btn-fetch-spinner" class="fa-solid fa-circle-notch fa-spin hidden"></i>
                         <span id="btn-fetch-text">Fetch OSM Data</span>
                     </button>
                 </div>
 
-                <!-- Inspect Area Results Drawer -->
+                <!-- Right-click OSM Results Drawer -->
                 <div id="osm-inspect-container" class="hidden flex-col space-y-1 bg-blue-100/70 dark:bg-blue-950/80 p-2 rounded border border-blue-300 dark:border-blue-700 text-xs mt-1.5">
                     <div class="flex justify-between items-center border-b border-blue-200 dark:border-blue-800 pb-1">
                         <span class="font-bold text-blue-900 dark:text-blue-200 text-[10px] flex items-center space-x-1">
                             <i class="fa-solid fa-tags"></i>
-                            <span>Inspected Area Tags</span>
+                            <span>Nearby OSM Results</span>
                         </span>
                         <button id="btn-close-inspect" type="button" class="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 text-xs px-1"><i class="fa-solid fa-times"></i></button>
                     </div>
-                    <p id="osm-inspect-status" class="text-[10px] italic text-blue-800 dark:text-blue-300">Click and drag a box on the map...</p>
+                    <p id="osm-inspect-status" class="text-[10px] italic text-blue-800 dark:text-blue-300">Right-click a map point and query OSM...</p>
                     <div id="osm-inspect-results" class="max-h-32 overflow-y-auto custom-scroll space-y-0.5 pr-1"></div>
                 </div>
             </div>
@@ -125,8 +159,8 @@
 
     <!-- Navigation Tabs -->
     <div class="flex shrink-0 bg-gray-100 dark:bg-gray-900/60 pt-1">
-        <button id="tab-btn-available" class="flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200 font-bold bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border-t-[3px] border-t-blue-600 dark:border-t-blue-400 border-b border-b-transparent opacity-100 z-10">Available</button>
-        <button id="tab-btn-added" class="flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200 font-medium bg-transparent text-gray-400 dark:text-gray-500 border-t-[3px] border-t-transparent border-b border-b-gray-200 dark:border-b-gray-700 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/80 opacity-60 hover:opacity-100 shadow-inner cursor-pointer">Added (0)</button>
+        <button id="tab-btn-available" data-hover-context="Show available layers" class="flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200 font-bold bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 border-t-[3px] border-t-blue-600 dark:border-t-blue-400 border-b border-b-transparent opacity-100 z-10">Available</button>
+        <button id="tab-btn-added" data-hover-context="Show added layers" class="flex-1 py-2 text-xs uppercase tracking-wider transition-all duration-200 font-medium bg-transparent text-gray-400 dark:text-gray-500 border-t-[3px] border-t-transparent border-b border-b-gray-200 dark:border-b-gray-700 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/80 opacity-60 hover:opacity-100 shadow-inner cursor-pointer">Added (0)</button>
     </div>
 
     <!-- Main Layers List Container -->
@@ -250,30 +284,18 @@
         </div>
     </div>
 
-    <!-- Workspace Session Header & Controls -->
-    <div class="p-2.5 border-t border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/40 shrink-0">
-        <div class="flex justify-between items-center cursor-pointer select-none" id="toggle-workspace">
-            <h3 class="font-bold text-[11px] uppercase tracking-wider text-gray-700 dark:text-gray-200 flex items-center space-x-1.5">
-                <i class="fa-solid fa-briefcase text-blue-600 dark:text-blue-400"></i>
-                <span>Workspace Session</span>
-            </h3>
-            <i class="fa-solid fa-chevron-down text-gray-400 text-[10px] transition-transform duration-200" id="icon-workspace"></i>
-        </div>
-        
-        <div id="content-workspace" class="mt-2 space-y-1.5">
-            <div class="flex items-center space-x-1.5">
-                <button id="btn-export-workspace" class="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs py-1 rounded font-medium transition-colors shadow-xs flex items-center justify-center space-x-1" title="Export current workspace state to JSON">
-                    <i class="fa-solid fa-download text-blue-600 dark:text-blue-400 text-[11px]"></i>
-                    <span>Export</span>
-                </button>
-                <label id="lbl-import-workspace" class="flex-1 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs py-1 rounded font-medium cursor-pointer transition-colors shadow-xs flex items-center justify-center space-x-1" title="Import workspace session JSON">
-                    <i class="fa-solid fa-upload text-blue-600 dark:text-blue-400 text-[11px]"></i>
-                    <span>Import</span>
-                    <input type="file" id="file-import-workspace" accept=".json" class="hidden">
-                </label>
-                <button id="btn-clear-workspace" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-xs px-2.5 py-1 rounded font-medium transition-colors shadow-xs flex items-center justify-center" title="Reset Workspace">
-                    <i class="fa-solid fa-trash-can text-blue-600 dark:text-blue-400 text-[11px]"></i>
-                </button>
+    <div id="command-palette" class="hidden fixed inset-0 z-[3000] bg-black/40 backdrop-blur-sm">
+        <div class="absolute inset-x-4 top-8 mx-auto max-w-lg bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div class="p-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                <div>
+                    <div class="text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-200">Command Palette</div>
+                    <div class="text-[10px] text-gray-500 dark:text-gray-400">Run the same actions from chat or the manual UI</div>
+                </div>
+                <button id="btn-command-palette-close" class="text-gray-500 hover:text-gray-800 dark:hover:text-gray-100"><i class="fa-solid fa-times"></i></button>
+            </div>
+            <div class="p-3 space-y-2">
+                <input id="command-palette-search" type="text" placeholder="Search commands or layers..." class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500">
+                <div id="command-palette-results" class="max-h-72 overflow-y-auto custom-scroll space-y-1"></div>
             </div>
         </div>
     </div>

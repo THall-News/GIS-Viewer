@@ -1,9 +1,25 @@
 import os
+import ipaddress
+import socket
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 SERVERS_FILE = BASE_DIR / 'gis_servers.json'
+HEADLESS_DB_FILE = BASE_DIR / 'headless.sqlite3'
 DEFAULT_SERVERS_FILE = BASE_DIR / 'default_servers.json'
+CATALOG_DB_FILE = Path(os.environ.get('CATALOG_DB_FILE', str(BASE_DIR / 'catalog.sqlite3')))
+CATALOG_SERVICE_URL = os.environ.get('CATALOG_SERVICE_URL', 'http://127.0.0.1:5100').rstrip('/')
+CATALOG_ADMIN_URL = os.environ.get('CATALOG_ADMIN_URL', CATALOG_SERVICE_URL).rstrip('/')
+try:
+    CATALOG_REFRESH_INTERVAL_SECONDS = max(300, int(os.environ.get('CATALOG_REFRESH_INTERVAL_SECONDS', '86400')))
+except ValueError:
+    CATALOG_REFRESH_INTERVAL_SECONDS = 86400
+
+try:
+    DOWNLOAD_LIMIT_MB = max(1, int(os.environ.get('GIS_MAX_DOWNLOAD_MB', '50')))
+except ValueError:
+    DOWNLOAD_LIMIT_MB = 50
+MAX_DOWNLOAD_BYTES = DOWNLOAD_LIMIT_MB * 1024 * 1024
 
 GLOBAL_OVERPASS_ENDPOINTS = [
     'https://overpass-api.de/api/interpreter',
@@ -67,8 +83,11 @@ def is_public_url(url):
             return False
         if hostname.endswith('.local'):
             return False
-        if any(hostname.startswith(prefix) for prefix in ('127.', '10.', '192.168.', '172.16.', '172.17.', '172.18.', '172.19.', '172.20.', '172.21.', '172.22.', '172.23.', '172.24.', '172.25.', '172.26.', '172.27.', '172.28.', '172.29.', '172.30.', '172.31.', '169.254.')):
-            return False
+        addresses = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == 'https' else 80), type=socket.SOCK_STREAM)
+        for _, _, _, _, sockaddr in addresses:
+            address = ipaddress.ip_address(sockaddr[0])
+            if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved or address.is_multicast:
+                return False
         return True
     except Exception:
         return False

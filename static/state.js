@@ -12,6 +12,9 @@ const rawState = {
     currentServerType: '',
     lastFetchedOsmGeoJson: null,
     lastFetchedOsmLayerName: '',
+    // Temporary context-menu follow-up state. This is intentionally not part
+    // of workspace data; it only survives until the next OSM fetch/retry.
+    osmFeatureFollowup: null,
     activeTableLayerKey: null, 
     activeEditLayerKey: null,
     activeSplitLayerKey: null,
@@ -26,7 +29,35 @@ const rawState = {
     currentTableHeaders: [],
     tableSortCol: null,
     tableSortAsc: true,
-    highlightLayer: null
+    highlightLayer: null,
+    featureSelection: {
+        active: false,
+        hovered: null,
+        selected: [],
+        selectionMode: 'rendered'
+    },
+    magneticLasso: {
+        active: false,
+        controls: [],
+        points: [],
+        path: [],
+        trace: [],
+        traceControls: [],
+        geometry: null,
+        completed: false
+    },
+    roadRoute: {
+        active: false,
+        waypoints: [],
+        geometry: null,
+        distance_m: null,
+        duration_s: null
+    },
+    drawShape: {
+        active: false,
+        points: [],
+        completed: false
+    }
 };
 
 // 3. The Proxy Wrapper
