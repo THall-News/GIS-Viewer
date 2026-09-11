@@ -2,20 +2,20 @@
 <div class="flex-1 min-w-0 h-full relative flex flex-col">
   <div id="map" class="w-full h-full min-h-0 z-0"></div>
 
-  <div id="map-context-menu" class="hidden absolute z-[4100] w-56 max-w-[calc(100%-1rem)] max-h-[min(70vh,32rem)] overflow-hidden rounded border border-gray-300 dark:border-gray-600 bg-white/95 dark:bg-gray-800/95 backdrop-blur shadow-2xl text-xs" role="dialog" aria-label="Map point inspection menu">
-    <div class="flex items-start justify-between gap-2 border-b border-gray-200 dark:border-gray-700 px-2.5 py-2">
+  <div id="map-context-menu" class="hidden absolute z-[4100] w-fit max-w-[calc(100%-1rem)] max-h-[min(70vh,32rem)] overflow-hidden rounded border border-gray-300 dark:border-gray-600 bg-white/95 dark:bg-gray-800/95 backdrop-blur shadow-2xl text-xs" role="dialog" aria-label="Map point inspection menu">
+    <div class="flex items-start justify-between gap-2 border-b border-gray-200 dark:border-gray-700 px-2 py-1">
       <div class="min-w-0 flex-1">
-        <div class="flex items-center gap-1.5">
-          <div id="map-context-coordinates" class="min-w-0 truncate font-mono text-[10px] text-gray-500 dark:text-gray-400">Lat — · Lon —</div>
-          <button id="btn-map-context-copy" type="button" class="shrink-0 rounded border border-gray-300 dark:border-gray-600 px-1.5 py-0.5 text-[9px] font-semibold text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Copy the clicked latitude and longitude">Copy</button>
+        <div class="flex items-center gap-1">
+          <div id="map-context-coordinates" class="min-w-0 whitespace-nowrap font-mono text-[9px] text-white">Lat — · Lon —</div>
+          <button id="btn-map-context-copy" type="button" class="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-gray-300 dark:border-gray-600 p-0 text-[9px] text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Copy the clicked latitude and longitude" aria-label="Copy the clicked latitude and longitude"><i class="fa-solid fa-copy"></i></button>
         </div>
       </div>
     </div>
 
-    <div class="max-h-[18rem] overflow-y-auto custom-scroll px-2.5 py-2">
-      <div class="pt-0.5">
-        <button id="btn-map-context-osm" type="button" class="mt-1 rounded bg-blue-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-blue-700" title="Query nearby OpenStreetMap elements">
-          <i class="fa-solid fa-magnifying-glass-location mr-1"></i>Query OSM here
+    <div class="max-h-[18rem] overflow-y-auto custom-scroll px-2 py-1">
+      <div>
+        <button id="btn-map-context-osm" type="button" class="rounded bg-blue-600 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-blue-700" title="Query nearby OpenStreetMap elements">
+        OSM Query
         </button>
         <div id="map-context-osm-status" class="text-[10px] italic text-gray-500 dark:text-gray-400"></div>
         <div id="map-context-admin-context" class="hidden mt-1 rounded border border-blue-200 dark:border-blue-800 bg-blue-50/70 dark:bg-blue-950/40 px-1.5 py-1 text-[10px] text-blue-900 dark:text-blue-100">
@@ -27,19 +27,19 @@
     </div>
   </div>
 
-  <button id="btn-road-route" type="button" class="absolute top-2 right-2 z-[1000] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded shadow px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Click snapped road points to draw a driving route">
+  <button id="btn-road-route" type="button" class="absolute top-2 left-2 z-[5000] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded shadow px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Click snapped road points to draw a driving route">
     <i class="fa-solid fa-route mr-1"></i>Draw route
   </button>
 
-  <button id="btn-draw-shape" type="button" class="absolute top-11 right-2 z-[1000] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded shadow px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Click to add polygon points; right-click to finish">
-    <i class="fa-solid fa-draw-polygon mr-1"></i>Add Shape
+  <button id="btn-draw-shape" type="button" class="absolute top-11 left-2 z-[5000] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded shadow px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Click to add polygon points; right-click to finish">
+    <i class="fa-solid fa-draw-polygon mr-1"></i>Draw Shape
   </button>
 
-  <button id="btn-feature-selection" type="button" class="absolute top-20 right-2 z-[1000] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded shadow px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Click one rendered feature; Ctrl/Cmd-click expands its loaded fragments">
+  <button id="btn-feature-selection" type="button" class="absolute top-20 left-2 z-[5000] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded shadow px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-blue-50 dark:hover:bg-gray-700" title="Click one rendered feature; Ctrl/Cmd-click expands its loaded fragments">
     <i class="fa-solid fa-layer-group mr-1"></i>Select features
   </button>
 
-  <div id="road-route-panel" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 dark:bg-gray-800/95 border border-gray-300 dark:border-gray-600 rounded shadow-lg px-2 py-1.5 text-xs min-w-56">
+  <div id="road-route-panel" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[5000] bg-white/95 dark:bg-gray-800/95 border border-gray-300 dark:border-gray-600 rounded shadow-lg px-2 py-1.5 text-xs min-w-56">
     <div class="flex items-center justify-between gap-3">
       <span id="road-route-status" class="font-semibold text-gray-700 dark:text-gray-200">Click a road to add a waypoint</span>
       <button id="btn-road-route-close" type="button" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Exit route drawing"><i class="fa-solid fa-times"></i></button>
@@ -51,7 +51,7 @@
     </div>
   </div>
 
-  <div id="draw-shape-panel" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 dark:bg-gray-800/95 border border-gray-300 dark:border-gray-600 rounded shadow-lg px-2 py-1.5 text-xs min-w-56">
+  <div id="draw-shape-panel" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[5000] bg-white/95 dark:bg-gray-800/95 border border-gray-300 dark:border-gray-600 rounded shadow-lg px-2 py-1.5 text-xs min-w-56">
     <div class="flex items-center justify-between gap-3">
       <span id="draw-shape-status" class="font-semibold text-gray-700 dark:text-gray-200">Click to add polygon points</span>
       <button id="btn-draw-shape-close" type="button" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Exit shape drawing"><i class="fa-solid fa-times"></i></button>
@@ -63,7 +63,7 @@
     </div>
   </div>
 
-  <div id="feature-selection-panel" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 dark:bg-gray-800/95 border border-gray-300 dark:border-gray-600 rounded shadow-lg px-2 py-1.5 text-xs min-w-64">
+  <div id="feature-selection-panel" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[5000] bg-white/95 dark:bg-gray-800/95 border border-gray-300 dark:border-gray-600 rounded shadow-lg px-2 py-1.5 text-xs min-w-64">
     <div class="flex items-center justify-between gap-3">
       <span id="feature-selection-status" class="font-semibold text-gray-700 dark:text-gray-200">Hover over a rendered map feature</span>
       <button id="btn-feature-selection-close" type="button" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Exit feature selection"><i class="fa-solid fa-times"></i></button>
@@ -77,7 +77,7 @@
     </div>
   </div>
 
-  <div id="magnetic-lasso-panel" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 dark:bg-gray-800/95 border border-gray-300 dark:border-gray-600 rounded shadow-lg px-2 py-1.5 text-xs min-w-64">
+  <div id="magnetic-lasso-panel" class="hidden absolute top-2 left-1/2 -translate-x-1/2 z-[5000] bg-white/95 dark:bg-gray-800/95 border border-gray-300 dark:border-gray-600 rounded shadow-lg px-2 py-1.5 text-xs min-w-64">
     <div class="flex items-center justify-between gap-3">
       <span id="magnetic-lasso-status" class="font-semibold text-gray-700 dark:text-gray-200">Click a map feature to start</span>
       <button id="btn-magnetic-lasso-close" type="button" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Exit magnetic lasso"><i class="fa-solid fa-times"></i></button>

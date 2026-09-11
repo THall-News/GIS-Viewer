@@ -141,17 +141,10 @@ const restoreMapHoverContext = () => {
     if (mapHoverContext) mapHoverContext.textContent = lastMapHoverContext;
 };
 
-const hoverContextSelector = '[data-hover-context], [aria-label], [title], button, a, label, select, input, textarea, summary, [role="button"]';
+const hoverContextSelector = '[data-hover-context]';
 const hoverContextForElement = element => {
     if (!element) return '';
-    const explicit = element.dataset?.hoverContext
-        || element.getAttribute?.('aria-label')
-        || element.getAttribute?.('title');
-    if (explicit) return String(explicit).trim();
-    if (['BUTTON', 'A', 'LABEL', 'SUMMARY'].includes(element.tagName)) {
-        return String(element.textContent || '').replace(/\s+/g, ' ').trim();
-    }
-    return '';
+    return String(element.dataset?.hoverContext || '').trim();
 };
 
 const setUiHoverContext = element => {
@@ -164,19 +157,34 @@ const setUiHoverContext = element => {
 
 // This is intentionally delegated from document so it also covers layer
 // controls rendered later by the Available and Added panels.
-document.addEventListener('pointerover', event => {
+const handleUiHoverOver = event => {
     const target = event.target?.closest?.(hoverContextSelector);
     if (target) setUiHoverContext(target);
-});
+};
 
-document.addEventListener('pointerout', event => {
+const handleUiHoverOut = event => {
     const target = event.target?.closest?.(hoverContextSelector);
     const relatedTarget = event.relatedTarget;
     if (!target || (relatedTarget && target.contains(relatedTarget))) return;
     const nextInteractive = relatedTarget?.closest?.(hoverContextSelector);
     if (nextInteractive) setUiHoverContext(nextInteractive);
     else restoreMapHoverContext();
-});
+};
+
+document.addEventListener('mouseover', handleUiHoverOver);
+document.addEventListener('mouseout', handleUiHoverOut);
+
+const syncInteractiveHoverTitles = () => {
+    document.querySelectorAll('button[data-hover-context], a[data-hover-context], select[data-hover-context], input[data-hover-context]')
+        .forEach(element => {
+            if (!element.getAttribute('title') && element.dataset.hoverContext) {
+                element.setAttribute('title', element.dataset.hoverContext);
+            }
+        });
+};
+
+syncInteractiveHoverTitles();
+new MutationObserver(syncInteractiveHoverTitles).observe(document.body, { childList: true, subtree: true });
 
 map.on('mousemove', updateMapCoordinateReadout);
 map.on('zoomend moveend', () => updateMapCoordinateReadout(lastMapPointerEvent));
@@ -1657,7 +1665,7 @@ export const updateMapLayerOrder = () => {
     autoSaveWorkspace(); 
 };
 
-const releaseTemporaryRaster = layer => {
+const releaseRasterObjectUrl = layer => {
     if (layer?.rasterObjectUrl) {
         URL.revokeObjectURL(layer.rasterObjectUrl);
         layer.rasterObjectUrl = null;
@@ -1864,10 +1872,7 @@ const sanitizeGeoJSON = (geoJson) => {
 const serializeWorkspace = () => {
     const center = map.getCenter();
     const zoom = map.getZoom();
-    // Object URLs point at the current browser session and cannot be restored
-    // after a reload. Raster previews remain in the live Added stack, but are
-    // deliberately excluded from persisted workspace data.
-    const layersData = AppState.activeLayers.filter(l => !l.isTemporaryRaster).map(l => {
+    const layersData = AppState.activeLayers.map(l => {
         let cleanGeoJSON = null;
         if (l.geoJsonData) {
             try {
@@ -1889,13 +1894,18 @@ const serializeWorkspace = () => {
             geoJsonData: cleanGeoJSON,
             originalGeoJsonData: l.originalGeoJsonData ? sanitizeGeoJSON(l.originalGeoJsonData) : null,
             customStyle: l.customStyle,
+            isRasterImage: l.isRasterImage === true,
+            rasterDataUrl: l.rasterDataUrl || null,
+            rasterCrs: l.rasterCrs || null,
+            rasterBounds: l.rasterBounds || null,
+            rasterOpacity: l.rasterOpacity ?? null,
             isVisible: l.isVisible,
             isFolder: l.isFolder,
             parentId: l.parentId || null,
             isExpanded: l.isExpanded
         };
     });
-    return { version: "1.2", savedAt: new Date().toISOString(), mapState: { lat: center.lat, lng: center.lng, zoom }, activeLayers: layersData };
+    return { version: "1.3", savedAt: new Date().toISOString(), mapState: { lat: center.lat, lng: center.lng, zoom }, activeLayers: layersData };
 };
 
 export const autoSaveWorkspace = () => {
@@ -1923,7 +1933,8 @@ export const autoSaveWorkspace = () => {
 
 attributeTableController = createAttributeTableController({
     container: attributeTableContainer, renderAddedLayers, ensureGeoJSON, showToast,
-    downloadBlob, updateStacking: () => updateStacking(), closeTablePanel
+    downloadBlob, updateStacking: () => updateStacking(), closeTablePanel,
+    createCustomGeoJSONLayer, autoSaveWorkspace
 });
 styleEditorController = createStyleEditorController({
     editPanelContainer, renderAddedLayers, ensureGeoJSON, closeSidebarPanels,
@@ -1955,6 +1966,20 @@ const normalizePersistedMapView = mapState => {
     return { lat: boundedLatitude, lng: wrappedLongitude, zoom: boundedZoom, repaired };
 };
 
+const normalizePersistedRasterBounds = bounds => {
+    if (!Array.isArray(bounds) || bounds.length !== 2
+        || !Array.isArray(bounds[0]) || !Array.isArray(bounds[1])
+        || bounds[0].length !== 2 || bounds[1].length !== 2) return null;
+    const south = Number(bounds[0][0]);
+    const west = Number(bounds[0][1]);
+    const north = Number(bounds[1][0]);
+    const east = Number(bounds[1][1]);
+    if (![south, west, north, east].every(Number.isFinite)
+        || south < -90 || north > 90 || west < -180 || east > 180
+        || south >= north || west >= east) return null;
+    return [[south, west], [north, east]];
+};
+
 const restoreWorkspaceState = (data, { restoreMapView = true } = {}) => {
     closeAllPanels(); clearAllPreviews();
     AppState.currentSoloLayerKey = null; 
@@ -1962,7 +1987,7 @@ const restoreWorkspaceState = (data, { restoreMapView = true } = {}) => {
 
     AppState.activeLayers.forEach(l => {
         if (!l.isFolder && l.mapLayer) map.removeLayer(l.mapLayer);
-        releaseTemporaryRaster(l);
+        releaseRasterObjectUrl(l);
         removePane(l.uniqueKey);
     });
     AppState.activeLayers = [];
@@ -1991,7 +2016,20 @@ const restoreWorkspaceState = (data, { restoreMapView = true } = {}) => {
             const paneName = 'pane-' + uniqueKey;
             if (!map.getPane(paneName)) map.createPane(paneName);
             
-            if (lData.geoJsonData) {
+            if (lData.isRasterImage) {
+                const rasterDataUrl = typeof lData.rasterDataUrl === 'string'
+                    && (lData.rasterDataUrl.startsWith('data:image/png') || lData.rasterDataUrl.startsWith('data:application/octet-stream'))
+                    ? lData.rasterDataUrl : null;
+                const rasterBounds = normalizePersistedRasterBounds(lData.rasterBounds);
+                if (!rasterDataUrl || !rasterBounds) throw new Error('Invalid persisted raster image data.');
+                const rasterOpacity = Number.isFinite(Number(lData.rasterOpacity))
+                    ? Math.max(0, Math.min(1, Number(lData.rasterOpacity))) : 0.8;
+                mapLayer = L.imageOverlay(rasterDataUrl, rasterBounds, {
+                    pane: paneName,
+                    opacity: rasterOpacity,
+                    interactive: false,
+                });
+            } else if (lData.geoJsonData) {
                 mapLayer = createCustomGeoJSONLayer(lData.geoJsonData, lData.customStyle, paneName);
             } else if (lData.exportUrl) {
                 const baseUrl = lData.exportUrl.split('?')[0];
@@ -2005,6 +2043,11 @@ const restoreWorkspaceState = (data, { restoreMapView = true } = {}) => {
                 AppState.activeLayers = [...AppState.activeLayers, {
                     uniqueKey: uniqueKey, id: lData.id, displayName: lData.displayName, mapLayer: mapLayer, exportUrl: lData.exportUrl,
                     isLocalGeoJSON: lData.isLocalGeoJSON, geoJsonData: lData.geoJsonData, originalGeoJsonData: lData.originalGeoJsonData || null, customStyle: lData.customStyle,
+                    isRasterImage: lData.isRasterImage === true,
+                    rasterDataUrl: lData.rasterDataUrl || null,
+                    rasterCrs: lData.rasterCrs || null,
+                    rasterBounds: normalizePersistedRasterBounds(lData.rasterBounds),
+                    rasterOpacity: Number.isFinite(Number(lData.rasterOpacity)) ? Math.max(0, Math.min(1, Number(lData.rasterOpacity))) : null,
                     isVisible: lData.isVisible ?? true, parentId: lData.parentId || null, isFolder: false
                 }];
             }
@@ -2351,7 +2394,19 @@ createMapContextMenuController({
     map,
     showToast,
     onOsmResults: renderOsmPointInspectResults,
-    onOsmElementSelected: populateOsmBuilderFromElement
+    onOsmElementSelected: populateOsmBuilderFromElement,
+    shouldSuppressContextMenu: () => AppState.drawShape.active || AppState.roadRoute.active,
+    onSuppressedContextMenu: () => {
+        if (!AppState.drawShape.active) return;
+        const state = AppState.drawShape;
+        if (state.points.length < 3) {
+            showToast('A shape needs at least 3 points.', false, true);
+            return;
+        }
+        AppState.drawShape = { ...state, completed: true };
+        map.getContainer().style.cursor = '';
+        renderShapePreview();
+    }
 });
 
 
@@ -2460,7 +2515,7 @@ export const handleRemove = (e) => {
               if(i !== -1) {
                   const l = AppState.activeLayers[i];
                   if(!l.isFolder && l.mapLayer) map.removeLayer(l.mapLayer);
-                  releaseTemporaryRaster(l);
+                  releaseRasterObjectUrl(l);
                   removePane(k);
                   if (AppState.activeTableLayerKey === k) closeTablePanel();
                   if (AppState.activeEditLayerKey === k || AppState.activeSplitLayerKey === k || AppState.activeCropLayerKey === k) closeSidebarPanels();
@@ -2470,7 +2525,7 @@ export const handleRemove = (e) => {
       } else { return; }
   } else {
       map.removeLayer(layer.mapLayer);
-      releaseTemporaryRaster(layer);
+      releaseRasterObjectUrl(layer);
       removePane(key);
       AppState.activeLayers = AppState.activeLayers.filter((_, index) => index !== idx);
       if (AppState.activeTableLayerKey === key) closeTablePanel();
@@ -3031,10 +3086,10 @@ const renderAvailableLayers = () => {
       div.innerHTML = `
           <div class="flex-1 flex items-center p-1.5 min-w-0">
               <div class="flex items-center justify-center mr-2 shrink-0">
-                  <label class="cursor-pointer relative flex items-center justify-center" aria-label="Toggle map preview" data-hover-context="Toggle map preview">
+                  <label class="group cursor-pointer relative flex items-center justify-center" aria-label="Visibility" data-hover-context="Visibility" title="Visibility">
                       <input id="cb-${layer.id}" type="checkbox" value="${layer.id}" class="peer layer-checkbox sr-only">
-                      <i class="fa-solid fa-eye-slash text-gray-400 dark:text-gray-500 hover:text-blue-500 peer-checked:hidden text-[11px] w-3 text-center transition-colors"></i>
-                      <i class="fa-solid fa-eye hidden peer-checked:inline-block text-blue-500 text-[11px] w-3 text-center"></i>
+                      <i class="fa-solid fa-eye-slash text-gray-400 dark:text-gray-500 group-hover:text-[#71A4F4] peer-checked:hidden text-[11px] w-3 text-center transition-colors"></i>
+                      <i class="fa-solid fa-eye hidden peer-checked:inline-block text-[#E6E7EB] group-hover:text-[#71A4F4] text-[11px] w-3 text-center transition-colors"></i>
                   </label>
               </div>
               <div class="flex-1 min-w-0 overflow-hidden pr-2 flex flex-col justify-center">
@@ -3742,7 +3797,7 @@ getEl('btn-clear-workspace')?.addEventListener('click', async () => {
         
         AppState.activeLayers.forEach(l => { 
             if (!l.isFolder) map.removeLayer(l.mapLayer); 
-            releaseTemporaryRaster(l);
+            releaseRasterObjectUrl(l);
             removePane(l.uniqueKey); 
         });
         AppState.activeLayers = []; 
@@ -4329,7 +4384,10 @@ map.addControl(searchControlInstance);
 
 const searchNode = searchControlInstance.getContainer();
 if (searchNode && searchNode.parentNode) {
-    searchNode.parentNode.insertBefore(searchNode, searchNode.parentNode.firstChild);
+    const mapPanel = map.getContainer().parentElement;
+    searchNode.parentNode.removeChild(searchNode);
+    mapPanel?.appendChild(searchNode);
+    searchNode.classList.add('gis-map-search-control');
 }
 
 // ==========================================
@@ -4464,6 +4522,13 @@ const loadRasterImageDimensions = async file => {
     }
 };
 
+const loadRasterDataUrl = file => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('The PNG could not be read.'));
+    reader.readAsDataURL(file);
+});
+
 const processGeoReferencedPng = async (pngFile, pgwFile) => {
     if (rasterFileStem(pngFile) !== rasterFileStem(pgwFile)) {
         throw new Error('The PNG and PGW must have the same base filename.');
@@ -4472,13 +4537,14 @@ const processGeoReferencedPng = async (pngFile, pgwFile) => {
     const pgw = parsePgwText(await pgwFile.text());
     const dimensions = await loadRasterImageDimensions(pngFile);
     const bounds = pgwToEpsg3857Bounds(pgw, dimensions.width, dimensions.height);
-    const objectUrl = URL.createObjectURL(pngFile);
+    const rasterDataUrl = await loadRasterDataUrl(pngFile);
     const uniqueKey = Math.random().toString(36).substr(2, 9);
     const paneName = 'pane-' + uniqueKey;
+    let mapLayer = null;
 
     try {
         if (!map.getPane(paneName)) map.createPane(paneName);
-        const mapLayer = L.imageOverlay(objectUrl, bounds, {
+        mapLayer = L.imageOverlay(rasterDataUrl, bounds, {
             pane: paneName,
             opacity: 0.8,
             interactive: false,
@@ -4492,9 +4558,8 @@ const processGeoReferencedPng = async (pngFile, pgwFile) => {
             exportUrl: null,
             isLocalGeoJSON: false,
             isRasterImage: true,
-            isTemporaryRaster: true,
             rasterOpacity: 0.8,
-            rasterObjectUrl: objectUrl,
+            rasterDataUrl,
             rasterCrs: 'EPSG:3857',
             rasterBounds: bounds,
             geoJsonData: null,
@@ -4513,7 +4578,7 @@ const processGeoReferencedPng = async (pngFile, pgwFile) => {
         switchTab('added');
         showToast(`Imported EPSG:3857 image: ${pngFile.name}`);
     } catch (error) {
-        URL.revokeObjectURL(objectUrl);
+        if (mapLayer) map.removeLayer(mapLayer);
         removePane(uniqueKey);
         throw error;
     }
@@ -5654,8 +5719,16 @@ const btnDrawShape = getEl('btn-draw-shape');
 const btnDrawShapeClose = getEl('btn-draw-shape-close');
 const btnDrawShapeSave = getEl('btn-draw-shape-save');
 const btnDrawShapeClear = getEl('btn-draw-shape-clear');
+const shapePreviewPaneName = 'shapePreviewPane';
+const shapeVertexPaneName = 'shapeVertexPane';
+if (!map.getPane(shapePreviewPaneName)) map.createPane(shapePreviewPaneName);
+if (!map.getPane(shapeVertexPaneName)) map.createPane(shapeVertexPaneName);
+map.getPane(shapePreviewPaneName).style.zIndex = 3600;
+map.getPane(shapeVertexPaneName).style.zIndex = 3700;
 const shapePreviewGroup = L.featureGroup().addTo(map);
 let shapeLineLayer = null;
+let shapeCursorPoint = null;
+let shapeCursorMarker = null;
 const stopShapeEvent = event => {
     if (event?.originalEvent) L.DomEvent.stop(event.originalEvent);
 };
@@ -5689,18 +5762,23 @@ const shapeSegmentIndex = latlng => {
 const renderShapePreview = () => {
     shapePreviewGroup.clearLayers();
     shapeLineLayer = null;
+    shapeCursorMarker = null;
     const state = AppState.drawShape;
-    if (state.points.length >= 2) {
-        const points = state.completed ? [...state.points, state.points[0]] : state.points;
+    const previewPoints = state.completed
+        ? [...state.points, state.points[0]]
+        : [...state.points, ...(state.points.length > 0 && shapeCursorPoint ? [shapeCursorPoint] : [])];
+    if (previewPoints.length >= 2) {
+        const points = state.completed ? previewPoints : previewPoints;
         shapeLineLayer = state.completed
-            ? L.polygon(points, { color: '#2563eb', weight: 3, opacity: 0.9, fillColor: '#60a5fa', fillOpacity: 0.25 })
-            : L.polyline(points, { color: '#2563eb', weight: 3, opacity: 0.9 });
+            ? L.polygon(points, { pane: shapePreviewPaneName, color: '#2563eb', weight: 3, opacity: 0.9, fillColor: '#60a5fa', fillOpacity: 0.25 })
+            : L.polyline(points, { pane: shapePreviewPaneName, color: '#2563eb', weight: 3, opacity: 0.9 });
         shapeLineLayer.on('click', event => {
             const insertAfter = shapeSegmentIndex(event.latlng);
             if (insertAfter < 0) return;
             const currentState = AppState.drawShape;
             const nextPoints = [...currentState.points];
             nextPoints.splice(insertAfter + 1, 0, event.latlng);
+            shapeCursorPoint = event.latlng;
             AppState.drawShape = { ...currentState, points: nextPoints };
             stopShapeEvent(event);
             renderShapePreview();
@@ -5711,6 +5789,7 @@ const renderShapePreview = () => {
         const isFirstPoint = index === 0;
         const vertexSize = isFirstPoint ? 28 : 16;
         const marker = L.marker(point, {
+            pane: shapeVertexPaneName,
             draggable: true,
             keyboard: false,
             bubblingMouseEvents: false,
@@ -5730,6 +5809,7 @@ const renderShapePreview = () => {
                 // one copy of the first coordinate; GeoJSON serialization
                 // adds the required closing coordinate later.
                 AppState.drawShape = { ...currentState, completed: true };
+                map.getContainer().style.cursor = '';
                 renderShapePreview();
             }
             stopShapeEvent(event);
@@ -5753,19 +5833,42 @@ const renderShapePreview = () => {
         });
         shapePreviewGroup.addLayer(marker);
     });
+    if (!state.completed && state.points.length > 0 && shapeCursorPoint) {
+        const cursorMarker = L.marker(shapeCursorPoint, {
+            pane: shapeVertexPaneName,
+            draggable: false,
+            keyboard: false,
+            bubblingMouseEvents: false,
+            icon: L.divIcon({ className: 'gis-shape-vertex gis-shape-cursor-vertex', html: '<span></span>', iconSize: [12, 12], iconAnchor: [6, 6] }),
+            zIndexOffset: 1000
+        });
+        cursorMarker.on('click', event => {
+            const currentState = AppState.drawShape;
+            AppState.drawShape = { ...currentState, points: [...currentState.points, event.latlng] };
+            shapeCursorPoint = event.latlng;
+            renderShapePreview();
+            stopShapeEvent(event);
+        });
+        shapeCursorMarker = cursorMarker;
+        shapePreviewGroup.addLayer(cursorMarker);
+    }
     updateShapePanel();
 };
 
 const clearShapeDrawing = () => {
     AppState.drawShape = { ...AppState.drawShape, points: [], completed: false };
+    shapeCursorPoint = null;
     shapePreviewGroup.clearLayers();
     shapeLineLayer = null;
+    shapeCursorMarker = null;
     updateShapePanel();
 };
 
 const exitShapeDrawing = () => {
     clearShapeDrawing();
     AppState.drawShape = { ...AppState.drawShape, active: false };
+    setSavedLayerInteractionForDrawing(true);
+    updateSoloView();
     drawShapePanel?.classList.add('hidden');
     btnDrawShape?.classList.remove('bg-blue-600', 'text-white', 'border-blue-700');
     btnDrawShape?.classList.add('text-gray-700', 'dark:text-gray-200');
@@ -5774,11 +5877,13 @@ const exitShapeDrawing = () => {
 
 const enterShapeDrawing = () => {
     if (AppState.drawShape.active) { exitShapeDrawing(); return; }
+    getEl('map-context-menu')?.classList.add('hidden');
     if (AppState.featureSelection.active) exitFeatureSelectionMode();
     if (AppState.magneticLasso.active) exitMagneticLassoMode();
     if (AppState.roadRoute.active) exitRouteDrawing();
     clearShapeDrawing();
     AppState.drawShape = { ...AppState.drawShape, active: true };
+    setSavedLayerInteractionForDrawing(false);
     drawShapePanel?.classList.remove('hidden');
     btnDrawShape?.classList.add('bg-blue-600', 'text-white', 'border-blue-700');
     btnDrawShape?.classList.remove('text-gray-700', 'dark:text-gray-200');
@@ -5786,15 +5891,29 @@ const enterShapeDrawing = () => {
     updateShapePanel();
 };
 
+map.on('mousemove', event => {
+    const state = AppState.drawShape;
+    if (!state.active || state.completed) return;
+    if (state.points.length === 0) {
+        shapeCursorPoint = null;
+        return;
+    }
+    shapeCursorPoint = event.latlng;
+    if (shapeCursorMarker) shapeCursorMarker.setLatLng(event.latlng);
+    if (shapeLineLayer) {
+        shapeLineLayer.setLatLngs([...state.points, event.latlng]);
+    } else if (state.points.length === 0) {
+        renderShapePreview();
+    }
+});
+
 map.on('click', event => {
     const state = AppState.drawShape;
     if (!state.active || state.completed) return;
-    const insertAfter = shapeSegmentIndex(event.latlng);
-    const points = [...state.points];
-    if (insertAfter >= 0) points.splice(insertAfter + 1, 0, event.latlng);
-    else points.push(event.latlng);
-    AppState.drawShape = { ...state, points };
+    AppState.drawShape = { ...state, points: [...state.points, event.latlng] };
+    shapeCursorPoint = event.latlng;
     renderShapePreview();
+    stopShapeEvent(event);
 });
 
 map.on('contextmenu', event => {
@@ -5804,6 +5923,7 @@ map.on('contextmenu', event => {
     const state = AppState.drawShape;
     if (state.points.length < 3) { showToast('A shape needs at least 3 points.', false, true); return; }
     AppState.drawShape = { ...state, completed: true };
+    map.getContainer().style.cursor = '';
     renderShapePreview();
 });
 
@@ -5812,11 +5932,28 @@ const saveDrawnShape = () => {
     if (!state.completed || state.points.length < 3) return;
     const coordinates = state.points.map(point => [point.lng, point.lat]);
     coordinates.push(coordinates[0]);
-    const geoJsonData = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [coordinates] } }] };
+    const shapeName = `Drawn shape (${state.points.length} points)`;
+    const polygonFeature = {
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'Polygon', coordinates: [coordinates] },
+    };
+    if (typeof window.turf?.area !== 'function') {
+        showToast('Unable to calculate shape area. Turf.js is not available.', true);
+        return;
+    }
+    const totalAreaSquareMeters = window.turf.area(polygonFeature);
+    polygonFeature.properties = {
+        name: shapeName,
+        number_of_points: state.points.length,
+        total_area_square_meters: Number(totalAreaSquareMeters.toFixed(2)),
+        total_area_square_kilometers: Number((totalAreaSquareMeters / 1000000).toFixed(6)),
+    };
+    const geoJsonData = { type: 'FeatureCollection', features: [polygonFeature] };
     const uniqueKey = Math.random().toString(36).substr(2, 9);
     const style = { type: 'single', fillColor: '#60a5fa', fillOpacity: 0.25, color: '#2563eb', opacity: 1, pointShape: 'circle', pointSize: 8 };
     const mapLayer = createCustomGeoJSONLayer(geoJsonData, style, `pane-${uniqueKey}`).addTo(map);
-    AppState.activeLayers = [{ uniqueKey, id: `drawn_shape_${Date.now()}`, displayName: `Drawn shape (${state.points.length} points)`, mapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData, customStyle: style, isVisible: true, parentId: null, isFolder: false }, ...AppState.activeLayers];
+    AppState.activeLayers = [{ uniqueKey, id: `drawn_shape_${Date.now()}`, displayName: shapeName, mapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData, customStyle: style, isVisible: true, parentId: null, isFolder: false }, ...AppState.activeLayers];
     updateMapLayerOrder(); renderAddedLayers(); switchTab('added');
     if (typeof autoSaveWorkspace === 'function') autoSaveWorkspace();
     showToast('Saved drawn shape as a polygon layer.');
@@ -5828,7 +5965,19 @@ btnDrawShapeClose?.addEventListener('click', exitShapeDrawing);
 btnDrawShapeClear?.addEventListener('click', clearShapeDrawing);
 btnDrawShapeSave?.addEventListener('click', saveDrawnShape);
 [drawShapePanel, btnDrawShape].forEach(element => { if (element) L.DomEvent.disableClickPropagation(element); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && AppState.drawShape.active) exitShapeDrawing(); });
+document.addEventListener('keydown', event => {
+    if (!AppState.drawShape.active) return;
+    if (event.key === 'Escape') {
+        exitShapeDrawing();
+        return;
+    }
+    if ((event.key === 'Backspace' || event.key === 'Delete') && !AppState.drawShape.completed) {
+        event.preventDefault();
+        const points = AppState.drawShape.points.slice(0, -1);
+        AppState.drawShape = { ...AppState.drawShape, points };
+        renderShapePreview();
+    }
+});
 
 // ==========================================
 // 19. OSRM SNAP-TO-ROAD ROUTE DRAWING
@@ -5906,6 +6055,38 @@ const updateRoutePanel = () => {
 const setRoadRouteState = (updates) => {
     AppState.roadRoute = { ...AppState.roadRoute, ...updates };
     updateRoutePanel();
+};
+
+const savedLayerPointerEvents = new Map();
+const savedLayerInteractiveState = new Map();
+
+const setSavedLayerInteractionForDrawing = enabled => {
+    AppState.activeLayers.forEach(layer => {
+        if (layer.isFolder) return;
+        const pane = map.getPane(`pane-${layer.uniqueKey}`);
+        if (pane) pane.style.pointerEvents = enabled ? '' : 'none';
+        layer.mapLayer?.eachLayer?.(featureLayer => {
+            const element = featureLayer.getElement?.();
+            if (!element) return;
+            if (enabled) {
+                if (savedLayerInteractiveState.has(featureLayer)) {
+                    featureLayer.options.interactive = savedLayerInteractiveState.get(featureLayer);
+                    savedLayerInteractiveState.delete(featureLayer);
+                }
+                if (savedLayerPointerEvents.has(element)) {
+                    element.style.pointerEvents = savedLayerPointerEvents.get(element);
+                    savedLayerPointerEvents.delete(element);
+                }
+            } else if (!savedLayerPointerEvents.has(element)) {
+                savedLayerInteractiveState.set(featureLayer, featureLayer.options.interactive);
+                featureLayer.options.interactive = false;
+                savedLayerPointerEvents.set(element, element.style.pointerEvents);
+                element.style.pointerEvents = 'none';
+            }
+        });
+    });
+    if (enabled) savedLayerPointerEvents.clear();
+    if (enabled) savedLayerInteractiveState.clear();
 };
 
 const renderRoutePreview = () => {
@@ -6001,6 +6182,8 @@ const clearRouteDrawing = () => {
 const exitRouteDrawing = () => {
     clearRouteDrawing();
     setRoadRouteState({ active: false });
+    setSavedLayerInteractionForDrawing(true);
+    updateSoloView();
     setMapHoverContext('Map');
     roadRoutePanel?.classList.add('hidden');
     btnRoadRoute?.classList.remove('bg-blue-600', 'text-white', 'border-blue-700');
@@ -6086,14 +6269,17 @@ const enterRouteDrawing = async () => {
     }
     if (AppState.featureSelection.active) exitFeatureSelectionMode();
     if (AppState.magneticLasso.active) exitMagneticLassoMode();
+    if (AppState.drawShape.active) exitShapeDrawing();
     if (AppState.drawingMode) {
         AppState.drawingMode = null;
         AppState.tempShape = null;
         map.dragging.enable();
         drawLayerGroup.clearLayers();
     }
+    getEl('map-context-menu')?.classList.add('hidden');
     clearRouteDrawing();
     setRoadRouteState({ active: true });
+    setSavedLayerInteractionForDrawing(false);
     setMapHoverContext('Move over a road to snap a route point');
     roadRoutePanel?.classList.remove('hidden');
     btnRoadRoute?.classList.add('bg-blue-600', 'text-white', 'border-blue-700');

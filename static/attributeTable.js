@@ -3,7 +3,7 @@ import { map } from './mapEngine.js';
 import { attachTableResizer as attachTableResizerDom } from './tablePanel.js';
 
 export function createAttributeTableController(deps) {
-    const { container: attributeTableContainer, renderAddedLayers, ensureGeoJSON, showToast, downloadBlob, updateStacking, closeTablePanel } = deps;
+    const { container: attributeTableContainer, renderAddedLayers, ensureGeoJSON, showToast, downloadBlob, updateStacking, closeTablePanel, createCustomGeoJSONLayer, autoSaveWorkspace } = deps;
     // 6. ATTRIBUTE TABLE RENDERING
     // ==========================================
     const attachTableResizer = () => {
@@ -82,6 +82,104 @@ export function createAttributeTableController(deps) {
     };
     
     let currentTableLayerName = "";
+
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[character]));
+
+    const displayCellValue = value => {
+        if (value === null || value === undefined) return '';
+        if (typeof value === 'object') {
+            try { return JSON.stringify(value); } catch (error) { return String(value); }
+        }
+        return String(value);
+    };
+
+    const parseEditedValue = (text, originalValue) => {
+        const value = text.trim();
+        if (value === '' && (originalValue === null || originalValue === undefined || typeof originalValue !== 'string')) return null;
+        if (typeof originalValue === 'number') {
+            const numericValue = Number(value);
+            if (!Number.isFinite(numericValue)) throw new Error('Enter a valid number.');
+            return numericValue;
+        }
+        if (typeof originalValue === 'boolean') {
+            if (value.toLowerCase() === 'true') return true;
+            if (value.toLowerCase() === 'false') return false;
+            throw new Error('Enter true or false.');
+        }
+        if (originalValue && typeof originalValue === 'object') {
+            try { return JSON.parse(value); } catch (error) { throw new Error('Enter valid JSON.'); }
+        }
+        return text;
+    };
+
+    const rebuildLocalLayer = layer => {
+        if (!layer?.geoJsonData || !createCustomGeoJSONLayer) return;
+        const oldMapLayer = layer.mapLayer;
+        if (oldMapLayer) map.removeLayer(oldMapLayer);
+        const paneName = 'pane-' + layer.uniqueKey;
+        const newMapLayer = createCustomGeoJSONLayer(layer.geoJsonData, layer.customStyle, paneName);
+        if (layer.isVisible) newMapLayer.addTo(map);
+        layer.mapLayer = newMapLayer;
+        if (layer._onMapFeatureClick) newMapLayer.on('click', layer._onMapFeatureClick);
+    };
+
+    const startCellEdit = (cell, layer, layerName) => {
+        if (!layer?.isLocalGeoJSON || !layer.geoJsonData) {
+            showToast('Only local GeoJSON attributes can be edited.', true);
+            return;
+        }
+
+        const rowId = Number(cell.dataset.id);
+        const column = cell.dataset.col;
+        const feature = AppState.currentTableFeatures.find(item => item.__row_id === rowId);
+        if (!feature || !column) return;
+        if (!feature.properties) feature.properties = {};
+
+        const originalValue = feature.properties[column];
+        const originalText = displayCellValue(originalValue);
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = originalText;
+        input.className = 'w-full min-w-24 rounded border border-blue-400 bg-white dark:bg-gray-700 px-1 py-0.5 text-xs text-gray-900 dark:text-white outline-none ring-1 ring-blue-300';
+        input.setAttribute('aria-label', `Edit ${column}`);
+        cell.textContent = '';
+        cell.appendChild(input);
+        cell.classList.add('p-0.5');
+        input.focus();
+        input.select();
+
+        let finished = false;
+        const finish = save => {
+            if (finished) return;
+            finished = true;
+            if (!save) {
+                cell.textContent = originalText;
+                cell.classList.remove('p-0.5');
+                return;
+            }
+            try {
+                feature.properties[column] = parseEditedValue(input.value, originalValue);
+                rebuildLocalLayer(layer);
+                autoSaveWorkspace?.();
+                renderTableContent(layerName);
+                showToast(`Updated ${column}.`);
+            } catch (error) {
+                finished = false;
+                showToast(error.message, true);
+                input.focus();
+            }
+        };
+
+        input.addEventListener('keydown', event => {
+            if (event.key === 'Enter') { event.preventDefault(); finish(true); }
+            if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+        });
+        input.addEventListener('blur', () => finish(true));
+        input.addEventListener('click', event => event.stopPropagation());
+        input.addEventListener('dblclick', event => event.stopPropagation());
+    };
     
     const highlightTableRow = (rowId) => {
         if (!attributeTableContainer || attributeTableContainer.classList.contains('hidden')) return;
@@ -149,7 +247,7 @@ export function createAttributeTableController(deps) {
         let tableHtml = `
             <div class="table-resizer absolute top-0 left-0 w-full h-1.5 bg-gray-200 hover:bg-blue-400 dark:bg-gray-700 dark:hover:bg-blue-500 cursor-row-resize z-50 transition-colors" title="Drag to resize"></div>
             <div class="flex justify-between items-center mb-1 shrink-0 border-b border-gray-200 dark:border-gray-700 pb-1 pt-1.5">
-                <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${layerName} Data</div>
+                <div class="text-xs font-bold text-gray-700 dark:text-gray-200">${escapeHtml(layerName)} Data${layer?.isLocalGeoJSON ? ' <span class="ml-2 text-[9px] font-normal italic text-gray-400 dark:text-gray-500">Double-click a cell to edit</span>' : ''}</div>
                 
                 <div class="flex items-center space-x-2 pr-1">
                     <button id="btn-download-csv" class="bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 text-[10px] px-2 py-0.5 rounded font-medium border border-gray-300 dark:border-gray-600 transition-colors shadow-xs flex items-center" title="Download table as CSV">
@@ -174,7 +272,7 @@ export function createAttributeTableController(deps) {
             }
             tableHtml += `
                 <th class="px-2 py-1 border border-gray-200 dark:border-gray-600 font-semibold text-gray-700 dark:text-gray-200 whitespace-nowrap cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors select-none tbl-header relative" data-col="${h}">
-                    <span class="mr-2 pointer-events-none">${h} ${sortIcon}</span>
+                    <span class="mr-2 pointer-events-none">${escapeHtml(h)} ${sortIcon}</span>
                     <div class="col-resizer absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-blue-400 dark:hover:bg-blue-500 z-10 transition-colors" title="Drag to resize"></div>
                 </th>`; 
         });
@@ -187,8 +285,9 @@ export function createAttributeTableController(deps) {
             tableHtml += `<tr class="tbl-row cursor-pointer transition-colors ${rowClass}" data-id="${f.__row_id}">`;
             AppState.currentTableHeaders.forEach(h => {
                 const val = f.properties ? f.properties[h] : '';
-                const displayVal = (val !== null && val !== undefined) ? val : '';
-                tableHtml += `<td class="px-2 py-0.5 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis" title="${displayVal}">${displayVal}</td>`;
+                const displayVal = displayCellValue(val);
+                const editable = layer?.isLocalGeoJSON && Boolean(layer.geoJsonData);
+                tableHtml += `<td class="px-2 py-0.5 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-300 whitespace-nowrap overflow-hidden text-ellipsis ${editable ? 'cursor-text' : ''}" data-id="${f.__row_id}" data-col="${escapeHtml(h)}" title="${escapeHtml(displayVal)}"${editable ? ' data-editable="true"' : ''}>${escapeHtml(displayVal)}</td>`;
             });
             tableHtml += '</tr>';
         });
@@ -305,6 +404,14 @@ export function createAttributeTableController(deps) {
             tr.addEventListener('click', (e) => {
                 const rowId = parseInt(e.currentTarget.getAttribute('data-id'), 10);
                 highlightTableRow(rowId);
+            });
+        });
+
+        attributeTableContainer.querySelectorAll('td[data-editable="true"]').forEach(cell => {
+            cell.addEventListener('dblclick', event => {
+                event.preventDefault();
+                event.stopPropagation();
+                startCellEdit(cell, layer, layerName);
             });
         });
     };

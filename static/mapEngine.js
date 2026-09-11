@@ -7,9 +7,12 @@ import { AppState } from './state.js';
 // ==========================================
 export const map = L.map('map', {
     preferCanvas: true,
+    zoomControl: false,
     // The binding recommends avoiding zoom 0 synchronization edge cases.
     minZoom: 1
 }).setView([0, 0], 2);
+const zoomControl = L.control.zoom({ position: 'topright' }).addTo(map);
+zoomControl.getContainer()?.classList.add('gis-map-zoom-control');
 
 const openFreeMapStyle = 'https://tiles.openfreemap.org/styles/liberty';
 const maplibreLayerFactory = window.maplibreGL || window.L?.maplibreGL;

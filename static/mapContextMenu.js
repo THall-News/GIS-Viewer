@@ -149,6 +149,8 @@ export const createMapContextMenuController = ({
     showToast,
     onOsmResults,
     onOsmElementSelected,
+    shouldSuppressContextMenu,
+    onSuppressedContextMenu,
     fetchImpl = window.fetch.bind(window)
 } = {}) => {
     const menu = document.getElementById('map-context-menu');
@@ -170,7 +172,7 @@ export const createMapContextMenuController = ({
         if (!osmButton) return;
         osmButton.disabled = false;
         osmButton.classList.remove('opacity-60', 'cursor-wait');
-        osmButton.innerHTML = '<i class="fa-solid fa-magnifying-glass-location mr-1"></i>Query OSM here';
+        osmButton.textContent = 'OSM Query';
     };
 
     const close = () => {
@@ -266,6 +268,13 @@ export const createMapContextMenuController = ({
     };
 
     const open = event => {
+        if (shouldSuppressContextMenu?.(event)) {
+            event?.originalEvent?.preventDefault?.();
+            event?.originalEvent?.stopPropagation?.();
+            close();
+            onSuppressedContextMenu?.(event);
+            return;
+        }
         event?.originalEvent?.preventDefault?.();
         event?.originalEvent?.stopPropagation?.();
         const latlng = normalizeWgs84Point(event?.latlng);
@@ -329,6 +338,13 @@ export const createMapContextMenuController = ({
     const onKeydown = event => {
         if (event.key === 'Escape' && !menu.classList.contains('hidden')) close();
     };
+    const onNativeContextMenu = event => {
+        if (!shouldSuppressContextMenu?.({ originalEvent: event })) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        close();
+        onSuppressedContextMenu?.({ originalEvent: event, latlng: map.mouseEventToLatLng(event) });
+    };
     const stopMenuEvent = event => event.stopPropagation();
 
     menu.addEventListener('contextmenu', event => {
@@ -349,6 +365,7 @@ export const createMapContextMenuController = ({
     });
     osmButton?.addEventListener('click', queryOsm);
     document.addEventListener('keydown', onKeydown);
+    map.getContainer()?.addEventListener('contextmenu', onNativeContextMenu, true);
     map.on('contextmenu', open);
     map.on('click', close);
     map.on('movestart zoomstart', close);
@@ -356,6 +373,7 @@ export const createMapContextMenuController = ({
     return { open, close, destroy: () => {
         close();
         document.removeEventListener('keydown', onKeydown);
+        map.getContainer()?.removeEventListener('contextmenu', onNativeContextMenu, true);
         map.off('contextmenu', open);
         map.off('click', close);
         map.off('movestart zoomstart', close);

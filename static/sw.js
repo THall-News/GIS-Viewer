@@ -1,6 +1,6 @@
 // Bump this whenever the application shell changes.  A cache-first service
 // worker must not continue serving an older geometry/rendering implementation.
-const CACHE_NAME = 'gis-viewer-v71';
+const CACHE_NAME = 'gis-viewer-v72';
 
 // Only pre-cache local files to avoid strict CORS installation crashes
 const ASSETS_TO_CACHE = [

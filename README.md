@@ -61,8 +61,8 @@ JSON catalog or query providers during an assistant request.
 Choose `Upload File` in `Data Sources Config` and select an axis-aligned PNG
 together with its matching `.pgw` world file. The importer expects the PGW
 coordinates to be EPSG:3857 metres, validates the Web Mercator extent, converts
-the resulting bounds to WGS84 for Leaflet, and keeps the image temporary in the
-current browser session. Rotated PGW files are rejected because Leaflet's
+the resulting bounds to WGS84 for Leaflet, and stores the image as a regular
+local raster layer in the workspace. Rotated PGW files are rejected because Leaflet's
 `ImageOverlay` cannot represent image rotation.
 
 ## Safety and deployment

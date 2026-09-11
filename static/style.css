@@ -55,6 +55,18 @@
     z-index: 4000;
 }
 
+.gis-map-search-control {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 5000;
+    margin: 0 !important;
+}
+
+.gis-map-zoom-control {
+    margin-top: 42px !important;
+}
+
 #app-console { bottom: 32px; }
 
 /* Keep both the Leaflet and MapLibre attribution controls above the fixed
@@ -71,11 +83,20 @@
 /* The map point inspector is a temporary diagnostic overlay. Keep its
    internal scroll independent from Leaflet's map gestures. */
 #map-context-menu {
-  width: 14rem;
+  width: fit-content;
+  max-width: calc(100vw - 1rem);
   overscroll-behavior: contain;
 }
 #map-context-menu.map-context-menu-expanded {
-  width: min(30rem, calc(100vw - 1rem));
+  width: fit-content;
+  max-width: calc(100vw - 1rem);
+}
+
+#map-context-coordinates {
+  white-space: nowrap;
+  overflow: visible;
+  overflow-wrap: normal;
+  text-overflow: clip;
 }
 
 /* Custom Scrollbars - Dark */
@@ -184,4 +205,8 @@
 
 .gis-shape-vertex:active {
     cursor: grabbing;
+}
+
+.gis-shape-cursor-vertex {
+    cursor: crosshair;
 }
