@@ -111,7 +111,9 @@ export const renderAddedLayers = () => {
                 const isCropActive = (AppState.activeCropLayerKey === node.uniqueKey);
                 const isRasterImage = Boolean(node.isRasterImage);
                 const isGeometryEditActive = Boolean(AppState.geometryEdit?.active && AppState.geometryEdit.layerKey === node.uniqueKey);
-                const canEditGeometry = !isRasterImage && Boolean(node.geoJsonData?.features?.length);
+                const canEditGeometry = !isRasterImage && Boolean(node.geoJsonData?.features?.some(feature => (
+                    ['Polygon', 'MultiPolygon', 'LineString'].includes(feature?.geometry?.type)
+                )));
                 const rasterOpacity = Math.round(Math.max(0, Math.min(1, Number(node.rasterOpacity ?? 0.8))) * 100);
                 
                 let bgClass = 'bg-white border-gray-100 shadow-xs dark:bg-gray-800 dark:border-gray-700';

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from flask import Flask
 
 from routes.search import search_bp
-from services.overpass_service import build_element_query, build_point_query, search_overpass_point
+from services.overpass_service import build_element_query, build_point_query, execute_overpass_query, search_overpass_point
 
 
 class OSMPointQueryTests(unittest.TestCase):
@@ -27,7 +27,10 @@ class OSMPointQueryTests(unittest.TestCase):
         self.assertIn('node(around:25,43.4405031,-79.7931299);', query)
         self.assertIn('way(around:25,43.4405031,-79.7931299);', query)
         self.assertIn('relation(around:25,43.4405031,-79.7931299);', query)
-        self.assertTrue(query.endswith('out body geom;'))
+        self.assertIn('is_in(43.4405031,-79.7931299)->.containingAreas;', query)
+        self.assertIn('way(pivot.containingAreas);', query)
+        self.assertIn('relation(pivot.containingAreas);', query)
+        self.assertTrue(query.endswith('out body center;'))
 
     def test_build_point_query_rejects_invalid_coordinates_and_radius(self):
         with self.assertRaises(ValueError):
@@ -51,7 +54,7 @@ class OSMPointQueryTests(unittest.TestCase):
 
         result = search_overpass_point(43.4, -79.8, radius_m=25)
 
-        self.assertEqual([element['type'] for element in result['elements']], ['node', 'way', 'relation'])
+        self.assertEqual([element['type'] for element in result['elements']], ['relation', 'way', 'node'])
         self.assertEqual(result['metadata']['radius_m'], 25.0)
         self.assertEqual(result['metadata']['source'], 'OpenStreetMap')
         execute.assert_called_once()
@@ -68,6 +71,51 @@ class OSMPointQueryTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn('radius_m', response.get_json()['error'])
+
+    @patch('services.overpass_service._LAST_OVERPASS_REQUEST', {})
+    @patch('services.overpass_service._OVERPASS_ENDPOINT_FAILURE_UNTIL', {})
+    @patch('services.overpass_service.GLOBAL_OVERPASS_ENDPOINTS', ['primary', 'backup'])
+    @patch('services.overpass_service.requests.post')
+    def test_execute_overpass_query_immediately_fails_over_rate_limited_server(self, post):
+        rate_limited = MagicMock(status_code=429)
+        successful = MagicMock(status_code=200)
+        post.side_effect = [rate_limited, successful]
+
+        result = execute_overpass_query('out body;', request_timeout=8)
+
+        self.assertIs(result, successful)
+        self.assertEqual([call.args[0] for call in post.call_args_list], ['primary', 'backup'])
+        self.assertEqual(post.call_args_list[0].kwargs['timeout'], 8)
+
+    @patch('services.overpass_service._LAST_OVERPASS_REQUEST', {})
+    @patch('services.overpass_service.GLOBAL_OVERPASS_ENDPOINTS', ['primary', 'backup'])
+    @patch('services.overpass_service.requests.post')
+    def test_execute_overpass_query_tries_cooled_backup_after_available_server_fails(self, post):
+        rate_limited = MagicMock(status_code=429)
+        successful = MagicMock(status_code=200)
+        post.side_effect = [rate_limited, successful]
+
+        with patch('services.overpass_service._OVERPASS_ENDPOINT_FAILURE_UNTIL', {'primary': 10**12}):
+            result = execute_overpass_query('out body;', request_timeout=8)
+
+        self.assertIs(result, successful)
+        self.assertEqual([call.args[0] for call in post.call_args_list], ['backup', 'primary'])
+
+    @patch('services.overpass_service._LAST_OVERPASS_REQUEST', {})
+    @patch('services.overpass_service._OVERPASS_ENDPOINT_FAILURE_UNTIL', {})
+    @patch('services.overpass_service.GLOBAL_OVERPASS_ENDPOINTS', ['primary', 'backup'])
+    @patch('services.overpass_service.requests.post')
+    def test_execute_overpass_query_skips_false_empty_point_response(self, post):
+        empty = MagicMock(status_code=200)
+        empty.json.return_value = {'elements': []}
+        successful = MagicMock(status_code=200)
+        successful.json.return_value = {'elements': [{'type': 'way', 'id': 7}]}
+        post.side_effect = [empty, successful]
+
+        result = execute_overpass_query('point query', request_timeout=8, reject_empty=True)
+
+        self.assertIs(result, successful)
+        self.assertEqual([call.args[0] for call in post.call_args_list], ['primary', 'backup'])
 
     @patch('routes.search.search_overpass_point')
     def test_endpoint_returns_point_results(self, search_point):

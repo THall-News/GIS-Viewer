@@ -319,12 +319,17 @@ export const createGeoJsonPointToLayer = (styleState, paneName, customRenderer) 
 
 export const attachPopupsToFeatures = function(feature, l) {
     if (feature && feature.properties) {
-        let popupContent = '<div class="max-h-48 overflow-y-auto custom-scroll"><table class="text-xs text-left w-full text-gray-800 dark:text-gray-200">';
+        let popupContent = '<div class="max-h-48 overflow-y-auto custom-scroll"><table class="text-xs leading-snug text-left w-full text-gray-800 dark:text-gray-200">';
         for (let k in feature.properties) {
-            popupContent += `<tr class="border-b border-gray-200 dark:border-gray-600"><td class="font-bold pr-2 py-1">${k}</td><td class="py-1">${feature.properties[k]}</td></tr>`;
+            popupContent += `<tr><td class="font-bold pr-2 py-0.5 align-top whitespace-nowrap">${k}</td><td class="py-0.5 break-words">${feature.properties[k]}</td></tr>`;
         }
         popupContent += '</table></div>';
-        l.bindPopup(popupContent);
+        l.bindPopup(popupContent, {
+            className: 'compact-feature-popup',
+            maxWidth: 320,
+            minWidth: 0,
+            autoPanPadding: [8, 8]
+        });
     }
 };
 

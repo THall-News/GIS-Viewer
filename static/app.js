@@ -89,6 +89,7 @@ const tabBtnAdded = getEl('tab-btn-added');
 const tabAvailable = getEl('tab-available');
 const tabAdded = getEl('tab-added');
 const btnAddBulk = getEl('btn-add');
+const availableBulkActions = getEl('available-bulk-actions');
 
 const savedServersSelect = getEl('saved-servers-select');
 const btnSaveServer = getEl('btn-save-server');
@@ -208,19 +209,32 @@ const cropPanelContainer = getEl('crop-panel-container');
 
 const filterType = getEl('filter-type');
 const filterRadius = getEl('filter-radius');
+const filterRadiusControls = getEl('filter-radius-controls');
+const filterRadiusUnit = getEl('filter-radius-unit');
 const btnDraw = getEl('btn-draw');
 const btnApplyFilter = getEl('btn-apply-filter');
 const drawStatus = getEl('draw-status');
+const cropInvertOption = getEl('crop-invert-option');
+const filterInvert = getEl('filter-invert');
 const filterDataContainer = getEl('filter-data-container');
 const filterDataCol = getEl('filter-data-col');
 const filterDataValues = getEl('filter-data-values');
 const filterDataSearch = getEl('filter-data-search');
 const btnClearFilterSearch = getEl('btn-clear-filter-search');
 
-const osmInspectContainer = getEl('osm-inspect-container');
-const osmInspectResults = getEl('osm-inspect-results');
-const btnCloseInspect = getEl('btn-close-inspect');
-const osmInspectStatus = getEl('osm-inspect-status');
+const radiusUnitFactors = {
+    meters: 0.001,
+    kilometers: 1,
+    feet: 0.0003048,
+    miles: 1.609344
+};
+
+const getRadiusKilometers = () => {
+    const rawValue = Number.parseFloat(filterRadius?.value);
+    const value = Number.isFinite(rawValue) ? Math.max(0, rawValue) : 5;
+    return value * (radiusUnitFactors[filterRadiusUnit?.value] || 1);
+};
+
 const headlessPrompt = getEl('headless-prompt');
 const headlessMode = getEl('headless-mode');
 const headlessSourceCatalog = getEl('headless-source-catalog');
@@ -937,7 +951,7 @@ function assistantResultLayer(result, provider) {
     return null;
 }
 
-function renderGuidedAssistantState(response) {
+function renderGuidedAssistantState(response, { includeCatalogResults = true } = {}) {
     const original = response?.originalRequest || headlessState.assistantOriginalRequest || '';
     headlessState.assistantOriginalRequest = original;
     headlessState.assistantClarification = response?.clarification || null;
@@ -988,7 +1002,7 @@ function renderGuidedAssistantState(response) {
         headlessProgress.innerHTML = providers.map(item => `<div class="text-[10px] bg-white/80 dark:bg-gray-800/60 border border-blue-100 dark:border-blue-800 rounded px-2 py-1"><span class="font-semibold text-blue-700 dark:text-blue-300">${escapeHtml(item.provider)}</span><span class="text-gray-600 dark:text-gray-400 ml-1">${escapeHtml(item.action || 'search')}</span></div>`).join('');
         headlessProgress.classList.toggle('hidden', !providers.length);
     }
-    renderGuidedAssistantResults(response);
+    if (includeCatalogResults) renderGuidedAssistantResults(response);
 }
 
 async function runGuidedAssistantTurn() {
@@ -1052,7 +1066,10 @@ async function restoreGuidedAssistantSession() {
             headlessState.activeSessionId = null;
             return;
         }
-        renderGuidedAssistantState(response);
+        // Assistant results are session UI, not persistent CATALOG entries.
+        // Restore the conversation/status on reload without re-inserting an
+        // old result into the transient catalog list.
+        renderGuidedAssistantState(response, { includeCatalogResults: false });
         if (headlessStatus) headlessStatus.textContent = `${headlessStatus.textContent} Restored from the previous browser session.`;
     } catch (error) {
         console.warn('Guided assistant session could not be restored:', error);
@@ -1719,14 +1736,17 @@ const closeSidebarPanels = () => {
     cropPanelContainer?.classList.add('hidden'); cropPanelContainer?.classList.remove('flex');
     
     if (filterType) filterType.value = 'box';
-    filterRadius?.classList.add('hidden');
+    filterRadiusControls?.classList.add('hidden');
+    filterRadiusControls?.classList.remove('flex');
     filterDataContainer?.classList.add('hidden');
     btnDraw?.classList.remove('hidden');
 
     drawLayerGroup.clearLayers();
     AppState.filterGeometryData = null;
     AppState.drawingMode = null;
+    setSavedLayerInteractionForDrawing(true);
     if (btnApplyFilter) btnApplyFilter.disabled = true;
+    if (filterInvert) filterInvert.checked = false;
     drawStatus?.classList.add('hidden');
     map.getContainer().style.cursor = '';
     
@@ -1743,6 +1763,18 @@ const closeAllPanels = () => {
 };
 window.closeAllPanels = closeAllPanels;
 
+const updateAvailableBulkActions = () => {
+  const serverType = String(AppState.currentServerType || getEl('server-type')?.value || '').toUpperCase();
+  const isCatalogServer = ['ARCGIS', 'ESRI', 'WFS', 'CKAN'].includes(serverType);
+  const hasImportableLayers = Array.isArray(AppState.fetchedLayers)
+    && AppState.fetchedLayers.some(layer => layer && !layer.isGroup);
+  const shouldShow = isCatalogServer && hasImportableLayers && !AppState.osmPointResults;
+
+  availableBulkActions?.classList.toggle('hidden', !shouldShow);
+  btnAddBulk?.classList.toggle('hidden', !shouldShow);
+  if (btnAddBulk) btnAddBulk.disabled = !shouldShow;
+};
+
 const switchTab = (tabName) => {
   const isAvailable = (tabName === 'available');
 
@@ -1756,7 +1788,7 @@ const switchTab = (tabName) => {
   if (isAvailable) {
     tabAvailable?.classList.replace('hidden', 'flex');
     tabAdded?.classList.replace('flex', 'hidden');
-    btnAddBulk?.classList.remove('hidden');
+    updateAvailableBulkActions();
     
     getEl('context-panel-wrapper')?.classList.add('hidden');
     getEl('context-panel-wrapper')?.classList.remove('flex');
@@ -2131,103 +2163,6 @@ const filterSavedServerOptions = serverType => {
 };
 
 
-// ==========================================
-// 4. OSM INSPECT AREA TOOL
-// ==========================================
-const executeOsmInspect = async (bounds) => {
-    const container = getEl('osm-inspect-container');
-    const status = getEl('osm-inspect-status');
-    const results = getEl('osm-inspect-results');
-
-    if (!status || !results) return;
-    container?.classList.remove('hidden'); container?.classList.add('flex');
-    status.textContent = 'Scanning area...'; status.classList.remove('hidden');
-    results.innerHTML = '';
-    
-    try {
-        const bbox = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
-        const query = `[out:json][timeout:25];\n(\n  node(${bbox});\n  way(${bbox});\n  relation(${bbox});\n);\nout tags;`;
-        
-        const endpoints = [
-            "https://overpass-api.de/api/interpreter",
-            "https://lz4.overpass-api.de/api/interpreter",
-            "https://z.overpass-api.de/api/interpreter",
-            "https://overpass.kumi.systems/api/interpreter",
-            "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-            "https://overpass.osm.ch/api/interpreter"
-        ];
-
-        let data = null;
-        let fetchSuccess = false;
-
-        for (const url of endpoints) {
-            try {
-                const res = await fetch(url, { 
-                    method: 'POST', 
-                    body: "data=" + encodeURIComponent(query), 
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' } 
-                });
-                
-                if (res.ok) {
-                    data = await res.json();
-                    fetchSuccess = true;
-                    break;
-                }
-            } catch (e) {
-                console.warn(`Inspect tool skipped failing server: ${url}`);
-            }
-        }
-
-        if (!fetchSuccess || !data) throw new Error("All Overpass servers failed or area too large.");
-        
-        const tagCounts = {};
-        const ignoreList = ['source', 'created_by', 'name', 'note', 'wikipedia', 'wikidata', 'tiger:', 'ele', 'gnis:', 'import_', 'addr:', 'phone', 'website', 'email', 'fax', 'ref'];
-        
-        if (data.elements) {
-            data.elements.forEach(el => {
-                if (!el.tags) return;
-                for (let k in el.tags) {
-                    if (ignoreList.some(ig => k.startsWith(ig))) continue;
-                    const pair = `${k}=${el.tags[k]}`;
-                    tagCounts[pair] = (tagCounts[pair] || 0) + 1;
-                }
-            });
-        }
-        
-        const sortedTags = Object.entries(tagCounts).sort((a,b) => b[1] - a[1]).slice(0, 40); 
-        
-        if (sortedTags.length === 0) { status.textContent = 'No generic tags found in this area.'; return; }
-        
-        status.classList.add('hidden');
-        let html = '';
-        sortedTags.forEach(([pair, count]) => {
-            const [k, v] = pair.split('=');
-            html += `<div class="inspect-tag-item flex justify-between items-center p-1 hover:bg-blue-200 dark:hover:bg-blue-900 cursor-pointer rounded transition-colors" data-k="${k}" data-v="${v}">
-                 <span class="text-blue-900 dark:text-blue-200 font-mono text-[10px] truncate pr-2">${k}=${v}</span>
-                 <span class="text-gray-600 dark:text-gray-300 text-[9px] bg-white dark:bg-gray-800 px-1.5 py-0.5 rounded-full font-bold shadow-xs">${count}</span>
-            </div>`;
-        });
-        results.innerHTML = html;
-        
-        document.querySelectorAll('.inspect-tag-item').forEach(item => {
-            item.addEventListener('click', (e) => {
-                const el = e.currentTarget;
-                const targetKey = el.getAttribute('data-k');
-                const targetVal = el.getAttribute('data-v');
-                
-                const firstRow = document.querySelector('.osm-tag-row');
-                if (firstRow) {
-                    const keyInp = firstRow.querySelector('.osm-key');
-                    const valInp = firstRow.querySelector('.osm-val');
-                    if (keyInp) keyInp.value = targetKey;
-                    if (valInp) valInp.value = targetVal;
-                }
-                showToast(`Copied ${targetKey}=${targetVal} to Query Builder!`);
-            });
-        });
-    } catch (err) { status.textContent = 'Scan failed. Area might be too large or servers are currently down.'; }
-};
-
 function createOsmTagRow() {
     const row = document.createElement('div');
     row.className = 'osm-tag-row mt-1';
@@ -2240,45 +2175,17 @@ function createOsmTagRow() {
     return row;
 }
 
-const FOLLOWUP_MAX_AREA_KM2 = 5000;
-
-const bboxAreaKm2 = bbox => {
-    if (!bbox) return 0;
-    const midLat = (Number(bbox.south) + Number(bbox.north)) / 2;
-    const width = Math.abs(Number(bbox.east) - Number(bbox.west)) * 111 * Math.max(Math.cos(midLat * Math.PI / 180), 0.01);
-    const height = Math.abs(Number(bbox.north) - Number(bbox.south)) * 111;
-    return width * height;
-};
-
-const expandedOsmSearchBbox = point => {
+const activeOsmSearchBbox = () => {
     const bounds = map.getBounds();
-    const south = Number(bounds.getSouth());
-    const west = Number(bounds.getWest());
-    const north = Number(bounds.getNorth());
-    const east = Number(bounds.getEast());
-    const latitude = Number(point?.lat);
-    const longitude = Number(point?.lng);
-    const latSpan = Math.max(north - south, 0.0001);
-    const lonSpan = Math.max(east - west, 0.0001);
-    let bbox = {
-        south: Math.max(-90, Math.min(south - latSpan, latitude)),
-        west: Math.max(-180, Math.min(west - lonSpan, longitude)),
-        north: Math.min(90, Math.max(north + latSpan, latitude)),
-        east: Math.min(180, Math.max(east + lonSpan, longitude))
+    return {
+        south: Number(bounds.getSouth()),
+        west: Number(bounds.getWest()),
+        north: Number(bounds.getNorth()),
+        east: Number(bounds.getEast())
     };
-    if (bboxAreaKm2(bbox) > FOLLOWUP_MAX_AREA_KM2) {
-        const fullSideKm = Math.sqrt(FOLLOWUP_MAX_AREA_KM2);
-        const halfLat = (fullSideKm / 111) / 2;
-        const halfLon = halfLat / Math.max(Math.cos(latitude * Math.PI / 180), 0.01);
-        bbox = {
-            south: Math.max(-90, latitude - halfLat),
-            west: Math.max(-180, longitude - halfLon),
-            north: Math.min(90, latitude + halfLat),
-            east: Math.min(180, longitude + halfLon)
-        };
-    }
-    return bbox;
 };
+
+const osmElementKey = element => `${String(element?.type || '')}:${String(element?.id ?? '')}`;
 
 const expandDataSourcesForOsm = () => {
     getEl('content-database')?.classList.remove('hidden');
@@ -2294,7 +2201,10 @@ const expandDataSourcesForOsm = () => {
 
 const populateOsmBuilderFromElement = (element, point, { autoFetch = false } = {}) => {
     const identity = osmIdentityTags(element);
-    const scopeBbox = expandedOsmSearchBbox(point);
+    // Follow-up searches stay inside the map viewport. The old implementation
+    // expanded the viewport before sending the request, which could turn an
+    // otherwise valid map view into the 5000 km² rejection.
+    const scopeBbox = activeOsmSearchBbox();
     const tagsContainer = getEl('osm-tags-container');
     if (tagsContainer) {
         tagsContainer.querySelectorAll('.osm-tag-row').forEach(row => row.remove());
@@ -2324,7 +2234,7 @@ const populateOsmBuilderFromElement = (element, point, { autoFetch = false } = {
         identityValue: identity.identityValue,
         mode: identity.mode,
         scopeBbox,
-        maxAreaKm2: FOLLOWUP_MAX_AREA_KM2
+        maxAreaKm2: null
     };
     expandDataSourcesForOsm();
     const label = element?.tags?.name || element?.tags?.ref || `${element?.type || 'OSM element'} ${element?.id ?? ''}`;
@@ -2340,80 +2250,52 @@ const isAdministrativeOsmElement = element => (
     && String(element?.tags?.boundary || '').toLowerCase() === 'administrative'
 );
 
-const handleOsmElementSelection = (element, point) => {
-    const autoFetch = isAdministrativeOsmElement(element);
+const handleOsmElementSelection = (element, point, { fetchImmediately = false, addToMap = false } = {}) => {
+    // Selecting a result and fetching it are separate actions. In particular,
+    // administrative relations must not auto-fetch when their row is opened;
+    // only the row's explicit Fetch button may start the request.
+    const autoFetch = fetchImmediately;
+    if (AppState.osmPointResults) {
+        AppState.osmPointSelection = {
+            key: osmElementKey(element),
+            status: autoFetch ? 'fetching' : 'selected'
+        };
+        renderAvailableLayers();
+    }
     populateOsmBuilderFromElement(element, point, { autoFetch });
     if (autoFetch) {
         // Let the builder finish expanding and updating the server type before
         // starting the same fetch that the button would trigger.
-        window.setTimeout(() => handleFetchLayers(), 0);
-    }
-};
-
-const renderOsmPointInspectResults = (data, point) => {
-    const elements = taggedOsmElements(data?.elements);
-    if (!osmInspectContainer || !osmInspectStatus || !osmInspectResults) return;
-    osmInspectContainer.classList.remove('hidden');
-    osmInspectContainer.classList.add('flex');
-    osmInspectStatus.classList.remove('hidden');
-    osmInspectStatus.textContent = elements.length
-        ? `${elements.length} OSM element${elements.length === 1 ? '' : 's'} within ${data?.metadata?.radius_m || 25} m of ${Number(point?.lat).toFixed(6)}, ${Number(point?.lng).toFixed(6)}`
-        : 'No OSM elements were found near this point.';
-    osmInspectResults.innerHTML = '';
-    const adminAreas = Array.isArray(data?.administrative_context) ? data.administrative_context : [];
-    const adminSummary = document.createElement('div');
-    adminSummary.className = 'mb-1 rounded border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/40 p-1 text-[10px] text-blue-900 dark:text-blue-200';
-    adminSummary.innerHTML = '<div class="font-semibold">Containing administrative areas</div>';
-    const adminList = document.createElement('div');
-    adminList.className = 'mt-0.5 space-y-0.5';
-    if (adminAreas.length) {
-        adminAreas.forEach(area => {
-            const row = document.createElement('button');
-            row.type = 'button';
-            row.className = 'w-full rounded px-0.5 text-left hover:bg-blue-100 dark:hover:bg-blue-900/40';
-            row.setAttribute('aria-label', `Prepare a whole-feature search for ${area?.name || 'administrative area'} admin level ${area?.admin_level || ''}`);
-            row.textContent = `${area?.name || 'Unnamed administrative area'} — admin_level ${area?.admin_level || '—'}`;
-            row.addEventListener('click', () => handleOsmElementSelection(administrativeAreaToOsmElement(area), point));
-            adminList.appendChild(row);
-        });
-    } else {
-        adminList.textContent = 'No containing administrative boundaries found.';
-    }
-    adminSummary.appendChild(adminList);
-    osmInspectResults.appendChild(adminSummary);
-    elements.forEach(element => {
-        const tags = element.tags || {};
-        const tagText = Object.entries(tags).slice(0, 8)
-            .map(([key, value]) => `${escapeHtml(key)}=${escapeHtml(value)}`)
-            .join(' · ');
-        const item = document.createElement('button');
-        item.type = 'button';
-        item.className = 'w-full text-left rounded border border-blue-200 dark:border-blue-800 bg-white/60 dark:bg-gray-900/40 hover:bg-blue-50 dark:hover:bg-blue-900/30 p-1 text-[10px] transition-colors';
-        item.setAttribute('aria-label', `Prepare a whole-feature search for ${tags.name || tags.ref || `${element.type} ${element.id}`}`);
-        item.innerHTML = `
-            <div class="flex justify-between gap-2">
-                <span class="font-semibold text-blue-900 dark:text-blue-200 truncate">${escapeHtml(tags.name || tags.ref || `${element.type} ${element.id}`)}</span>
-                <span class="shrink-0 text-gray-500 dark:text-gray-400">${escapeHtml(element.type)} ${escapeHtml(element.id)}</span>
-            </div>
-            <div class="mt-0.5 break-words text-gray-600 dark:text-gray-300">${tagText || 'No tags'}</div>
-        `;
-        item.addEventListener('click', () => populateOsmBuilderFromElement(element, point));
-        osmInspectResults.appendChild(item);
-    });
-    if (Array.isArray(data?.warnings) && data.warnings.length) {
-        const warning = document.createElement('div');
-        warning.className = 'text-[10px] text-amber-700 dark:text-amber-300';
-        warning.textContent = data.warnings.join(' ');
-        osmInspectResults.appendChild(warning);
+        window.setTimeout(() => handleFetchLayers({ addFetchedLayerToMap: addToMap }), 0);
     }
 };
 
 createMapContextMenuController({
     map,
     showToast,
-    onOsmResults: renderOsmPointInspectResults,
+    onOsmQueryStart: () => {
+        // A new point query represents a new CATALOG search. Remove the
+        // previous fetched result set as well as the temporary point cards so
+        // stale OSM layers cannot remain beside the new response.
+        AppState.fetchedLayers = [];
+        AppState.lastFetchedOsmGeoJson = null;
+        AppState.lastFetchedOsmLayerName = '';
+        AppState.osmFeatureFollowup = null;
+        AppState.osmPointResults = null;
+        AppState.osmPointSelection = null;
+        const osmTools = getEl('osm-available-tools');
+        osmTools?.classList.add('hidden');
+        osmTools?.classList.remove('flex');
+        renderAvailableLayers();
+    },
+    onOsmResults: (data, point) => {
+        AppState.osmPointResults = { ...data, point };
+        AppState.osmPointSelection = null;
+        renderAvailableLayers();
+        switchTab('available');
+    },
     onOsmElementSelected: handleOsmElementSelection,
-    shouldSuppressContextMenu: () => AppState.drawShape.active || AppState.roadRoute.active,
+    shouldSuppressContextMenu: () => AppState.drawShape.active || AppState.roadRoute.active || Boolean(AppState.activeCropLayerKey) || Boolean(AppState.drawingMode),
     onSuppressedContextMenu: () => {
         if (!AppState.drawShape.active || AppState.geometryEdit.active) return;
         const state = AppState.drawShape;
@@ -2843,6 +2725,8 @@ export const handleToggleCrop = (e) => {
         cropPanelContainer.classList.add('flex');
     }
     renderAddedLayers();
+    setSavedLayerInteractionForDrawing(false);
+    updateFilterInvertControl();
     
     if (filterType?.value === 'data') triggerDataFilterSetup(layer);
 };
@@ -2910,6 +2794,17 @@ const checkApplyButton = () => {
      }
   }
 };
+
+const updateFilterInvertControl = () => {
+    const type = filterType?.value;
+    const isBoundingBox = type === 'box';
+    cropInvertOption?.classList.toggle('hidden', !isBoundingBox);
+    if (filterInvert) filterInvert.disabled = !isBoundingBox;
+};
+
+filterInvert?.addEventListener('change', () => {
+    checkApplyButton();
+});
 
 const triggerSearch = () => {
   if (!layerSearch) return;
@@ -3049,18 +2944,157 @@ const triggerFilterDataSearch = () => {
     });
 };
 
+const renderOsmQueryResultsInCatalog = () => {
+  const query = AppState.osmPointResults;
+  if (!availableLayerList || !query) return;
+
+  const elements = taggedOsmElements(query.elements);
+  const areas = Array.isArray(query.administrative_context) ? query.administrative_context : [];
+  const point = query.point || {};
+  const section = document.createElement('section');
+  section.className = 'mb-1 space-y-0.5';
+
+  const heading = document.createElement('div');
+  heading.className = 'flex items-baseline gap-2 px-1 pb-1 border-b border-gray-200 dark:border-gray-700';
+  heading.innerHTML = `
+      <span class="shrink-0 text-[11px] font-bold text-gray-700 dark:text-gray-200">OSM Query Results</span>
+      <span class="min-w-0 flex-1 truncate text-center text-[9px] text-gray-500 dark:text-gray-400">[${Number.isFinite(Number(point.lat)) ? Number(point.lat).toFixed(6) : '—'}, ${Number.isFinite(Number(point.lng)) ? Number(point.lng).toFixed(6) : '—'}]</span>
+      <span data-query-count class="shrink-0 text-[9px] text-gray-500 dark:text-gray-400">0 Results</span>
+  `;
+  section.appendChild(heading);
+
+  const createResultGroup = (label, count) => {
+      const group = document.createElement('div');
+      group.className = 'space-y-1';
+      const groupHeading = document.createElement('div');
+      groupHeading.className = 'flex items-baseline gap-1 px-1 pt-1';
+      groupHeading.innerHTML = `
+          <span class="text-[10px] font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">${escapeHtml(label)} <span class="font-normal normal-case text-gray-500 dark:text-gray-400">(${count})</span></span>
+      `;
+      group.appendChild(groupHeading);
+      return group;
+  };
+
+  const appendCandidate = (parent, element, label, tags) => {
+      const row = document.createElement('div');
+      const selection = AppState.osmPointSelection;
+      const selected = selection?.key === osmElementKey(element);
+      const statusLabel = selected
+          ? (selection.status === 'fetched' ? 'Fetched' : selection.status === 'fetching' ? 'Fetching…' : selection.status === 'error' ? 'Retry' : 'Selected')
+          : '';
+      const isFetching = selected && selection.status === 'fetching';
+      row.className = `available-layer-item w-full text-left rounded border ${selected ? 'border-emerald-300 dark:border-emerald-700 bg-emerald-50/60 dark:bg-emerald-900/20' : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'} hover:bg-blue-50 dark:hover:bg-gray-700 p-1.5 transition-colors`;
+      const tagText = Object.entries(tags || {}).slice(0, 6)
+          .map(([key, value]) => `${key}=${value}`)
+          .join(' · ');
+      row.setAttribute('data-search', `${label} ${element.type} ${element.id} ${tagText}`.toLowerCase());
+      row.setAttribute('data-hover-context', `OSM feature: ${label}`);
+      row.innerHTML = `
+          <div class="flex items-stretch gap-2">
+              <button type="button" class="osm-result-select min-w-0 flex-1 text-left rounded px-0.5 hover:bg-blue-100/60 dark:hover:bg-gray-700/80 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                  <div class="flex items-center justify-between gap-2">
+                      <span class="truncate text-xs font-semibold text-gray-800 dark:text-gray-200">${escapeHtml(label)}</span>
+                      <span class="shrink-0 text-[9px] ${selected ? 'text-emerald-700 dark:text-emerald-300 font-semibold' : 'text-gray-500 dark:text-gray-400'}">${escapeHtml(statusLabel || `${element.type} ${element.id}`)}</span>
+                  </div>
+                  <div class="mt-0.5 break-words text-[9px] text-gray-500 dark:text-gray-400">${escapeHtml(tagText || 'No tags')}</div>
+              </button>
+              <button type="button" class="osm-result-fetch shrink-0 self-center rounded bg-blue-100 dark:bg-blue-900/40 px-2 py-1 text-[10px] font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-800 disabled:cursor-wait disabled:opacity-60" ${isFetching ? 'disabled' : ''} aria-label="Fetch ${escapeHtml(label)}" data-hover-context="Fetch OSM feature: ${escapeHtml(label)}">${isFetching ? 'Fetching…' : 'Fetch'}</button>
+          </div>
+      `;
+      row.querySelector('.osm-result-select')?.addEventListener('click', () => handleOsmElementSelection(element, point));
+      row.querySelector('.osm-result-fetch')?.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          handleOsmElementSelection(element, point, { fetchImmediately: true, addToMap: true });
+      });
+      parent.appendChild(row);
+  };
+
+  // Administrative context is returned separately from the raw Overpass
+  // elements. Prefer the raw element when the IDs match so its complete tags
+  // are retained, but render it only in the administrative section.
+  const rawElementsByKey = new Map(elements.map(element => [osmElementKey(element), element]));
+  const administrativeKeys = new Set();
+  const administrativeCandidates = [];
+  areas.forEach(area => {
+      const hasId = area?.osm_id !== undefined && area?.osm_id !== null;
+      const areaKey = hasId
+          ? osmElementKey({ type: area?.osm_type || 'relation', id: area.osm_id })
+          : null;
+      const element = (areaKey && rawElementsByKey.get(areaKey)) || administrativeAreaToOsmElement(area);
+      if (areaKey) administrativeKeys.add(areaKey);
+      administrativeCandidates.push({
+          element,
+          label: area?.name || element.tags?.name || 'Unnamed administrative area',
+          tags: element.tags
+      });
+  });
+
+  const isTimezoneElement = element => {
+      const tags = element?.tags || {};
+      if (String(element?.type || '').toLowerCase() !== 'relation') return false;
+      return String(tags.boundary || '').toLowerCase() === 'timezone'
+          || Object.prototype.hasOwnProperty.call(tags, 'timezone')
+          || Object.prototype.hasOwnProperty.call(tags, 'time_zone')
+          || Object.prototype.hasOwnProperty.call(tags, 'tzid');
+  };
+  const nearbyElements = elements.filter(element => (
+      !administrativeKeys.has(osmElementKey(element)) && !isTimezoneElement(element)
+  ));
+  const administrativeGroup = administrativeCandidates.length
+      ? createResultGroup('Administrative context', administrativeCandidates.length)
+      : null;
+  const nearbyGroup = nearbyElements.length
+      ? createResultGroup('Nearby OSM elements', nearbyElements.length)
+      : null;
+
+  administrativeCandidates.forEach(({ element, label, tags }) => {
+      appendCandidate(administrativeGroup, element, label, tags);
+  });
+  nearbyElements.forEach(element => {
+      const tags = element.tags || {};
+      appendCandidate(nearbyGroup, element, tags.name || tags.ref || `${element.type} ${element.id}`, tags);
+  });
+
+  if (administrativeGroup) section.appendChild(administrativeGroup);
+  if (nearbyGroup) section.appendChild(nearbyGroup);
+
+  const displayedCount = administrativeCandidates.length + nearbyElements.length;
+  const headingCount = heading.querySelector('[data-query-count]');
+  if (headingCount) headingCount.textContent = `${displayedCount} Result${displayedCount === 1 ? '' : 's'}`;
+
+  if (displayedCount === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'px-1 py-2 text-xs italic text-gray-500 dark:text-gray-400';
+      empty.textContent = 'No tagged OSM features were found at or near this point.';
+      section.appendChild(empty);
+  }
+  if (Array.isArray(query.warnings)) {
+      query.warnings.forEach(message => {
+          const warning = document.createElement('div');
+          warning.className = 'px-1 text-[9px] text-amber-700 dark:text-amber-300';
+          warning.textContent = message;
+          section.appendChild(warning);
+      });
+  }
+  availableLayerList.appendChild(section);
+};
+
 const renderAvailableLayers = () => {
   if (!availableLayerList) return;
+  updateAvailableBulkActions();
   availableLayerList.innerHTML = '';
-  if (AppState.fetchedLayers.length === 0) {
+  const hasPointResults = Boolean(AppState.osmPointResults);
+  if (AppState.fetchedLayers.length === 0 && !hasPointResults) {
     availableLayerList.innerHTML = `<p class="text-xs text-gray-400 dark:text-gray-500 italic text-center mt-3">No layers fetched yet.</p>`;
     searchContainer?.classList.add('hidden');
-    if (btnAddBulk) btnAddBulk.disabled = true;
     return;
   }
   
   searchContainer?.classList.remove('hidden');
-  if (btnAddBulk) btnAddBulk.disabled = false;
+
+  if (hasPointResults) renderOsmQueryResultsInCatalog();
+  if (AppState.fetchedLayers.length === 0) return;
 
   const standaloneLayers = [];
   const servicesMap = {};
@@ -3331,11 +3365,18 @@ const addLayerToMap = (layerId, switchTabAfter = true) => {
     if (switchTabAfter) { renderAddedLayers(); switchTab('added'); showToast(`Added ${meta.title} to map!`); }
 };
 
-const handleFetchLayers = async () => {
+const handleFetchLayers = async (options = {}) => {
+  const addFetchedLayerToMap = options?.addFetchedLayerToMap === true;
   const sType = getEl('server-type');
   if (!sType) return;
   AppState.currentServerType = sType.value;
-  clearAllPreviews(); 
+  const followupAtStart = AppState.osmFeatureFollowup;
+  const preservePointResults = Boolean(followupAtStart && AppState.osmPointResults);
+  if (!preservePointResults) {
+      AppState.osmPointResults = null;
+      AppState.osmPointSelection = null;
+  }
+  clearAllPreviews();
   
   const fetchSpinner = getEl('btn-fetch-spinner') || getEl('btn-fetch-spinner-url');
   const fetchText = getEl('btn-fetch-text') || getEl('btn-fetch-text-url');
@@ -3343,7 +3384,7 @@ const handleFetchLayers = async () => {
   if (fetchText) fetchText.textContent = 'Fetching...';
 
   switchTab('available');
-  if (availableLayerList) {
+  if (availableLayerList && !preservePointResults) {
       availableLayerList.innerHTML = `
           <div class="flex flex-col items-center justify-center py-12 text-blue-600 dark:text-blue-500">
               <i class="fa-solid fa-circle-notch fa-spin text-3xl mb-3 opacity-80"></i>
@@ -3352,7 +3393,8 @@ const handleFetchLayers = async () => {
           </div>
       `;
   }
-  searchContainer?.classList.add('hidden');
+  if (preservePointResults) searchContainer?.classList.remove('hidden');
+  else searchContainer?.classList.add('hidden');
 
   try {
     if (AppState.currentServerType === 'OVERPASS') {
@@ -3374,15 +3416,9 @@ const handleFetchLayers = async () => {
         const loc = getEl('osm-location')?.value.trim();
         const geomType = getEl('osm-geom')?.value;
 
-        const bounds = followup?.scopeBbox || (() => {
-            const current = map.getBounds();
-            return {
-                south: current.getSouth(),
-                west: current.getWest(),
-                north: current.getNorth(),
-                east: current.getEast()
-            };
-        })();
+        // Always use the viewport that is active when Fetch is pressed. This
+        // keeps a follow-up OSM search clipped to what the user is looking at.
+        const bounds = activeOsmSearchBbox();
         const payload = {
             tags, loc, geomType, timeout, maxChunks,
             bbox: {
@@ -3393,7 +3429,9 @@ const handleFetchLayers = async () => {
             }
         };
         if (followup) {
-            payload.maxArea = followup.maxAreaKm2 || FOLLOWUP_MAX_AREA_KM2;
+            if (Number.isFinite(followup.maxAreaKm2) && followup.maxAreaKm2 > 0) {
+                payload.maxArea = followup.maxAreaKm2;
+            }
             payload.followup = {
                 mode: followup.mode,
                 identityField: followup.identityField,
@@ -3415,6 +3453,10 @@ const handleFetchLayers = async () => {
         if (fetchText) fetchText.textContent = 'Querying Grid...';
 
         const stopProgressPolling = pollOverpassProgress((latestMsg) => {
+            // A candidate list is itself the useful result while a follow-up
+            // feature fetch is running. Keep it mounted instead of replacing
+            // it with transient grid-progress markup.
+            if (preservePointResults) return;
             const cellMatch = latestMsg.match(/cell\s+(\d+)\/(\d+)/i) || latestMsg.match(/(\d+)\/(\d+)/);
             if (cellMatch) {
                 const current = cellMatch[1] || cellMatch[0].split('/')[0];
@@ -3439,7 +3481,7 @@ const handleFetchLayers = async () => {
             if (!data.elements || data.elements.length === 0) throw new Error("No data found for this query.");
 
             stopProgressPolling();
-            setAvailableListStatus('Processing OSM results...');
+            if (!preservePointResults) setAvailableListStatus('Processing OSM results...');
 
             const geoJson = osmtogeojson(data, { flatProperties: true });
             geoJson.metadata = {
@@ -3479,7 +3521,7 @@ const handleFetchLayers = async () => {
             }
             if (loc) layerName = `OSM: ${loc}${firstTag ? ` (${firstTag.key})` : ''}`;
 
-            AppState.fetchedLayers = [{
+            const fetchedOsmLayer = {
                 id: `osm_${Date.now()}`,
                 title: layerName,
                 geoJsonData: geoJson,
@@ -3490,12 +3532,29 @@ const handleFetchLayers = async () => {
                 metadata: geoJson.metadata,
                 validation: 'validated by Overpass response checks',
                 featureCount: geoJson.features.length,
-            }];
+            };
+            // A candidate selected from the current point query is an
+            // additional fetch, not a replacement. Keep earlier candidates'
+            // fetched layers visible so several nearby features can be added
+            // without repeating the point query. A fresh manual OSM query
+            // starts a new result set, while a new right-click clears the set
+            // in onOsmQueryStart before its results arrive.
+            AppState.fetchedLayers = followup && AppState.osmPointResults
+                ? [fetchedOsmLayer, ...AppState.fetchedLayers]
+                : [fetchedOsmLayer];
             AppState.lastFetchedOsmGeoJson = geoJson; 
             AppState.lastFetchedOsmLayerName = layerName;
+            if (followup && AppState.osmPointResults) {
+                AppState.osmPointSelection = {
+                    key: `${String(followup.elementType || '')}:${String(followup.elementId ?? '')}`,
+                    status: 'fetched'
+                };
+            }
             
             const toolsContainer = getEl('osm-available-tools');
-            if (toolsContainer) { toolsContainer.classList.remove('hidden'); toolsContainer.classList.add('flex'); }
+            // Keep the unpacking controls and handler available in the DOM,
+            // but do not expose this optional UI in the CATALOG panel.
+            if (toolsContainer) { toolsContainer.classList.add('hidden'); toolsContainer.classList.remove('flex'); }
 
             const cols = new Set();
             geoJson.features.forEach(f => { if(f.properties) Object.keys(f.properties).forEach(k => cols.add(k)); });
@@ -3506,9 +3565,13 @@ const handleFetchLayers = async () => {
                 Array.from(cols).sort().forEach(c => { sel.innerHTML += `<option value="${c}">${c}</option>`; });
             }
 
-            renderAvailableLayers(); 
-            switchTab('available'); 
-            showToast(`Fetched & Merged ${geoJson.features.length} OSM features!`);
+            renderAvailableLayers();
+            if (addFetchedLayerToMap) {
+                await addLayerToMap(fetchedOsmLayer.id, true);
+            } else {
+                switchTab('available');
+                showToast(`Fetched & Merged ${geoJson.features.length} OSM features!`);
+            }
             if (followup) AppState.osmFeatureFollowup = null;
             return;
         } catch (e) {
@@ -3610,8 +3673,16 @@ const handleFetchLayers = async () => {
     showToast(e.message || "Fetch failed. Check console.", true);
     
     if (availableLayerList) {
-        availableLayerList.innerHTML = `<p class="text-[11px] text-red-500 font-semibold italic text-center mt-4 px-3">${e.message || "Failed to fetch. Check parameters."}</p>`; 
-        searchContainer?.classList.add('hidden');
+        if (preservePointResults) {
+            AppState.osmPointSelection = {
+                ...(AppState.osmPointSelection || {}),
+                status: 'error'
+            };
+            renderAvailableLayers();
+        } else {
+            availableLayerList.innerHTML = `<p class="text-[11px] text-red-500 font-semibold italic text-center mt-4 px-3">${e.message || "Failed to fetch. Check parameters."}</p>`;
+            searchContainer?.classList.add('hidden');
+        }
     }
   } finally {
     fetchSpinner?.classList.add('hidden'); 
@@ -3887,6 +3958,7 @@ getEl('server-type')?.addEventListener('change', (e) => {
         const tools = getEl('osm-available-tools');
         if (tools) { tools.classList.add('hidden'); tools.classList.remove('flex'); }
     }
+    updateAvailableBulkActions();
 });
 
 // Apply the same visibility rules to the initial selection before any user
@@ -3919,16 +3991,6 @@ addedLayerSearch?.addEventListener('input', triggerAddedSearch);
 btnClearAddedSearch?.addEventListener('click', () => { if (addedLayerSearch) { addedLayerSearch.value = ''; triggerAddedSearch(); addedLayerSearch.focus(); } });
 filterDataSearch?.addEventListener('input', triggerFilterDataSearch);
 btnClearFilterSearch?.addEventListener('click', () => { if (filterDataSearch) { filterDataSearch.value = ''; triggerFilterDataSearch(); filterDataSearch.focus(); } });
-btnCloseInspect?.addEventListener('click', () => {
-    getEl('osm-inspect-container')?.classList.add('hidden');
-    getEl('osm-inspect-container')?.classList.remove('flex');
-    if (AppState.drawingMode === 'inspect') {
-        AppState.drawingMode = null;
-        map.getContainer().style.cursor = '';
-        drawLayerGroup.clearLayers();
-    }
-});
-
 btnDraw?.addEventListener('click', () => {
   if (!filterType) return;
   AppState.drawingMode = filterType.value; drawLayerGroup.clearLayers(); AppState.filterGeometryData = null;
@@ -3936,52 +3998,94 @@ btnDraw?.addEventListener('click', () => {
 });
 
 map.on('mousedown', (e) => {
-  if (AppState.drawingMode === 'box' || AppState.drawingMode === 'inspect') { 
+  if (AppState.drawingMode === 'box') {
       drawLayerGroup.clearLayers(); map.dragging.disable(); AppState.drawStart = e.latlng; 
-      const color = AppState.drawingMode === 'inspect' ? '#2563eb' : '#0d9488'; 
-      AppState.tempShape = L.rectangle([AppState.drawStart, AppState.drawStart], { color: color, weight: 2, fillOpacity: 0.2 }).addTo(drawLayerGroup); 
+      AppState.tempShape = L.rectangle([AppState.drawStart, AppState.drawStart], { color: '#0d9488', weight: 2, fillOpacity: 0.2 }).addTo(drawLayerGroup);
   }
 });
 
 map.on('mousemove', (e) => { 
-    if ((AppState.drawingMode === 'box' || AppState.drawingMode === 'inspect') && AppState.tempShape) AppState.tempShape.setBounds([AppState.drawStart, e.latlng]); 
+    if (AppState.drawingMode === 'box' && AppState.tempShape) AppState.tempShape.setBounds([AppState.drawStart, e.latlng]);
 });
 
 map.on('mouseup', (e) => {
   if (AppState.drawingMode === 'box' && AppState.tempShape) { 
-      map.dragging.enable(); AppState.filterGeometryData = AppState.tempShape.getBounds(); AppState.drawingMode = null; map.getContainer().style.cursor = ''; checkApplyButton(); 
-  } else if (AppState.drawingMode === 'inspect' && AppState.tempShape) {
-      map.dragging.enable(); 
-      const bounds = AppState.tempShape.getBounds();
-      AppState.drawingMode = null; map.getContainer().style.cursor = '';
-      executeOsmInspect(bounds);
-      setTimeout(() => drawLayerGroup.clearLayers(), 800); 
+      map.dragging.enable(); AppState.filterGeometryData = AppState.tempShape.getBounds(); AppState.drawingMode = null; map.getContainer().style.cursor = ''; checkApplyButton();
   }
 });
 
 map.on('click', (e) => {
   if (AppState.drawingMode === 'radius') {
     drawLayerGroup.clearLayers(); AppState.drawStart = e.latlng;
-    const radKm = parseFloat(filterRadius?.value) || 5;
-    AppState.tempShape = L.circle(AppState.drawStart, { radius: radKm * 1000, color: '#0d9488', weight: 2, fillOpacity: 0.2 }).addTo(drawLayerGroup);
-    L.marker(AppState.drawStart).addTo(drawLayerGroup); AppState.filterGeometryData = AppState.drawStart; AppState.drawingMode = null; map.getContainer().style.cursor = ''; checkApplyButton();
+    const radKm = getRadiusKilometers();
+    AppState.tempShape = L.circle(AppState.drawStart, {
+        radius: radKm * 1000,
+        color: '#0d9488',
+        weight: 2,
+        fillOpacity: 0.2,
+        interactive: false
+    }).addTo(drawLayerGroup);
+    const radiusCenterMarker = L.marker(AppState.drawStart, {
+        draggable: true,
+        keyboard: false,
+        bubblingMouseEvents: false,
+        pane: 'shapeVertexPane',
+        icon: L.divIcon({
+            className: 'gis-shape-vertex',
+            html: '<span></span>',
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
+        }),
+        zIndexOffset: 2000
+    });
+    radiusCenterMarker.dragging?.enable();
+    radiusCenterMarker.on('mousedown touchstart', event => {
+        if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
+    });
+    radiusCenterMarker.on('dragstart', event => {
+        map.dragging.disable();
+        if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
+    });
+    radiusCenterMarker.on('drag', event => {
+        const center = event.target.getLatLng();
+        AppState.filterGeometryData = center;
+        AppState.tempShape?.setLatLng(center);
+        if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
+    });
+    radiusCenterMarker.on('dragend', event => {
+        map.dragging.enable();
+        checkApplyButton();
+        if (event.originalEvent) L.DomEvent.stopPropagation(event.originalEvent);
+    });
+    radiusCenterMarker.addTo(drawLayerGroup);
+    AppState.filterGeometryData = AppState.drawStart; AppState.drawingMode = null; map.getContainer().style.cursor = ''; checkApplyButton();
   }
 });
 
-filterRadius?.addEventListener('input', checkApplyButton);
+const updateRadiusPreview = () => {
+    if (filterType?.value === 'radius' && AppState.tempShape?.setRadius) {
+        AppState.tempShape.setRadius(getRadiusKilometers() * 1000);
+    }
+    checkApplyButton();
+};
+
+filterRadius?.addEventListener('input', updateRadiusPreview);
+filterRadiusUnit?.addEventListener('change', updateRadiusPreview);
 
 filterType?.addEventListener('change', (e) => {
   const type = e.target.value;
   const layer = AppState.activeLayers.find(l => l.uniqueKey === AppState.activeCropLayerKey);
   
-  filterRadius?.classList.add('hidden');
+  filterRadiusControls?.classList.add('hidden');
+  filterRadiusControls?.classList.remove('flex');
   filterDataContainer?.classList.add('hidden');
   filterDataContainer?.classList.remove('flex');
   btnDraw?.classList.remove('hidden');
   drawStatus?.classList.remove('hidden');
   
   if (type === 'radius') {
-    filterRadius?.classList.remove('hidden');
+    filterRadiusControls?.classList.remove('hidden');
+    filterRadiusControls?.classList.add('flex');
     if (drawStatus) drawStatus.textContent = 'Click on map to set center point.';
   } else if (type === 'box') {
     if (drawStatus) drawStatus.textContent = 'Click & drag on map to draw box.';
@@ -3992,6 +4096,7 @@ filterType?.addEventListener('change', (e) => {
     if (layer) triggerDataFilterSetup(layer);
   }
   checkApplyButton();
+  updateFilterInvertControl();
 });
 
 filterDataCol?.addEventListener('change', (e) => {
@@ -4029,6 +4134,44 @@ filterDataCol?.addEventListener('change', (e) => {
     checkApplyButton();
 });
 
+const cropFeatureToMask = (feature, mask, invert = false) => {
+    if (!feature?.geometry || !mask) return null;
+    const geometryType = feature.geometry.type;
+    try {
+        if (geometryType === 'MultiPolygon') {
+            const retainedIslands = (feature.geometry.coordinates || []).filter(coordinates => {
+                const island = {
+                    type: 'Feature',
+                    properties: feature.properties || {},
+                    geometry: { type: 'Polygon', coordinates }
+                };
+                const intersects = turf.booleanIntersects(island, mask);
+                return invert ? !intersects : intersects;
+            });
+            if (!retainedIslands.length) return null;
+            return {
+                ...feature,
+                geometry: retainedIslands.length === 1
+                    ? { type: 'Polygon', coordinates: retainedIslands[0] }
+                    : { type: 'MultiPolygon', coordinates: retainedIslands }
+            };
+        }
+        if (geometryType !== 'Polygon') {
+            const intersects = turf.booleanIntersects(feature, mask);
+            return (invert ? !intersects : intersects) ? { ...feature } : null;
+        }
+        const intersects = turf.booleanIntersects(feature, mask);
+        return (invert ? !intersects : intersects) ? { ...feature } : null;
+    } catch (error) {
+        console.warn('Could not select feature islands during crop:', error);
+        return null;
+    }
+};
+
+const cropFeaturesToMask = (features, mask, invert = false) => (features || [])
+    .map(feature => cropFeatureToMask(feature, mask, invert))
+    .filter(Boolean);
+
 getEl('btn-filter-select-all')?.addEventListener('click', () => {
     const visibleLabels = Array.from(document.querySelectorAll('#filter-data-values label:not(.hidden)'));
     const cbs = visibleLabels.map(l => l.querySelector('.filter-data-val-cb')).filter(Boolean);
@@ -4052,6 +4195,7 @@ btnApplyFilter?.addEventListener('click', async () => {
 
   try {
     let finalFeatures = [];
+    const invertCrop = filterType?.value === 'box' && Boolean(filterInvert?.checked);
     if (filterType?.value === 'data') {
         const col = filterDataCol?.value;
         const selectedVals = Array.from(document.querySelectorAll('.filter-data-val-cb:checked')).map(cb => cb.value);
@@ -4062,17 +4206,17 @@ btnApplyFilter?.addEventListener('click', async () => {
             if (filterType?.value === 'box') {
                b = AppState.filterGeometryData;
                const turfBbox = turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
-               finalFeatures = targetLayer.geoJsonData.features.filter(f => { try { return turf.booleanIntersects(f, turfBbox); } catch(e) { return false; } });
+               finalFeatures = cropFeaturesToMask(targetLayer.geoJsonData.features, turfBbox, invertCrop);
             } else {
-               const radKm = parseFloat(filterRadius?.value) || 5;
+               const radKm = getRadiusKilometers();
                const turfCircle = turf.circle([AppState.filterGeometryData.lng, AppState.filterGeometryData.lat], radKm, {units: 'kilometers'});
-               finalFeatures = targetLayer.geoJsonData.features.filter(f => { try { return turf.booleanIntersects(f, turfCircle); } catch(e) { return false; } });
+               finalFeatures = cropFeaturesToMask(targetLayer.geoJsonData.features, turfCircle, invertCrop);
             }
         } else {
             let queryUrl = targetLayer.exportUrl;
             let b; 
             if (filterType?.value === 'box') b = AppState.filterGeometryData; 
-            else b = AppState.filterGeometryData.toBounds((parseFloat(filterRadius?.value) || 5) * 1000); 
+            else b = AppState.filterGeometryData.toBounds(getRadiusKilometers() * 1000);
 
             if (queryUrl.includes('WFS') || queryUrl.includes('GetFeature')) queryUrl += `&bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()},EPSG:4326`;
             else queryUrl += `&geometry=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelWithin&inSR=4326`;
@@ -4083,11 +4227,11 @@ btnApplyFilter?.addEventListener('click', async () => {
 
             if (filterType?.value === 'box') {
                 const turfBbox = turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
-                finalFeatures = fetchedFeatures.filter(f => { try { return turf.booleanIntersects(f, turfBbox); } catch(e) { return false; } });
+                finalFeatures = cropFeaturesToMask(fetchedFeatures, turfBbox, invertCrop);
             } else if (filterType?.value === 'radius') {
-                const radKm = parseFloat(filterRadius?.value) || 5;
+                const radKm = getRadiusKilometers();
                 const turfCircle = turf.circle([AppState.filterGeometryData.lng, AppState.filterGeometryData.lat], radKm, {units: 'kilometers'});
-                finalFeatures = fetchedFeatures.filter(f => { try { return turf.booleanIntersects(f, turfCircle); } catch(e) { return false; } });
+                finalFeatures = cropFeaturesToMask(fetchedFeatures, turfCircle, invertCrop);
             }
         }
     }
@@ -4103,7 +4247,9 @@ btnApplyFilter?.addEventListener('click', async () => {
     const newMapLayer = createCustomGeoJSONLayer(newGeoJsonData, newStyleState, paneName).addTo(map);
     map.fitBounds(newMapLayer.getBounds());
 
-    const namePrefix = filterType?.value === 'data' ? '[Filtered]' : '[Cropped]';
+    const namePrefix = filterType?.value === 'data'
+        ? '[Filtered]'
+        : invertCrop ? '[Inverted Crop]' : '[Cropped]';
     AppState.activeLayers = [{ uniqueKey: uniqueKey, id: `${targetLayer.id}_filtered`, displayName: `${namePrefix} ${targetLayer.displayName}`, mapLayer: newMapLayer, exportUrl: null, isLocalGeoJSON: true, geoJsonData: newGeoJsonData, customStyle: newStyleState, isVisible: true, parentId: targetLayer.parentId || null, isFolder: false }, ...AppState.activeLayers];
     if (targetLayer.isVisible) { targetLayer.isVisible = false; map.removeLayer(targetLayer.mapLayer); }
 
@@ -5763,7 +5909,14 @@ const updateShapePanel = () => {
     if (AppState.geometryEdit.active) {
         drawShapePanel?.classList.add('hidden');
         geometryEditPanel?.classList.remove('hidden');
-        if (geometryEditStatus) geometryEditStatus.textContent = `Editing geometry · ${state.points.length} points`;
+        const editParts = AppState.geometryEdit.geometryType === 'MultiPolygon'
+            ? (AppState.geometryEdit.parts || [])
+            : [];
+        const pointCount = editParts.length
+            ? editParts.reduce((total, part) => total + part.length, 0)
+            : state.points.length;
+        const partLabel = editParts.length > 1 ? ` · ${editParts.length} islands` : '';
+        if (geometryEditStatus) geometryEditStatus.textContent = `Editing geometry · ${pointCount} points${partLabel}`;
         return;
     }
     geometryEditPanel?.classList.add('hidden');
@@ -5772,14 +5925,13 @@ const updateShapePanel = () => {
     btnDrawShapeSave?.classList.toggle('hidden', !state.completed || count < 3);
 };
 
-const shapeSegmentIndex = latlng => {
-    const state = AppState.drawShape;
-    if (state.points.length < 2) return -1;
+const shapeSegmentIndex = (latlng, segmentPoints = AppState.drawShape.points, closed = null) => {
+    if (segmentPoints.length < 2) return -1;
     const point = map.latLngToLayerPoint(latlng);
     let best = { index: -1, distance: Infinity };
-    const points = state.points;
-    const isClosedShape = state.completed
-        && !(AppState.geometryEdit.active && AppState.geometryEdit.geometryType === 'LineString');
+    const points = segmentPoints;
+    const isClosedShape = closed ?? (AppState.drawShape.completed
+        && !(AppState.geometryEdit.active && AppState.geometryEdit.geometryType === 'LineString'));
     const segmentCount = isClosedShape ? points.length : points.length - 1;
     points.slice(0, segmentCount).forEach((candidate, index) => {
         const a = map.latLngToLayerPoint(candidate);
@@ -5792,11 +5944,113 @@ const shapeSegmentIndex = latlng => {
     return best.distance <= 12 ? best.index : -1;
 };
 
+const setGeometryEditPartPoints = (partIndex, points) => {
+    const editState = AppState.geometryEdit;
+    const parts = (editState.parts || []).map((part, index) => index === partIndex ? points : part);
+    AppState.geometryEdit = { ...editState, parts, activePartIndex: partIndex };
+    AppState.drawShape = { ...AppState.drawShape, points, completed: true };
+};
+
+const geometryEditMinimumPoints = () => AppState.geometryEdit.geometryType === 'LineString' ? 2 : 3;
+
+const renderMultiPolygonGeometryEditPreview = () => {
+    const editState = AppState.geometryEdit;
+    const parts = editState.parts || [];
+    const lineLayers = [];
+
+    parts.forEach((part, partIndex) => {
+        if (part.length < 2) return;
+        const closedPoints = [...part, part[0]];
+        const lineLayer = L.polygon(closedPoints, {
+            pane: shapePreviewPaneName,
+            color: '#2563eb',
+            weight: 3,
+            opacity: 0.9,
+            fillColor: '#60a5fa',
+            fillOpacity: 0.25
+        });
+        lineLayer.on('click', event => {
+            const insertAfter = shapeSegmentIndex(event.latlng, part, true);
+            if (insertAfter < 0) return;
+            const nextPoints = [...part];
+            nextPoints.splice(insertAfter + 1, 0, event.latlng);
+            setGeometryEditPartPoints(partIndex, nextPoints);
+            stopShapeEvent(event);
+            renderShapePreview();
+        });
+        lineLayers.push(lineLayer);
+        shapePreviewGroup.addLayer(lineLayer);
+
+        part.forEach((point, pointIndex) => {
+            const isFirstPoint = pointIndex === 0;
+            const vertexSize = isFirstPoint ? 28 : 16;
+            const marker = L.marker(point, {
+                pane: shapeVertexPaneName,
+                draggable: true,
+                keyboard: false,
+                bubblingMouseEvents: false,
+                icon: L.divIcon({
+                    className: 'gis-shape-vertex',
+                    html: '<span></span>',
+                    iconSize: [vertexSize, vertexSize],
+                    iconAnchor: [vertexSize / 2, vertexSize / 2]
+                }),
+                zIndexOffset: 1100
+            });
+            marker.on('click', event => {
+                const isModifierClick = event.originalEvent?.metaKey || event.originalEvent?.ctrlKey;
+                const currentPart = AppState.geometryEdit.parts?.[partIndex] || part;
+                if (isModifierClick) {
+                    const minimumPoints = geometryEditMinimumPoints();
+                    if (currentPart.length <= minimumPoints) {
+                        showToast(`A polygon needs at least ${minimumPoints} points.`, false, true);
+                        stopShapeEvent(event);
+                        return;
+                    }
+                    setGeometryEditPartPoints(partIndex, currentPart.filter((_, index) => index !== pointIndex));
+                    renderShapePreview();
+                } else {
+                    AppState.geometryEdit = { ...AppState.geometryEdit, activePartIndex: partIndex };
+                    AppState.drawShape = { ...AppState.drawShape, points: currentPart, completed: true };
+                }
+                stopShapeEvent(event);
+            });
+            marker.on('dragstart', event => {
+                AppState.geometryEdit = { ...AppState.geometryEdit, activePartIndex: partIndex };
+                AppState.drawShape = { ...AppState.drawShape, points: part, completed: true };
+                map.dragging.disable();
+                stopShapeEvent(event);
+            });
+            marker.on('drag', event => {
+                const currentPart = [...(AppState.geometryEdit.parts?.[partIndex] || part)];
+                currentPart[pointIndex] = event.target.getLatLng();
+                setGeometryEditPartPoints(partIndex, currentPart);
+                const activeLine = lineLayers.find((_, index) => index === partIndex);
+                if (activeLine) activeLine.setLatLngs([...currentPart, currentPart[0]]);
+                stopShapeEvent(event);
+            });
+            marker.on('dragend', event => {
+                map.dragging.enable();
+                renderShapePreview();
+                stopShapeEvent(event);
+            });
+            shapePreviewGroup.addLayer(marker);
+        });
+    });
+
+    shapeLineLayer = lineLayers[editState.activePartIndex] || lineLayers[0] || null;
+    updateShapePanel();
+};
+
 const renderShapePreview = () => {
     shapePreviewGroup.clearLayers();
     shapeLineLayer = null;
     shapeCursorMarker = null;
     const state = AppState.drawShape;
+    if (AppState.geometryEdit.active && AppState.geometryEdit.geometryType === 'MultiPolygon') {
+        renderMultiPolygonGeometryEditPreview();
+        return;
+    }
     const isClosedShape = state.completed
         && !(AppState.geometryEdit.active && AppState.geometryEdit.geometryType === 'LineString');
     const previewPoints = isClosedShape
@@ -5926,39 +6180,56 @@ const exitShapeDrawing = () => {
 
 const editableGeometryFromLayer = layer => {
     const features = layer?.geoJsonData?.features || [];
-    const featureIndex = features.findIndex(feature => ['Polygon', 'LineString'].includes(feature?.geometry?.type));
+    const featureIndex = features.findIndex(feature => ['Polygon', 'MultiPolygon', 'LineString'].includes(feature?.geometry?.type));
     if (featureIndex < 0) return null;
     const feature = features[featureIndex];
     const geometryType = feature.geometry.type;
-    const coordinates = geometryType === 'Polygon'
-        ? feature.geometry.coordinates?.[0]
-        : feature.geometry.coordinates;
-    if (!Array.isArray(coordinates) || coordinates.length < (geometryType === 'Polygon' ? 4 : 2)) return null;
-    const openCoordinates = geometryType === 'Polygon'
-        && coordinates.length > 1
-        && coordinates[0][0] === coordinates[coordinates.length - 1]?.[0]
-        && coordinates[0][1] === coordinates[coordinates.length - 1]?.[1]
-        ? coordinates.slice(0, -1)
-        : coordinates;
-    const points = openCoordinates
-        .filter(coordinate => Array.isArray(coordinate) && coordinate.length >= 2)
-        .map(([lng, lat]) => L.latLng(Number(lat), Number(lng)));
-    return points.length >= (geometryType === 'Polygon' ? 3 : 2)
-        ? { featureIndex, geometryType, points }
-        : null;
+    const rawParts = geometryType === 'MultiPolygon'
+        ? (feature.geometry.coordinates || []).map(polygon => polygon?.[0])
+        : [geometryType === 'Polygon' ? feature.geometry.coordinates?.[0] : feature.geometry.coordinates];
+    const minimumPoints = geometryType === 'LineString' ? 2 : 3;
+    const parts = rawParts.map(coordinates => {
+        if (!Array.isArray(coordinates) || coordinates.length < minimumPoints) return null;
+        const isClosed = coordinates.length > 1
+            && coordinates[0]?.[0] === coordinates[coordinates.length - 1]?.[0]
+            && coordinates[0]?.[1] === coordinates[coordinates.length - 1]?.[1];
+        const openCoordinates = isClosed ? coordinates.slice(0, -1) : coordinates;
+        return openCoordinates
+            .filter(coordinate => Array.isArray(coordinate) && coordinate.length >= 2)
+            .map(([lng, lat]) => L.latLng(Number(lat), Number(lng)));
+    }).filter(points => points && points.length >= minimumPoints);
+    if (!parts.length || (geometryType === 'MultiPolygon' && parts.length !== rawParts.length)) return null;
+    return {
+        featureIndex,
+        geometryType,
+        points: parts[0],
+        parts
+    };
 };
 
 const commitGeometryEdit = () => {
     const editState = AppState.geometryEdit;
     const layer = AppState.activeLayers.find(item => item.uniqueKey === editState.layerKey);
     const feature = layer?.geoJsonData?.features?.[editState.featureIndex];
-    const points = AppState.drawShape.points;
-    if (!layer || !feature || !points.length) return false;
+    if (!layer || !feature) return false;
 
-    const coordinates = points.map(point => [point.lng, point.lat]);
-    feature.geometry.coordinates = editState.geometryType === 'Polygon'
-        ? [[...coordinates, coordinates[0]]]
-        : coordinates;
+    if (editState.geometryType === 'MultiPolygon') {
+        const parts = editState.parts || [];
+        if (!parts.length || parts.some(part => part.length < 3)) return false;
+        const originalPolygons = feature.geometry.coordinates || [];
+        feature.geometry.coordinates = parts.map((part, partIndex) => {
+            const coordinates = part.map(point => [point.lng, point.lat]);
+            const holes = Array.isArray(originalPolygons[partIndex]) ? originalPolygons[partIndex].slice(1) : [];
+            return [[...coordinates, coordinates[0]], ...holes];
+        });
+    } else {
+        const points = AppState.drawShape.points;
+        if (!points.length) return false;
+        const coordinates = points.map(point => [point.lng, point.lat]);
+        feature.geometry.coordinates = editState.geometryType === 'Polygon'
+            ? [[...coordinates, coordinates[0]]]
+            : coordinates;
+    }
 
     if (layer.mapLayer) map.removeLayer(layer.mapLayer);
     const paneName = `pane-${layer.uniqueKey}`;
@@ -5985,7 +6256,10 @@ const exitGeometryEditing = (save = false) => {
         featureIndex: null,
         geometryType: null,
         points: [],
-        originalPoints: []
+        originalPoints: [],
+        parts: [],
+        originalParts: [],
+        activePartIndex: 0
     };
     AppState.drawShape = { ...AppState.drawShape, active: false, points: [], completed: false };
     setSavedLayerInteractionForDrawing(true);
@@ -6004,7 +6278,7 @@ const enterGeometryEditing = async layerKey => {
     }
     const editable = editableGeometryFromLayer(layer);
     if (!editable) {
-        showToast('Only Polygon and LineString geometry can be edited.', true);
+        showToast('Only Polygon, MultiPolygon, and LineString geometry can be edited.', true);
         return;
     }
     if (AppState.drawShape.active) exitShapeDrawing();
@@ -6020,11 +6294,15 @@ const enterGeometryEditing = async layerKey => {
         featureIndex: editable.featureIndex,
         geometryType: editable.geometryType,
         points,
-        originalPoints: points.map(point => L.latLng(point.lat, point.lng))
+        originalPoints: points.map(point => L.latLng(point.lat, point.lng)),
+        parts: editable.parts.map(part => part.map(point => L.latLng(point.lat, point.lng))),
+        originalParts: editable.parts.map(part => part.map(point => L.latLng(point.lat, point.lng))),
+        activePartIndex: 0
     };
     AppState.drawShape = { ...AppState.drawShape, active: true, points, completed: true };
     shapeCursorPoint = null;
     setSavedLayerInteractionForDrawing(false);
+    map.getPane(`pane-${layer.uniqueKey}`)?.style.setProperty('opacity', '0');
     setMapHoverContext('Edit geometry');
     geometryEditPanel?.classList.remove('hidden');
     renderAddedLayers();
@@ -6145,15 +6423,25 @@ document.addEventListener('keydown', event => {
     if ((event.key === 'Backspace' || event.key === 'Delete')
         && (!AppState.drawShape.completed || AppState.geometryEdit.active)) {
         event.preventDefault();
-        const minimumPoints = AppState.geometryEdit.active
-            ? (AppState.geometryEdit.geometryType === 'Polygon' ? 3 : 2)
-            : 0;
-        if (AppState.drawShape.points.length <= minimumPoints) {
-            if (AppState.geometryEdit.active) showToast(`A ${AppState.geometryEdit.geometryType === 'Polygon' ? 'polygon' : 'line'} needs at least ${minimumPoints} points.`, false, true);
+        const minimumPoints = AppState.geometryEdit.active ? geometryEditMinimumPoints() : 0;
+        const isMultiPolygonEdit = AppState.geometryEdit.active && AppState.geometryEdit.geometryType === 'MultiPolygon';
+        const activePartIndex = isMultiPolygonEdit ? (AppState.geometryEdit.activePartIndex || 0) : 0;
+        const activePoints = isMultiPolygonEdit
+            ? (AppState.geometryEdit.parts?.[activePartIndex] || AppState.drawShape.points)
+            : AppState.drawShape.points;
+        if (activePoints.length <= minimumPoints) {
+            if (AppState.geometryEdit.active) {
+                const geometryLabel = AppState.geometryEdit.geometryType === 'LineString' ? 'line' : 'polygon';
+                showToast(`A ${geometryLabel} needs at least ${minimumPoints} points.`, false, true);
+            }
             return;
         }
-        const points = AppState.drawShape.points.slice(0, -1);
-        AppState.drawShape = { ...AppState.drawShape, points, completed: AppState.geometryEdit.active || false };
+        const points = activePoints.slice(0, -1);
+        if (isMultiPolygonEdit) {
+            setGeometryEditPartPoints(activePartIndex, points);
+        } else {
+            AppState.drawShape = { ...AppState.drawShape, points, completed: AppState.geometryEdit.active || false };
+        }
         renderShapePreview();
     }
 });

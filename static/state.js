@@ -15,6 +15,9 @@ const rawState = {
     // Temporary context-menu follow-up state. This is intentionally not part
     // of workspace data; it only survives until the next OSM fetch/retry.
     osmFeatureFollowup: null,
+    // Temporary point-query results are shown in the CATALOG tab only.
+    osmPointResults: null,
+    osmPointSelection: null,
     activeTableLayerKey: null, 
     activeEditLayerKey: null,
     activeSplitLayerKey: null,
@@ -64,7 +67,10 @@ const rawState = {
         featureIndex: null,
         geometryType: null,
         points: [],
-        originalPoints: []
+        originalPoints: [],
+        parts: [],
+        originalParts: [],
+        activePartIndex: 0
     }
 };
 

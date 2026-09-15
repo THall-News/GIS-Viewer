@@ -3,6 +3,46 @@ import { map } from './mapEngine.js';
 
 export function createStyleEditorController(deps) {
     const { editPanelContainer, renderAddedLayers, ensureGeoJSON, closeSidebarPanels, openContextSubmenu, showToast, updateMapLayerOrder, createCustomGeoJSONLayer, handleToggleTable, autoSaveWorkspace, hexAlpha, darkenHex, interpolateColor, getEl } = deps;
+
+    const normalizePickerHex = (value, fallback = '#2563eb') => {
+        const raw = String(value || '').trim().replace(/^#/, '');
+        if (/^(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(raw)) {
+            if (raw.length === 3 || raw.length === 4) {
+                return `#${raw.slice(0, 3).split('').map(character => character + character).join('')}`;
+            }
+            return `#${raw.slice(0, 6)}`;
+        }
+
+        if (typeof document !== 'undefined' && document.body) {
+            const probe = document.createElement('span');
+            probe.style.color = String(value || '');
+            if (probe.style.color) {
+                probe.style.position = 'fixed';
+                probe.style.opacity = '0';
+                document.body.appendChild(probe);
+                const computed = getComputedStyle(probe).color;
+                probe.remove();
+                const channels = computed.match(/rgba?\(([^)]+)\)/i)?.[1]?.split(',').slice(0, 3).map(channel => {
+                    const trimmed = channel.trim();
+                    const numeric = parseFloat(trimmed);
+                    return trimmed.endsWith('%') ? numeric * 2.55 : numeric;
+                });
+                if (channels?.length === 3 && channels.every(Number.isFinite)) {
+                    return `#${channels.map(channel => Math.round(Math.max(0, Math.min(255, channel))).toString(16).padStart(2, '0')).join('')}`;
+                }
+            }
+        }
+        return fallback;
+    };
+
+    const contrastBorderForRgb = rgb => {
+        const r = Array.isArray(rgb) ? rgb[0] : rgb?.r;
+        const g = Array.isArray(rgb) ? rgb[1] : rgb?.g;
+        const b = Array.isArray(rgb) ? rgb[2] : rgb?.b;
+        const luminance = (0.2126 * Number(r || 0) + 0.7152 * Number(g || 0) + 0.0722 * Number(b || 0)) / 255;
+        return luminance > 0.55 ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.5)';
+    };
+
     // Global array to track Pickr instances so we can destroy them to prevent memory leaks
     window.activePickrs = window.activePickrs || [];
     
@@ -323,22 +363,108 @@ export function createStyleEditorController(deps) {
                 if (wrapper.dataset.initialized) return; 
                 wrapper.dataset.initialized = "true";
     
-                const initialHex = wrapper.getAttribute('data-hex') || '#2563eb';
+                const initialHex = normalizePickerHex(wrapper.getAttribute('data-hex'));
                 const initialOp = parseFloat(wrapper.getAttribute('data-opacity') || 1.0);
+                const initialColor = hexAlpha(initialHex, initialOp);
+                const initialRgb = {
+                    r: parseInt(initialHex.slice(1, 3), 16),
+                    g: parseInt(initialHex.slice(3, 5), 16),
+                    b: parseInt(initialHex.slice(5, 7), 16),
+                    a: initialOp
+                };
+
+                // Pickr's button paints its preview in a pseudo-element whose
+                // built-in dimensions do not reliably follow our compact
+                // wrapper. Render the swatch ourselves so its fill always
+                // occupies the exact same box as the border.
+                wrapper.style.position = 'relative';
+                wrapper.style.boxSizing = 'border-box';
+                wrapper.style.overflow = 'hidden';
+                wrapper.style.backgroundColor = '#ffffff';
+                const checkerboard = [
+                    'linear-gradient(45deg, #94a3b8 25%, transparent 25%)',
+                    'linear-gradient(-45deg, #94a3b8 25%, transparent 25%)',
+                    'linear-gradient(45deg, transparent 75%, #94a3b8 75%)',
+                    'linear-gradient(-45deg, transparent 75%, #94a3b8 75%)'
+                ].join(',');
+                wrapper.style.backgroundSize = '8px 8px';
+                wrapper.style.backgroundPosition = '0 0, 0 4px, 4px -4px, -4px 0';
+
+                const swatchFill = document.createElement('span');
+                swatchFill.setAttribute('aria-hidden', 'true');
+                swatchFill.style.position = 'absolute';
+                swatchFill.style.inset = '0';
+                swatchFill.style.display = 'block';
+                swatchFill.style.borderRadius = 'inherit';
+                swatchFill.style.pointerEvents = 'none';
+                swatchFill.style.zIndex = '0';
+                wrapper.appendChild(swatchFill);
                 
                 const targetEl = document.createElement('div');
+                targetEl.style.position = 'absolute';
+                targetEl.style.inset = '0';
                 wrapper.appendChild(targetEl);
                 
                 const p = Pickr.create({
                     el: targetEl,
                     theme: 'nano',
-                    default: hexAlpha(initialHex, initialOp),
+                    default: initialColor,
                     position: 'left-middle',
                     components: {
                         preview: true,
                         opacity: true,
                         hue: true,
-                        interaction: { input: true, save: true }
+                        // The web app's Apply Style button is the single
+                        // commit action; Pickr's separate Save button only
+                        // added an unnecessary extra click.
+                        interaction: { input: true, save: false }
+                    }
+                });
+                // Keep the visible swatch synchronized even when Pickr starts
+                // with a persisted 8-digit color value.
+                p.setColor(initialColor, true);
+                const preview = wrapper.querySelector('.pcr-button');
+                const syncPreview = color => {
+                    const previewColor = color?.toHEXA?.().toString() || initialColor;
+                    const rgba = color?.toRGBA?.() || initialRgb;
+                    const contrastBorder = contrastBorderForRgb(rgba);
+                    const alpha = Array.isArray(rgba) ? rgba[3] : (rgba?.a ?? initialOp);
+                    swatchFill.style.backgroundColor = previewColor;
+                    // Only transparent colours need a checkerboard. In
+                    // particular, an opaque outline must remain a solid colour.
+                    wrapper.style.backgroundImage = alpha < 0.999 ? checkerboard : 'none';
+                    if (preview) {
+                        preview.style.position = 'absolute';
+                        preview.style.inset = '0';
+                        preview.style.display = 'block';
+                        preview.style.margin = '0';
+                        preview.style.width = '100%';
+                        preview.style.height = '100%';
+                        preview.style.opacity = '0';
+                        preview.style.zIndex = '1';
+                        preview.style.cursor = 'pointer';
+                        preview.style.pointerEvents = 'none';
+                    }
+                    wrapper.style.border = `1px solid ${contrastBorder}`;
+                };
+                syncPreview({
+                    toHEXA: () => ({ toString: () => initialColor }),
+                    toRGBA: () => initialRgb
+                });
+
+                // The generated Pickr button has theme-specific pseudo-element
+                // sizing, so use the aligned wrapper as the click target.
+                wrapper.setAttribute('role', 'button');
+                wrapper.setAttribute('tabindex', '0');
+                wrapper.style.cursor = 'pointer';
+                wrapper.addEventListener('click', event => {
+                    event.preventDefault();
+                    p.show();
+                });
+                wrapper.addEventListener('keydown', event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        p.show();
                     }
                 });
                 
@@ -346,11 +472,13 @@ export function createStyleEditorController(deps) {
                     const rgba = color.toRGBA();
                     wrapper.setAttribute('data-hex', color.toHEXA().toString().slice(0, 7));
                     wrapper.setAttribute('data-opacity', rgba[3].toFixed(2));
+                    syncPreview(color);
                     instance.hide();
                 }).on('change', (color) => {
                     const rgba = color.toRGBA();
                     wrapper.setAttribute('data-hex', color.toHEXA().toString().slice(0, 7));
                     wrapper.setAttribute('data-opacity', rgba[3].toFixed(2));
+                    syncPreview(color);
                 });
                 
                 wrapper.pickrInstance = p;

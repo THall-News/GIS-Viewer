@@ -122,31 +122,10 @@ const copyText = async text => {
     if (!copied) throw new Error('Clipboard access was not available.');
 };
 
-const renderOsmElements = (container, elements, onSelect) => {
-    if (!container) return;
-    container.replaceChildren();
-    elements.forEach(element => {
-        const summary = summarizeOsmElement(element);
-        const item = document.createElement('button');
-        item.type = 'button';
-        item.className = 'w-full text-left rounded border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/40 hover:bg-blue-50 dark:hover:bg-blue-900/30 p-1.5 transition-colors';
-        item.setAttribute('aria-label', `Prepare a whole-feature search for ${summary.name} (${summary.type} ${summary.id})`);
-        const tagText = Object.entries(summary.tags).slice(0, 5).map(([key, value]) => `${key}=${value}`).join(' · ');
-        item.innerHTML = `
-            <div class="flex items-center justify-between gap-2">
-                <span class="truncate font-semibold text-gray-700 dark:text-gray-200">${escapeHtml(summary.name)}</span>
-                <span class="shrink-0 text-[9px] text-gray-500 dark:text-gray-400">${escapeHtml(summary.type)} ${escapeHtml(summary.id)}</span>
-            </div>
-            <div class="mt-0.5 break-words text-[9px] text-gray-500 dark:text-gray-400">${escapeHtml(tagText || 'No tags')}</div>
-        `;
-        item.addEventListener('click', () => onSelect?.(element));
-        container.appendChild(item);
-    });
-};
-
 export const createMapContextMenuController = ({
     map,
     showToast,
+    onOsmQueryStart,
     onOsmResults,
     onOsmElementSelected,
     shouldSuppressContextMenu,
@@ -156,9 +135,6 @@ export const createMapContextMenuController = ({
     const menu = document.getElementById('map-context-menu');
     const coordinates = document.getElementById('map-context-coordinates');
     const osmStatus = document.getElementById('map-context-osm-status');
-    const osmResults = document.getElementById('map-context-osm-results');
-    const adminContext = document.getElementById('map-context-admin-context');
-    const adminResults = document.getElementById('map-context-admin-results');
     const copyButton = document.getElementById('btn-map-context-copy');
     const osmButton = document.getElementById('btn-map-context-osm');
     if (!map || !menu) return { open: () => {}, close: () => {}, destroy: () => {} };
@@ -209,64 +185,6 @@ export const createMapContextMenuController = ({
         menu.style.top = `${Math.max(minTop, Math.min(rawTop, maxTop))}px`;
     };
 
-    const renderAdministrativeContext = data => {
-        const areas = Array.isArray(data?.administrative_context) ? data.administrative_context : [];
-        if (!adminContext || !adminResults) return areas;
-        adminResults.replaceChildren();
-        adminContext.classList.remove('hidden');
-        if (!areas.length) {
-            const empty = document.createElement('div');
-            empty.className = 'text-gray-600 dark:text-gray-300';
-            empty.textContent = 'No containing administrative boundaries found.';
-            adminResults.appendChild(empty);
-            return areas;
-        }
-        areas.forEach(area => {
-            const row = document.createElement('button');
-            row.type = 'button';
-            row.className = 'w-full flex items-baseline justify-between gap-2 rounded px-1 text-left hover:bg-blue-100 dark:hover:bg-blue-900/40';
-            row.setAttribute('aria-label', `Prepare a whole-feature search for ${area?.name || 'administrative area'} admin level ${area?.admin_level || ''}`);
-            const name = document.createElement('span');
-            name.className = 'truncate font-medium';
-            name.textContent = area?.name || 'Unnamed administrative area';
-            name.title = name.textContent;
-            const level = document.createElement('span');
-            level.className = 'shrink-0 font-mono text-[9px] text-blue-700 dark:text-blue-300';
-            level.textContent = `admin_level ${area?.admin_level || '—'}`;
-            row.append(name, level);
-            row.addEventListener('click', () => {
-                onOsmElementSelected?.(administrativeAreaToOsmElement(area), activePoint);
-                close();
-            });
-            adminResults.appendChild(row);
-        });
-        return areas;
-    };
-
-    const renderOsm = data => {
-        const administrativeAreas = renderAdministrativeContext(data);
-        const elements = taggedOsmElements(data?.elements);
-        menu.classList.toggle('map-context-menu-expanded', elements.length > 0 || administrativeAreas.length > 0);
-        if (!elements.length) {
-            setStatus(osmStatus, 'No OSM elements were found within 25 metres.');
-            osmResults.replaceChildren();
-            requestAnimationFrame(() => positionMenu(activeOriginalEvent));
-            return;
-        }
-        setStatus(osmStatus, 'Nearby OSM elements:');
-        renderOsmElements(osmResults, elements, element => {
-            onOsmElementSelected?.(element, activePoint);
-            close();
-        });
-        requestAnimationFrame(() => positionMenu(activeOriginalEvent));
-        if (Array.isArray(data?.warnings) && data.warnings.length) {
-            const warning = document.createElement('div');
-            warning.className = 'mt-1 text-[9px] text-amber-700 dark:text-amber-300';
-            warning.textContent = data.warnings.join(' ');
-            osmResults.appendChild(warning);
-        }
-    };
-
     const open = event => {
         if (shouldSuppressContextMenu?.(event)) {
             event?.originalEvent?.preventDefault?.();
@@ -287,9 +205,6 @@ export const createMapContextMenuController = ({
         activeOriginalEvent = event.originalEvent;
         coordinates.textContent = formatContextCoordinates(activePoint);
         setStatus(osmStatus, '');
-        osmResults.replaceChildren();
-        adminContext?.classList.add('hidden');
-        adminResults?.replaceChildren();
         menu.classList.remove('hidden');
         positionMenu(event.originalEvent);
         requestAnimationFrame(() => positionMenu(event.originalEvent));
@@ -305,7 +220,8 @@ export const createMapContextMenuController = ({
         osmButton.disabled = true;
         osmButton.classList.add('opacity-60', 'cursor-wait');
         osmButton.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Querying OSM…';
-        setStatus(osmStatus, 'Querying nearby OpenStreetMap elements…');
+        onOsmQueryStart?.(point);
+        setStatus(osmStatus, 'Querying OpenStreetMap features at this point…');
         try {
             const response = await fetchImpl('/api/osm/query-point', {
                 method: 'POST',
@@ -320,8 +236,9 @@ export const createMapContextMenuController = ({
             const data = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(data.error || `OSM query failed (${response.status}).`);
             if (token !== requestToken || !activePoint) return;
-            renderOsm(data);
             onOsmResults?.(data, point);
+            setStatus(osmStatus, 'OSM results loaded in CATALOG.');
+            close();
         } catch (error) {
             if (error.name === 'AbortError') return;
             if (token !== requestToken) return;

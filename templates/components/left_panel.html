@@ -135,18 +135,6 @@
                     </button>
                 </div>
 
-                <!-- Right-click OSM Results Drawer -->
-                <div id="osm-inspect-container" class="hidden flex-col space-y-1 bg-blue-100/70 dark:bg-blue-950/80 p-2 rounded border border-blue-300 dark:border-blue-700 text-xs mt-1.5">
-                    <div class="flex justify-between items-center border-b border-blue-200 dark:border-blue-800 pb-1">
-                        <span class="font-bold text-blue-900 dark:text-blue-200 text-[10px] flex items-center space-x-1">
-                            <i class="fa-solid fa-tags"></i>
-                            <span>Nearby OSM Results</span>
-                        </span>
-                        <button id="btn-close-inspect" type="button" class="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 text-xs px-1"><i class="fa-solid fa-times"></i></button>
-                    </div>
-                    <p id="osm-inspect-status" class="text-[10px] italic text-blue-800 dark:text-blue-300">Right-click a map point and query OSM...</p>
-                    <div id="osm-inspect-results" class="max-h-32 overflow-y-auto custom-scroll space-y-0.5 pr-1"></div>
-                </div>
             </div>
 
             <!-- Fetch Button for URL Server Sources (ArcGIS / WFS) -->
@@ -187,7 +175,7 @@
                 <p class="text-xs text-gray-400 dark:text-gray-500 italic text-center mt-3">No layers fetched yet.</p>
             </div>
 
-            <div class="pt-1.5 border-t border-gray-200 dark:border-gray-700 shrink-0 mt-1">
+            <div id="available-bulk-actions" class="hidden pt-1.5 border-t border-gray-200 dark:border-gray-700 shrink-0 mt-1">
                 <button id="btn-add" disabled class="w-full bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-semibold text-xs py-1.5 rounded shadow-xs transition-colors flex items-center justify-center space-x-1">
                     <i class="fa-solid fa-layer-group text-[11px]"></i>
                     <span>Add Selected Layers to Map</span>
@@ -249,13 +237,27 @@
                     </select>
                 </div>
 
-                <input type="number" id="filter-radius" placeholder="Radius (km)" value="5" class="hidden w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-0.5 text-xs">
+                <div id="filter-radius-controls" class="hidden items-center gap-1">
+                    <span class="text-[11px] font-semibold text-gray-700 dark:text-gray-300 shrink-0">Radius</span>
+                    <input type="number" id="filter-radius" placeholder="Amount" value="5" min="0" step="any" class="w-20 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-2 py-0.5 text-xs">
+                    <select id="filter-radius-unit" class="flex-1 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">
+                        <option value="meters">Meters</option>
+                        <option value="kilometers" selected>Kilometers</option>
+                        <option value="feet">Feet</option>
+                        <option value="miles">Miles</option>
+                    </select>
+                </div>
 
                 <button id="btn-draw" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs py-1 rounded transition-colors shadow-xs">
                     <i class="fa-solid fa-pen-ruler mr-1 text-[10px]"></i> Draw Area on Map
                 </button>
 
                 <p id="draw-status" class="hidden text-[11px] italic text-blue-700 dark:text-blue-400 font-medium"></p>
+
+                <label id="crop-invert-option" class="flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-gray-300 cursor-pointer">
+                    <input id="filter-invert" type="checkbox" class="h-3 w-3 accent-blue-600">
+                    <span>Invert</span>
+                </label>
 
                 <div id="filter-data-container" class="hidden flex-col space-y-1.5">
                     <select id="filter-data-col" class="w-full border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white rounded px-1.5 py-0.5 text-xs">

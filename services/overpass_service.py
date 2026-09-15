@@ -12,13 +12,15 @@ from config import GLOBAL_OVERPASS_ENDPOINTS
 
 MAX_PROXIMITY_METERS = 25000.0
 MAX_POINT_QUERY_RADIUS_METERS = 100.0
-MAX_POINT_QUERY_ELEMENTS = 250
+MAX_POINT_QUERY_ELEMENTS = 1000
 _NOMINATIM_LOCK = threading.Lock()
 _NOMINATIM_CACHE = {}
 _LAST_NOMINATIM_REQUEST = 0.0
 _OVERPASS_RATE_LOCK = threading.Lock()
 _LAST_OVERPASS_REQUEST = {}
 _OVERPASS_ENDPOINTS_LOCK = threading.Lock()
+_OVERPASS_ENDPOINT_FAILURE_UNTIL = {}
+_OVERPASS_ENDPOINT_COOLDOWN_SECONDS = 60.0
 _OVERPASS_CACHE_LOCK = threading.Lock()
 _OVERPASS_CACHE = {}
 
@@ -155,19 +157,91 @@ def build_point_query(latitude, longitude, radius_m=25.0, timeout_val=15):
     radius_text = f'{radius_m:g}'
     return (
         f'[out:json][timeout:{timeout_val}];\n'
+        f'is_in({lat_text},{lon_text})->.containingAreas;\n'
         '(\n'
         f'  node(around:{radius_text},{lat_text},{lon_text});\n'
         f'  way(around:{radius_text},{lat_text},{lon_text});\n'
         f'  relation(around:{radius_text},{lat_text},{lon_text});\n'
+        '  way(pivot.containingAreas);\n'
+        '  relation(pivot.containingAreas);\n'
         ');\n'
-        'out body geom;'
+        'out body center;'
     )
 
 
+def _tagged_point_elements(elements):
+    """Keep one copy of every tagged nearby or containing OSM object.
+
+    Overpass returns many ordinary nodes while a point query is being used to
+    discover a way or relation.  Filtering before applying the display cap
+    prevents those untagged nodes from hiding useful boundaries, water areas,
+    and other containing features.
+    """
+    priority_keys = (
+        'boundary', 'natural', 'waterway', 'landuse', 'place',
+        'leisure', 'amenity', 'building', 'highway', 'railway'
+    )
+    unique = {}
+    for element in elements or []:
+        if not isinstance(element, dict):
+            continue
+        tags = element.get('tags')
+        if not isinstance(tags, dict) or not tags:
+            continue
+        element_type = str(element.get('type') or '')
+        element_id = element.get('id')
+        key = (element_type, str(element_id))
+        unique[key] = element
+
+    def sort_key(element):
+        tags = element.get('tags') or {}
+        type_rank = {'relation': 0, 'way': 1, 'node': 2}.get(element.get('type'), 3)
+        tag_rank = min((priority_keys.index(key) for key in priority_keys if key in tags), default=len(priority_keys))
+        return type_rank, tag_rank, str(tags.get('name') or tags.get('ref') or '').lower()
+
+    return sorted(unique.values(), key=sort_key)
+
+
+def _administrative_context_from_elements(elements):
+    areas = []
+    for element in elements or []:
+        if not isinstance(element, dict) or element.get('type') != 'relation':
+            continue
+        tags = element.get('tags') or {}
+        if not isinstance(tags, dict) or tags.get('boundary') != 'administrative':
+            continue
+        admin_level = str(tags.get('admin_level') or '').strip()
+        if not admin_level:
+            continue
+        areas.append({
+            'name': tags.get('name') or f"Relation {element.get('id')}",
+            'admin_level': admin_level,
+            'osm_type': element.get('type'),
+            'osm_id': element.get('id'),
+        })
+
+    def sort_key(area):
+        try:
+            level = (0, int(area['admin_level']))
+        except (TypeError, ValueError):
+            level = (1, str(area['admin_level']))
+        return level + (str(area.get('name') or '').lower(),)
+
+    return sorted(areas, key=sort_key)
+
+
 def search_overpass_point(latitude, longitude, radius_m=25.0, timeout_val=15, include_admin_context=False):
-    """Fetch nearby OSM elements for the map context-menu inspector."""
+    """Fetch nearby and containing OSM elements for the map inspector."""
     query = build_point_query(latitude, longitude, radius_m, timeout_val)
-    res = execute_overpass_query(query, log_context='right-click OSM point query')
+    res = execute_overpass_query(
+        query,
+        log_context='right-click OSM point query',
+        # Allow the containing-area lookup enough time to finish on a healthy
+        # mirror. Failed mirrors are still skipped by the endpoint cooldown
+        # in execute_overpass_query, so this does not reintroduce retries.
+        request_timeout=min(max(int(timeout_val) + 5, 15), 25),
+        reject_empty=True,
+    )
     if res.status_code == 504:
         raise TimeoutError('Overpass API timed out while querying the clicked point.')
     res.raise_for_status()
@@ -176,9 +250,10 @@ def search_overpass_point(latitude, longitude, radius_m=25.0, timeout_val=15, in
     if not isinstance(elements, list):
         raise ValueError('Overpass returned an invalid elements collection')
 
-    truncated = len(elements) > MAX_POINT_QUERY_ELEMENTS
+    tagged_elements = _tagged_point_elements(elements)
+    truncated = len(tagged_elements) > MAX_POINT_QUERY_ELEMENTS
     result = {
-        'elements': elements[:MAX_POINT_QUERY_ELEMENTS],
+        'elements': tagged_elements[:MAX_POINT_QUERY_ELEMENTS],
         'metadata': {
             'source': 'OpenStreetMap',
             'attribution': '© OpenStreetMap contributors',
@@ -188,49 +263,32 @@ def search_overpass_point(latitude, longitude, radius_m=25.0, timeout_val=15, in
             'radius_m': float(radius_m),
             'query_timeout_s': int(timeout_val),
             'query_element_count': len(elements),
+            'tagged_element_count': len(tagged_elements),
         },
         'warnings': [],
     }
     if truncated:
         result['warnings'].append(
-            f'Overpass returned {len(elements)} elements; only the first {MAX_POINT_QUERY_ELEMENTS} are shown.'
+            f'Overpass returned {len(tagged_elements)} tagged elements; only the first {MAX_POINT_QUERY_ELEMENTS} are shown.'
         )
     if include_admin_context:
-        try:
-            context = search_overpass_containing_boundaries(
-                latitude,
-                longitude,
-                admin_level=None,
-                timeout_val=timeout_val,
-            )
-            areas = []
-            for element in context.get('elements') or []:
-                if not isinstance(element, dict) or element.get('type') != 'relation':
-                    continue
-                tags = element.get('tags') or {}
-                if not isinstance(tags, dict) or tags.get('boundary') != 'administrative':
-                    continue
-                admin_level = str(tags.get('admin_level') or '').strip()
-                if not admin_level:
-                    continue
-                areas.append({
-                    'name': tags.get('name') or f"Relation {element.get('id')}",
-                    'admin_level': admin_level,
-                    'osm_type': element.get('type'),
-                    'osm_id': element.get('id'),
-                })
-
-            def sort_key(area):
-                try:
-                    level = (0, int(area['admin_level']))
-                except (TypeError, ValueError):
-                    level = (1, str(area['admin_level']))
-                return level + (str(area.get('name') or '').lower(),)
-
-            result['administrative_context'] = sorted(areas, key=sort_key)
-        except Exception as exc:
-            result['administrative_context'] = []
-            result['warnings'].append(f'Administrative context was unavailable: {exc}')
+        administrative_context = _administrative_context_from_elements(elements)
+        if not administrative_context:
+            # The all-data query normally includes containing relations. Keep
+            # a narrow fallback for endpoints that do not resolve pivot areas
+            # consistently, without making every point query pay for a second
+            # request.
+            try:
+                context = search_overpass_containing_boundaries(
+                    latitude,
+                    longitude,
+                    admin_level=None,
+                    timeout_val=timeout_val,
+                )
+                administrative_context = _administrative_context_from_elements(context.get('elements'))
+            except Exception as exc:
+                result['warnings'].append(f'Administrative context was unavailable: {exc}')
+        result['administrative_context'] = administrative_context
     return result
 
 
@@ -395,20 +453,38 @@ def build_named_way_proximity_query(
     return q
 
 
-def execute_overpass_query(query_string, log_context='query'):
-    """Execute an Overpass query while emitting browser-visible diagnostics."""
+def _mark_overpass_endpoint_failed(url):
+    with _OVERPASS_ENDPOINTS_LOCK:
+        _OVERPASS_ENDPOINT_FAILURE_UNTIL[url] = time.monotonic() + _OVERPASS_ENDPOINT_COOLDOWN_SECONDS
+        if GLOBAL_OVERPASS_ENDPOINTS and GLOBAL_OVERPASS_ENDPOINTS[-1] != url:
+            GLOBAL_OVERPASS_ENDPOINTS[:] = [ep for ep in GLOBAL_OVERPASS_ENDPOINTS if ep != url] + [url]
+
+
+def execute_overpass_query(query_string, log_context='query', request_timeout=45, reject_empty=False):
+    """Execute an Overpass query and fail over quickly between public servers."""
     headers = {'User-Agent': 'GIS-Layer-Previewer/1.0 (Python/Requests)'}
     # Work on a per-request copy so one search cannot corrupt the shared
     # endpoint order for later searches.
     with _OVERPASS_ENDPOINTS_LOCK:
         endpoints = list(GLOBAL_OVERPASS_ENDPOINTS)
+        now = time.monotonic()
+        available = [
+            url for url in endpoints
+            if _OVERPASS_ENDPOINT_FAILURE_UNTIL.get(url, 0.0) <= now
+        ]
+        cooled = [url for url in endpoints if url not in available]
+        # Prefer healthy mirrors, but keep cooling-down mirrors in this
+        # request as fallbacks. A server can recover before its cooldown ends,
+        # and excluding every backup after one more failure made the query
+        # appear to stop instantly.
+        if available:
+            endpoints = available + cooled
 
-    query_bytes = len(str(query_string).encode('utf-8'))
     context = str(log_context or 'query')
+    empty_response = None
 
-    for attempt, url in enumerate(endpoints, start=1):
+    for url in endpoints:
         started_at = time.monotonic()
-        print(f'[Overpass] {context}: trying server {attempt}/{len(endpoints)} {url} ({query_bytes} query bytes)')
         try:
             # Keep public endpoint traffic bounded when several grid cells or
             # browser requests arrive concurrently. The timestamp is updated
@@ -418,48 +494,55 @@ def execute_overpass_query(query_string, log_context='query'):
                 if wait > 0:
                     time.sleep(wait)
                 _LAST_OVERPASS_REQUEST[url] = time.monotonic()
-            res = requests.post(url, data={'data': query_string}, headers=headers, timeout=45)
+            res = requests.post(url, data={'data': query_string}, headers=headers, timeout=request_timeout)
             elapsed = time.monotonic() - started_at
-            try:
-                response_bytes = len(res.content or b'')
-            except (TypeError, AttributeError):
-                response_bytes = '?'
-            print(f'[Overpass] {context}: server response HTTP {res.status_code} from {url} after {elapsed:.1f}s ({response_bytes} response bytes)')
-
-            if res.status_code == 429:
-                print(f'[Overpass] {context}: rate limited by {url}; retrying once after 3s')
-                time.sleep(3)
-                res = requests.post(url, data={'data': query_string}, headers=headers, timeout=45)
-                print(f'[Overpass] {context}: retry response HTTP {res.status_code} from {url}')
-                if res.status_code == 429:
-                    print(f'[Overpass] {context}: {url} is still rate limiting; moving to backup server')
-                    continue
-
-            if res.status_code in [500, 502, 503, 504]:
-                print(f'[Overpass] {context}: server {url} returned HTTP {res.status_code}; trying backup server')
+            if res.status_code in {403, 408, 425, 429, 500, 502, 503, 504, 522, 524}:
+                print(f'[Overpass] {context}: server {url} returned HTTP {res.status_code} after {elapsed:.1f}s; trying backup server')
+                _mark_overpass_endpoint_failed(url)
                 continue
 
             if res.status_code == 400:
                 print(f'[Overpass] {context}: bad request from {url}: {res.text}')
                 return res
 
+            if reject_empty:
+                try:
+                    payload = res.json()
+                except (TypeError, ValueError):
+                    payload = None
+                if isinstance(payload, dict) and isinstance(payload.get('elements'), list) and not payload['elements']:
+                    # Some mirrors return a successful but false-empty result
+                    # for point queries that use containing-area selectors.
+                    # Keep the response as a legitimate last resort, but let
+                    # another mirror provide the result when possible.
+                    empty_response = empty_response or res
+                    _mark_overpass_endpoint_failed(url)
+                    continue
+
             with _OVERPASS_ENDPOINTS_LOCK:
+                _OVERPASS_ENDPOINT_FAILURE_UNTIL.pop(url, None)
                 if GLOBAL_OVERPASS_ENDPOINTS and GLOBAL_OVERPASS_ENDPOINTS[0] != url:
                     GLOBAL_OVERPASS_ENDPOINTS[:] = [url] + [ep for ep in GLOBAL_OVERPASS_ENDPOINTS if ep != url]
-                    print(f'[Overpass] {context}: selected {url} as the preferred server for later requests')
-
-            print(f'[Overpass] {context}: completed successfully on {url}')
 
             return res
         except requests.exceptions.ConnectionError:
             elapsed = time.monotonic() - started_at
             print(f'[Overpass] {context}: connection failed for {url} after {elapsed:.1f}s; trying backup server')
+            _mark_overpass_endpoint_failed(url)
             continue
-        except requests.exceptions.ReadTimeout:
+        except requests.exceptions.Timeout:
             elapsed = time.monotonic() - started_at
             print(f'[Overpass] {context}: server {url} timed out after {elapsed:.1f}s; trying backup server')
+            _mark_overpass_endpoint_failed(url)
+            continue
+        except requests.exceptions.RequestException as exc:
+            elapsed = time.monotonic() - started_at
+            print(f'[Overpass] {context}: request failed for {url} after {elapsed:.1f}s ({exc}); trying backup server')
+            _mark_overpass_endpoint_failed(url)
             continue
 
+    if empty_response is not None:
+        return empty_response
     raise Exception('All public Overpass servers failed, timed out, or returned errors.')
 
 
