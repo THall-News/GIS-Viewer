@@ -56,7 +56,7 @@ continue to work, but catalog searches and source registration show a clear
 catalog-unavailable warning. The previewer does not silently rebuild the old
 JSON catalog or query providers during an assistant request.
 
-### Local EPSG:3857 imagery
+### Local georeferenced imagery
 
 Choose `Upload File` in `Data Sources Config` and select an axis-aligned PNG
 together with its matching `.pgw` world file. The importer expects the PGW
@@ -64,6 +64,13 @@ coordinates to be EPSG:3857 metres, validates the Web Mercator extent, converts
 the resulting bounds to WGS84 for Leaflet, and stores the image as a regular
 local raster layer in the workspace. Rotated PGW files are rejected because Leaflet's
 `ImageOverlay` cannot represent image rotation.
+
+GeoTIFF (`.tif`/`.tiff`) files can be selected directly. The importer parses the
+embedded georeferencing and CRS metadata in the browser and renders the original
+raster through `GeoRasterLayer`, a Leaflet grid layer that handles projection and
+tile rendering without first converting the TIFF to a PNG. The original TIFF is
+stored with the workspace so the layer can be restored after refresh or workspace
+import.
 
 ## Safety and deployment
 

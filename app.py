@@ -7,7 +7,7 @@ import sys
 
 from flask import Flask, jsonify, make_response, render_template, send_from_directory
 
-from config import ensure_storage_files
+from config import CATALOG_ADMIN_URL, ensure_storage_files
 from routes.headless import headless_bp
 from routes.geometry import geometry_bp
 from routes.proxy import proxy_bp
@@ -72,7 +72,12 @@ def create_app() -> Flask:
 
     @app.route('/')
     def index():
-        response = make_response(render_template('index.html'))
+        catalog_admin_url = CATALOG_ADMIN_URL.rstrip('/')
+        if not catalog_admin_url.endswith('/admin'):
+            catalog_admin_url = f'{catalog_admin_url}/admin'
+        response = make_response(render_template(
+            'index.html', catalog_admin_url=catalog_admin_url
+        ))
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         return response
 

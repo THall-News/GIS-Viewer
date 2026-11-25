@@ -68,6 +68,8 @@ const rawState = {
         geometryType: null,
         points: [],
         originalPoints: [],
+        originalGeometry: null,
+        previewGeometry: null,
         parts: [],
         originalParts: [],
         activePartIndex: 0

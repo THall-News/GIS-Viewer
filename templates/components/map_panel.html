@@ -64,6 +64,43 @@
       <button id="btn-geometry-edit-close" type="button" class="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Close geometry editing"><i class="fa-solid fa-times"></i></button>
     </div>
     <div class="mt-1 text-[10px] text-gray-500 dark:text-gray-400">Drag vertices · click an edge to insert · Cmd/Ctrl-click to remove · Backspace/Delete removes the last vertex</div>
+    <div class="mt-2 border-t border-gray-200 dark:border-gray-700 pt-1.5">
+      <button id="btn-geometry-simplify-toggle" type="button" class="flex w-full items-center justify-between text-left text-[10px] font-semibold text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-300">
+        <span><i class="fa-solid fa-compress mr-1"></i>Simplify Shape</span>
+        <i id="geometry-simplify-toggle-icon" class="fa-solid fa-chevron-down text-[9px]"></i>
+      </button>
+      <div id="geometry-simplify-controls" class="hidden mt-1.5 space-y-1.5">
+        <label class="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-300">
+          <span class="w-16 shrink-0">Method</span>
+          <select id="geometry-simplify-mode" class="min-w-0 flex-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-1 py-0.5 text-[10px] text-gray-800 dark:text-gray-200">
+            <option value="percentage">Retain percentage</option>
+            <option value="points">Total points</option>
+            <option value="size">GeoJSON size</option>
+          </select>
+        </label>
+        <div class="flex items-center gap-1">
+          <label for="geometry-simplify-target" class="w-16 shrink-0 text-[10px] text-gray-600 dark:text-gray-300">Target</label>
+          <input id="geometry-simplify-target" type="number" min="0" step="any" value="80" class="min-w-0 flex-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-1 py-0.5 text-[10px] text-gray-800 dark:text-gray-200">
+          <select id="geometry-simplify-unit" class="hidden w-20 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-1 py-0.5 text-[10px] text-gray-800 dark:text-gray-200">
+            <option value="1">Bytes</option>
+            <option value="1024" selected>KB</option>
+            <option value="1048576">MB</option>
+          </select>
+          <span id="geometry-simplify-target-suffix" class="w-7 text-[10px] text-gray-500 dark:text-gray-400">%</span>
+        </div>
+        <label class="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-300">
+          <span class="w-16 shrink-0">Seed</span>
+          <input id="geometry-simplify-seed" type="number" step="1" placeholder="Optional" class="min-w-0 flex-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-1 py-0.5 text-[10px] text-gray-800 dark:text-gray-200">
+        </label>
+        <div id="geometry-simplify-stats" class="text-[10px] leading-tight text-gray-500 dark:text-gray-400"></div>
+        <div id="geometry-simplify-warning" class="hidden text-[10px] leading-tight text-amber-700 dark:text-amber-300"></div>
+        <div class="flex gap-1">
+          <button id="btn-geometry-simplify-preview" type="button" class="flex-1 rounded bg-blue-600 px-1.5 py-1 text-[10px] font-semibold text-white hover:bg-blue-700">Preview</button>
+          <button id="btn-geometry-simplify-apply" type="button" class="flex-1 rounded bg-emerald-600 px-1.5 py-1 text-[10px] font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50" disabled>Apply Simplification</button>
+          <button id="btn-geometry-simplify-reset" type="button" class="rounded border border-gray-300 dark:border-gray-600 px-1.5 py-1 text-[10px] text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">Reset</button>
+        </div>
+      </div>
+    </div>
     <div class="flex gap-1 mt-1.5">
       <button id="btn-geometry-edit-save" type="button" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white rounded px-2 py-1 font-semibold">Save geometry</button>
       <button id="btn-geometry-edit-cancel" type="button" class="border border-gray-300 dark:border-gray-600 rounded px-2 py-1">Cancel</button>

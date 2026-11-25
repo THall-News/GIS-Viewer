@@ -32,7 +32,11 @@ import {
     osmIdentityTags,
     administrativeAreaToOsmElement
 } from './mapContextMenu.js';
-import { parsePgwText, pgwToEpsg3857Bounds } from './geoReferencedRaster.js';
+import {
+    parsePgwText,
+    pgwToEpsg3857Bounds,
+} from './geoReferencedRaster.js';
+import { simplifyFeature } from './geometrySimplify.js';
 
 
 // uiRenderer emits semantic actions and does not import this module. This
@@ -1494,12 +1498,12 @@ const updateUndoRedoButtons = () => {
     if (btnRedo) btnRedo.disabled = historyIndex >= historyStack.length - 1;
 };
 
-const handleUndo = () => {
+const handleUndo = async () => {
     if (historyIndex > 0) {
         historyIndex--;
         isRestoringHistory = true;
         try {
-            restoreWorkspaceState(JSON.parse(JSON.stringify(historyStack[historyIndex])), { restoreMapView: false });
+            await restoreWorkspaceState(JSON.parse(JSON.stringify(historyStack[historyIndex])), { restoreMapView: false });
         } finally {
             isRestoringHistory = false;
             updateUndoRedoButtons();
@@ -1508,12 +1512,12 @@ const handleUndo = () => {
     }
 };
 
-const handleRedo = () => {
+const handleRedo = async () => {
     if (historyIndex < historyStack.length - 1) {
         historyIndex++;
         isRestoringHistory = true;
         try {
-            restoreWorkspaceState(JSON.parse(JSON.stringify(historyStack[historyIndex])), { restoreMapView: false });
+            await restoreWorkspaceState(JSON.parse(JSON.stringify(historyStack[historyIndex])), { restoreMapView: false });
         } finally {
             isRestoringHistory = false;
             updateUndoRedoButtons();
@@ -1928,6 +1932,7 @@ const serializeWorkspace = () => {
             originalGeoJsonData: l.originalGeoJsonData ? sanitizeGeoJSON(l.originalGeoJsonData) : null,
             customStyle: l.customStyle,
             isRasterImage: l.isRasterImage === true,
+            rasterFormat: l.rasterFormat || null,
             rasterDataUrl: l.rasterDataUrl || null,
             rasterCrs: l.rasterCrs || null,
             rasterBounds: l.rasterBounds || null,
@@ -2013,7 +2018,7 @@ const normalizePersistedRasterBounds = bounds => {
     return [[south, west], [north, east]];
 };
 
-const restoreWorkspaceState = (data, { restoreMapView = true } = {}) => {
+const restoreWorkspaceState = async (data, { restoreMapView = true } = {}) => {
     closeAllPanels(); clearAllPreviews();
     AppState.currentSoloLayerKey = null; 
     let repairedMapView = false;
@@ -2034,7 +2039,7 @@ const restoreWorkspaceState = (data, { restoreMapView = true } = {}) => {
     }
 
     if (data.activeLayers && Array.isArray(data.activeLayers)) {
-        data.activeLayers.forEach(lData => {
+        for (const lData of data.activeLayers) {
           try {
             const uniqueKey = lData.uniqueKey;
            if (lData.isFolder) {
@@ -2042,26 +2047,40 @@ const restoreWorkspaceState = (data, { restoreMapView = true } = {}) => {
                     isFolder: true, uniqueKey: uniqueKey, displayName: lData.displayName,
                     isVisible: lData.isVisible ?? true, isExpanded: lData.isExpanded ?? true, parentId: lData.parentId || null
                 }];
-                return;
+                continue;
             }
 
             let mapLayer;
             const paneName = 'pane-' + uniqueKey;
             if (!map.getPane(paneName)) map.createPane(paneName);
             
+            let rasterBounds = normalizePersistedRasterBounds(lData.rasterBounds);
             if (lData.isRasterImage) {
                 const rasterDataUrl = typeof lData.rasterDataUrl === 'string'
-                    && (lData.rasterDataUrl.startsWith('data:image/png') || lData.rasterDataUrl.startsWith('data:application/octet-stream'))
+                    && lData.rasterDataUrl.startsWith('data:')
+                    && (lData.rasterFormat === 'geotiff'
+                        || lData.rasterDataUrl.startsWith('data:image/png')
+                        || lData.rasterDataUrl.startsWith('data:application/octet-stream'))
                     ? lData.rasterDataUrl : null;
-                const rasterBounds = normalizePersistedRasterBounds(lData.rasterBounds);
-                if (!rasterDataUrl || !rasterBounds) throw new Error('Invalid persisted raster image data.');
+                if (!rasterDataUrl) throw new Error('Invalid persisted raster image data.');
                 const rasterOpacity = Number.isFinite(Number(lData.rasterOpacity))
                     ? Math.max(0, Math.min(1, Number(lData.rasterOpacity))) : 0.8;
-                mapLayer = L.imageOverlay(rasterDataUrl, rasterBounds, {
-                    pane: paneName,
-                    opacity: rasterOpacity,
-                    interactive: false,
-                });
+                if (lData.rasterFormat === 'geotiff') {
+                    const restoredRaster = await createGeoRasterMapLayerFromDataUrl(
+                        rasterDataUrl,
+                        paneName,
+                        rasterOpacity,
+                    );
+                    mapLayer = restoredRaster.mapLayer;
+                    rasterBounds = restoredRaster.bounds;
+                } else {
+                    if (!rasterBounds) throw new Error('Invalid persisted raster image bounds.');
+                    mapLayer = L.imageOverlay(rasterDataUrl, rasterBounds, {
+                        pane: paneName,
+                        opacity: rasterOpacity,
+                        interactive: false,
+                    });
+                }
             } else if (lData.geoJsonData) {
                 mapLayer = createCustomGeoJSONLayer(lData.geoJsonData, lData.customStyle, paneName);
             } else if (lData.exportUrl) {
@@ -2077,9 +2096,10 @@ const restoreWorkspaceState = (data, { restoreMapView = true } = {}) => {
                     uniqueKey: uniqueKey, id: lData.id, displayName: lData.displayName, mapLayer: mapLayer, exportUrl: lData.exportUrl,
                     isLocalGeoJSON: lData.isLocalGeoJSON, geoJsonData: lData.geoJsonData, originalGeoJsonData: lData.originalGeoJsonData || null, customStyle: lData.customStyle,
                     isRasterImage: lData.isRasterImage === true,
+                    rasterFormat: lData.rasterFormat || null,
                     rasterDataUrl: lData.rasterDataUrl || null,
                     rasterCrs: lData.rasterCrs || null,
-                    rasterBounds: normalizePersistedRasterBounds(lData.rasterBounds),
+                    rasterBounds,
                     rasterOpacity: Number.isFinite(Number(lData.rasterOpacity)) ? Math.max(0, Math.min(1, Number(lData.rasterOpacity))) : null,
                     isVisible: lData.isVisible ?? true, parentId: lData.parentId || null, isFolder: false
                 }];
@@ -2089,7 +2109,7 @@ const restoreWorkspaceState = (data, { restoreMapView = true } = {}) => {
             // rest of the workspace from being restored.
             console.warn(`Skipped cached layer ${lData?.displayName || lData?.uniqueKey || 'unknown'} during restore`, error);
           }
-        });
+        }
     }
 
     if (AppState.activeLayers.length > 0) {
@@ -3860,13 +3880,13 @@ getEl('file-import-workspace')?.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
         try {
             const data = JSON.parse(evt.target.result);
             if (!data.activeLayers || !data.mapState) throw new Error("Invalid workspace file format.");
             
             isRestoringHistory = true;
-            try { restoreWorkspaceState(data); } 
+            try { await restoreWorkspaceState(data); }
             finally { isRestoringHistory = false; }
             
             autoSaveWorkspace();
@@ -4606,7 +4626,7 @@ async function restoreLegacyLayerCache() {
         isFolder: false,
         parentId: null
     }));
-    restoreWorkspaceState({ activeLayers }, { restoreMapView: false });
+    await restoreWorkspaceState({ activeLayers }, { restoreMapView: false });
     return AppState.activeLayers.length > 0;
 }
 
@@ -4618,7 +4638,7 @@ window.addEventListener('DOMContentLoaded', async () => {
             console.log("Restoring workspace from IndexedDB...");
             isRestoringHistory = true; 
             try {
-                const repairedMapView = restoreWorkspaceState(savedState);
+                const repairedMapView = await restoreWorkspaceState(savedState);
                 if (repairedMapView) autoSaveWorkspace();
             } finally {
                 isRestoringHistory = false; 
@@ -4659,7 +4679,8 @@ if ('serviceWorker' in navigator) {
 let pendingRasterPngFile = null;
 let pendingRasterPgwFile = null;
 
-const rasterFileStem = file => file.name.replace(/\.(png|pgw)$/i, '').toLowerCase();
+const rasterFileStem = file => file.name.replace(/\.(png|pgw|tif|tiff)$/i, '').toLowerCase();
+const rasterFileExtension = file => file.name.split('.').pop().toLowerCase();
 
 const loadRasterImageDimensions = async file => {
     if (typeof createImageBitmap === 'function') {
@@ -4689,8 +4710,91 @@ const loadRasterImageDimensions = async file => {
 const loadRasterDataUrl = file => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error || new Error('The PNG could not be read.'));
+    reader.onerror = () => reject(reader.error || new Error('The raster file could not be read.'));
     reader.readAsDataURL(file);
+});
+
+const leafletBoundsToArray = bounds => {
+    if (Array.isArray(bounds)) {
+        const normalized = normalizePersistedRasterBounds(bounds);
+        if (!normalized) throw new Error('The raster did not produce a valid map extent.');
+        return normalized;
+    }
+    if (!bounds || typeof bounds.getSouth !== 'function' || !bounds.isValid?.()) {
+        throw new Error('The raster did not produce a valid map extent.');
+    }
+    return [
+        [bounds.getSouth(), bounds.getWest()],
+        [bounds.getNorth(), bounds.getEast()],
+    ];
+};
+
+const addRasterLayerToMap = ({
+    fileName,
+    rasterDataUrl,
+    bounds,
+    rasterCrs,
+    rasterFormat = 'png',
+    createMapLayer,
+    successMessage,
+}) => {
+    const uniqueKey = Math.random().toString(36).substr(2, 9);
+    const paneName = 'pane-' + uniqueKey;
+    let mapLayer = null;
+
+    try {
+        if (!map.getPane(paneName)) map.createPane(paneName);
+        mapLayer = createMapLayer({ paneName, opacity: 0.8 });
+        if (!mapLayer || typeof mapLayer.addTo !== 'function') {
+            throw new Error('The raster layer could not be created.');
+        }
+        mapLayer.addTo(map);
+        const layerBounds = leafletBoundsToArray(bounds || mapLayer.getBounds?.());
+
+        AppState.activeLayers = [{
+            uniqueKey,
+            id: `raster_${Date.now()}`,
+            displayName: fileName.replace(/\.(png|tif|tiff)$/i, ''),
+            mapLayer,
+            exportUrl: null,
+            isLocalGeoJSON: false,
+            isRasterImage: true,
+            rasterFormat,
+            rasterOpacity: 0.8,
+            rasterDataUrl,
+            rasterCrs,
+            rasterBounds: layerBounds,
+            geoJsonData: null,
+            customStyle: null,
+            isVisible: true,
+            parentId: null,
+            isFolder: false,
+        }, ...AppState.activeLayers];
+
+        map.fitBounds(layerBounds, { padding: [30, 30], maxZoom: 19 });
+        updateMapLayerOrder();
+        renderAddedLayers();
+        switchTab('added');
+        showToast(successMessage);
+    } catch (error) {
+        if (mapLayer) map.removeLayer(mapLayer);
+        removePane(uniqueKey);
+        throw error;
+    }
+};
+
+const addRasterImageToMap = ({ fileName, rasterDataUrl, bounds, rasterCrs, successMessage }) => addRasterLayerToMap({
+    fileName,
+    rasterDataUrl,
+    bounds,
+    rasterCrs,
+    rasterFormat: 'png',
+    createMapLayer: ({ paneName, opacity }) => L.imageOverlay(rasterDataUrl, bounds, {
+        pane: paneName,
+        opacity,
+        interactive: false,
+    }),
+    successMessage,
 });
 
 const processGeoReferencedPng = async (pngFile, pgwFile) => {
@@ -4702,54 +4806,136 @@ const processGeoReferencedPng = async (pngFile, pgwFile) => {
     const dimensions = await loadRasterImageDimensions(pngFile);
     const bounds = pgwToEpsg3857Bounds(pgw, dimensions.width, dimensions.height);
     const rasterDataUrl = await loadRasterDataUrl(pngFile);
-    const uniqueKey = Math.random().toString(36).substr(2, 9);
-    const paneName = 'pane-' + uniqueKey;
-    let mapLayer = null;
+    addRasterImageToMap({
+        fileName: pngFile.name,
+        rasterDataUrl,
+        bounds,
+        rasterCrs: 'EPSG:3857',
+        successMessage: `Imported EPSG:3857 image: ${pngFile.name}`,
+    });
+};
 
-    try {
-        if (!map.getPane(paneName)) map.createPane(paneName);
-        mapLayer = L.imageOverlay(rasterDataUrl, bounds, {
-            pane: paneName,
-            opacity: 0.8,
-            interactive: false,
-        }).addTo(map);
+const GEORASTER_SCRIPT_SOURCES = [
+    'https://cdn.jsdelivr.net/npm/proj4@2.15.0/dist/proj4.js',
+    'https://cdn.jsdelivr.net/npm/georaster@1.6.0/dist/georaster.browser.bundle.min.js',
+    'https://cdn.jsdelivr.net/npm/georaster-layer-for-leaflet@4.1.2/dist/v3/webpack/bundle/georaster-layer-for-leaflet.min.js',
+];
 
-        AppState.activeLayers = [{
-            uniqueKey,
-            id: `raster_${Date.now()}`,
-            displayName: pngFile.name.replace(/\.png$/i, ''),
-            mapLayer,
-            exportUrl: null,
-            isLocalGeoJSON: false,
-            isRasterImage: true,
-            rasterOpacity: 0.8,
-            rasterDataUrl,
-            rasterCrs: 'EPSG:3857',
-            rasterBounds: bounds,
-            geoJsonData: null,
-            customStyle: null,
-            isVisible: true,
-            parentId: null,
-            isFolder: false,
-        }, ...AppState.activeLayers];
+let geoRasterDependenciesPromise = null;
 
-        // The bounds have already been validated in EPSG:3857 before this
-        // changes the view. This fit can therefore never poison the persisted
-        // map state with projected metre coordinates.
-        map.fitBounds(bounds, { padding: [30, 30], maxZoom: 19 });
-        updateMapLayerOrder();
-        renderAddedLayers();
-        switchTab('added');
-        showToast(`Imported EPSG:3857 image: ${pngFile.name}`);
-    } catch (error) {
-        if (mapLayer) map.removeLayer(mapLayer);
-        removePane(uniqueKey);
-        throw error;
+const getGeoRasterParser = () => {
+    if (typeof globalThis.parseGeoraster === 'function') return globalThis.parseGeoraster;
+    if (typeof globalThis.parseGeoraster?.default === 'function') return globalThis.parseGeoraster.default;
+    if (typeof globalThis.parse_georaster === 'function') return globalThis.parse_georaster;
+    if (typeof globalThis.parse_georaster?.default === 'function') return globalThis.parse_georaster.default;
+    const globalApi = globalThis.georaster?.default || globalThis.georaster;
+    return typeof globalApi === 'function' ? globalApi : null;
+};
+
+const getGeoRasterLayerClass = () => {
+    if (typeof globalThis.GeoRasterLayer === 'function') return globalThis.GeoRasterLayer;
+    return globalThis.GeoRasterLayer?.default;
+};
+
+const getProj4Api = () => {
+    if (typeof globalThis.proj4 === 'function') return globalThis.proj4;
+    return globalThis.proj4?.default;
+};
+
+const loadGeoRasterScript = source => new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = source;
+    script.async = false;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error(`Could not load GeoTIFF map support from ${source}.`));
+    document.head.appendChild(script);
+});
+
+const ensureGeoRasterDependencies = async () => {
+    if (getGeoRasterParser() && getGeoRasterLayerClass() && typeof getProj4Api() === 'function') return;
+    if (!geoRasterDependenciesPromise) {
+        const sources = [];
+        if (typeof getProj4Api() !== 'function') sources.push(GEORASTER_SCRIPT_SOURCES[0]);
+        if (!getGeoRasterParser()) sources.push(GEORASTER_SCRIPT_SOURCES[1]);
+        if (!getGeoRasterLayerClass()) sources.push(GEORASTER_SCRIPT_SOURCES[2]);
+        geoRasterDependenciesPromise = sources
+            .reduce((promise, source) => promise.then(() => loadGeoRasterScript(source)), Promise.resolve())
+            .catch(error => {
+                geoRasterDependenciesPromise = null;
+                throw error;
+            });
+    }
+    await geoRasterDependenciesPromise;
+    if (!getGeoRasterParser() || !getGeoRasterLayerClass()) {
+        throw new Error('GeoTIFF map support is unavailable. Reload the page and try again.');
     }
 };
 
+const parseGeoRasterArrayBuffer = async arrayBuffer => {
+    await ensureGeoRasterDependencies();
+    const parser = getGeoRasterParser();
+    const georaster = await parser(arrayBuffer);
+    if (!georaster) throw new Error('The GeoTIFF did not produce a readable raster.');
+    return georaster;
+};
+
+const rasterProjectionLabel = georaster => {
+    const projection = georaster?.projection ?? georaster?.crs ?? georaster?.proj4;
+    if (Number.isFinite(Number(projection))) return `EPSG:${projection}`;
+    return typeof projection === 'string' && projection.trim() ? projection : 'GeoTIFF';
+};
+
+const createGeoRasterMapLayer = (georaster, paneName, opacity) => {
+    const GeoRasterLayer = getGeoRasterLayerClass();
+    if (!GeoRasterLayer) throw new Error('The GeoTIFF Leaflet layer is unavailable.');
+    const mapLayer = new GeoRasterLayer({
+        georaster,
+        pane: paneName,
+        opacity,
+        resolution: 128,
+    });
+    return {
+        mapLayer,
+        bounds: leafletBoundsToArray(mapLayer.getBounds?.()),
+    };
+};
+
+const loadGeoTiffRaster = async file => {
+    const georaster = await parseGeoRasterArrayBuffer(await file.arrayBuffer());
+    return {
+        georaster,
+        rasterDataUrl: await loadRasterDataUrl(file),
+        rasterCrs: rasterProjectionLabel(georaster),
+    };
+};
+
+const createGeoRasterMapLayerFromDataUrl = async (rasterDataUrl, paneName, opacity) => {
+    const response = await fetch(rasterDataUrl);
+    if (!response.ok) throw new Error('The saved GeoTIFF could not be read.');
+    const georaster = await parseGeoRasterArrayBuffer(await response.arrayBuffer());
+    return createGeoRasterMapLayer(georaster, paneName, opacity);
+};
+
+const processGeoReferencedTiff = async tiffFile => {
+    const raster = await loadGeoTiffRaster(tiffFile);
+    addRasterLayerToMap({
+        fileName: tiffFile.name,
+        rasterDataUrl: raster.rasterDataUrl,
+        rasterCrs: raster.rasterCrs,
+        rasterFormat: 'geotiff',
+        createMapLayer: ({ paneName, opacity }) => createGeoRasterMapLayer(raster.georaster, paneName, opacity).mapLayer,
+        successMessage: `Imported GeoTIFF image: ${tiffFile.name}`,
+    });
+};
+
 const stageRasterFile = async file => {
-    const extension = file.name.split('.').pop().toLowerCase();
+    const extension = rasterFileExtension(file);
+    if (extension === 'tif' || extension === 'tiff') {
+        pendingRasterPngFile = null;
+        pendingRasterPgwFile = null;
+        await processGeoReferencedTiff(file);
+        return;
+    }
     if (extension === 'png') {
         if (pendingRasterPgwFile) {
             const pgwFile = pendingRasterPgwFile;
@@ -4783,9 +4969,16 @@ const stageRasterFile = async file => {
 };
 
 const processLocalFiles = async files => {
-    const rasterFiles = files.filter(file => /\.(png|pgw)$/i.test(file.name));
+    const rasterFiles = files.filter(file => /\.(png|pgw|tif|tiff)$/i.test(file.name));
     if (rasterFiles.length > 0) {
-        if (rasterFiles.length === 2 && rasterFiles.some(file => /\.png$/i.test(file.name)) && rasterFiles.some(file => /\.pgw$/i.test(file.name))) {
+        if (rasterFiles.some(file => /\.(tif|tiff)$/i.test(file.name))) {
+            if (rasterFiles.length !== 1) {
+                throw new Error('Select one GeoTIFF, or one matching PNG and PGW pair.');
+            }
+            pendingRasterPngFile = null;
+            pendingRasterPgwFile = null;
+            await processGeoReferencedTiff(rasterFiles[0]);
+        } else if (rasterFiles.length === 2 && rasterFiles.some(file => /\.png$/i.test(file.name)) && rasterFiles.some(file => /\.pgw$/i.test(file.name))) {
             pendingRasterPngFile = null;
             pendingRasterPgwFile = null;
             await processGeoReferencedPng(
@@ -4823,7 +5016,7 @@ async function processLocalFile(file) {
     const ext = name.split('.').pop().toLowerCase();
     
     try {
-        if (ext === 'png' || ext === 'pgw') {
+        if (ext === 'png' || ext === 'pgw' || ext === 'tif' || ext === 'tiff') {
             await stageRasterFile(file);
             return;
         }
@@ -5889,6 +6082,19 @@ const geometryEditStatus = getEl('geometry-edit-status');
 const btnGeometryEditClose = getEl('btn-geometry-edit-close');
 const btnGeometryEditSave = getEl('btn-geometry-edit-save');
 const btnGeometryEditCancel = getEl('btn-geometry-edit-cancel');
+const btnGeometrySimplifyToggle = getEl('btn-geometry-simplify-toggle');
+const geometrySimplifyToggleIcon = getEl('geometry-simplify-toggle-icon');
+const geometrySimplifyControls = getEl('geometry-simplify-controls');
+const geometrySimplifyMode = getEl('geometry-simplify-mode');
+const geometrySimplifyTarget = getEl('geometry-simplify-target');
+const geometrySimplifyUnit = getEl('geometry-simplify-unit');
+const geometrySimplifyTargetSuffix = getEl('geometry-simplify-target-suffix');
+const geometrySimplifySeed = getEl('geometry-simplify-seed');
+const geometrySimplifyStats = getEl('geometry-simplify-stats');
+const geometrySimplifyWarning = getEl('geometry-simplify-warning');
+const btnGeometrySimplifyPreview = getEl('btn-geometry-simplify-preview');
+const btnGeometrySimplifyApply = getEl('btn-geometry-simplify-apply');
+const btnGeometrySimplifyReset = getEl('btn-geometry-simplify-reset');
 const shapePreviewPaneName = 'shapePreviewPane';
 const shapeVertexPaneName = 'shapeVertexPane';
 if (!map.getPane(shapePreviewPaneName)) map.createPane(shapePreviewPaneName);
@@ -5899,6 +6105,8 @@ const shapePreviewGroup = L.featureGroup().addTo(map);
 let shapeLineLayer = null;
 let shapeCursorPoint = null;
 let shapeCursorMarker = null;
+let geometrySimplifyPreview = null;
+let geometrySimplifyBaseGeometry = null;
 const stopShapeEvent = event => {
     if (event?.originalEvent) L.DomEvent.stop(event.originalEvent);
 };
@@ -5944,10 +6152,42 @@ const shapeSegmentIndex = (latlng, segmentPoints = AppState.drawShape.points, cl
     return best.distance <= 12 ? best.index : -1;
 };
 
+const cloneGeometryValue = value => value ? JSON.parse(JSON.stringify(value)) : value;
+
+const geometryWithEditedOuterPart = (geometry, geometryType, partIndex, points) => {
+    const nextGeometry = cloneGeometryValue(geometry);
+    const coordinates = points.map(point => [point.lng, point.lat]);
+    if (geometryType === 'MultiPolygon') {
+        if (Array.isArray(nextGeometry?.coordinates?.[partIndex])) {
+            const holes = nextGeometry.coordinates[partIndex].slice(1);
+            nextGeometry.coordinates[partIndex] = [[...coordinates, coordinates[0]], ...holes];
+        }
+    } else if (geometryType === 'Polygon') {
+        nextGeometry.coordinates = [[...coordinates, coordinates[0]], ...(nextGeometry.coordinates || []).slice(1)];
+    } else if (geometryType === 'LineString') {
+        nextGeometry.coordinates = coordinates;
+    }
+    return nextGeometry;
+};
+
 const setGeometryEditPartPoints = (partIndex, points) => {
     const editState = AppState.geometryEdit;
     const parts = (editState.parts || []).map((part, index) => index === partIndex ? points : part);
-    AppState.geometryEdit = { ...editState, parts, activePartIndex: partIndex };
+    const previewGeometry = geometryWithEditedOuterPart(
+        editState.previewGeometry || editState.originalGeometry,
+        editState.geometryType,
+        partIndex,
+        points
+    );
+    if (geometrySimplifyPreview || geometrySimplifyBaseGeometry) {
+        geometrySimplifyPreview = null;
+        geometrySimplifyBaseGeometry = null;
+        if (geometrySimplifyStats) geometrySimplifyStats.textContent = '';
+        geometrySimplifyWarning?.classList.add('hidden');
+        if (geometrySimplifyWarning) geometrySimplifyWarning.textContent = '';
+        if (btnGeometrySimplifyApply) btnGeometrySimplifyApply.disabled = true;
+    }
+    AppState.geometryEdit = { ...editState, parts, previewGeometry, activePartIndex: partIndex };
     AppState.drawShape = { ...AppState.drawShape, points, completed: true };
 };
 
@@ -6068,7 +6308,11 @@ const renderShapePreview = () => {
             const nextPoints = [...currentState.points];
             nextPoints.splice(insertAfter + 1, 0, event.latlng);
             shapeCursorPoint = event.latlng;
-            AppState.drawShape = { ...currentState, points: nextPoints };
+            if (AppState.geometryEdit.active) {
+                setGeometryEditPartPoints(AppState.geometryEdit.activePartIndex || 0, nextPoints);
+            } else {
+                AppState.drawShape = { ...currentState, points: nextPoints };
+            }
             stopShapeEvent(event);
             renderShapePreview();
         });
@@ -6098,11 +6342,15 @@ const renderShapePreview = () => {
                     return;
                 }
                 const points = currentState.points.filter((_, pointIndex) => pointIndex !== index);
-                AppState.drawShape = {
-                    ...currentState,
-                    points,
-                    completed: AppState.geometryEdit.active ? true : points.length >= 3 && currentState.completed
-                };
+                if (AppState.geometryEdit.active) {
+                    setGeometryEditPartPoints(AppState.geometryEdit.activePartIndex || 0, points);
+                } else {
+                    AppState.drawShape = {
+                        ...currentState,
+                        points,
+                        completed: points.length >= 3 && currentState.completed
+                    };
+                }
                 renderShapePreview();
             } else if (isFirstPoint && !currentState.completed && currentState.points.length >= 3) {
                 // The first vertex is an enlarged close target. Closing keeps
@@ -6122,7 +6370,11 @@ const renderShapePreview = () => {
             const currentState = AppState.drawShape;
             const points = [...currentState.points];
             points[index] = event.target.getLatLng();
-            AppState.drawShape = { ...currentState, points };
+            if (AppState.geometryEdit.active) {
+                setGeometryEditPartPoints(AppState.geometryEdit.activePartIndex || 0, points);
+            } else {
+                AppState.drawShape = { ...currentState, points };
+            }
             const isClosedShape = currentState.completed
                 && !(AppState.geometryEdit.active && AppState.geometryEdit.geometryType === 'LineString');
             if (shapeLineLayer) shapeLineLayer.setLatLngs(isClosedShape ? [...points, points[0]] : points);
@@ -6202,9 +6454,181 @@ const editableGeometryFromLayer = layer => {
     return {
         featureIndex,
         geometryType,
+        geometry: cloneGeometryValue(feature.geometry),
         points: parts[0],
         parts
     };
+};
+
+const formatGeometrySimplifyBytes = bytes => {
+    const value = Number(bytes) || 0;
+    if (value >= 1048576) return `${(value / 1048576).toFixed(2)} MB`;
+    if (value >= 1024) return `${(value / 1024).toFixed(2)} KB`;
+    return `${Math.round(value)} bytes`;
+};
+
+const resetGeometrySimplifyUi = () => {
+    geometrySimplifyPreview = null;
+    geometrySimplifyBaseGeometry = null;
+    geometrySimplifyControls?.classList.add('hidden');
+    if (geometrySimplifyToggleIcon) geometrySimplifyToggleIcon.className = 'fa-solid fa-chevron-down text-[9px]';
+    if (geometrySimplifyMode) geometrySimplifyMode.value = 'percentage';
+    if (geometrySimplifyTarget) geometrySimplifyTarget.value = '80';
+    if (geometrySimplifyUnit) geometrySimplifyUnit.value = '1024';
+    if (geometrySimplifySeed) geometrySimplifySeed.value = '';
+    if (geometrySimplifyStats) geometrySimplifyStats.textContent = '';
+    geometrySimplifyWarning?.classList.add('hidden');
+    if (geometrySimplifyWarning) geometrySimplifyWarning.textContent = '';
+    if (btnGeometrySimplifyApply) btnGeometrySimplifyApply.disabled = true;
+    if (geometrySimplifyTargetSuffix) geometrySimplifyTargetSuffix.textContent = '%';
+    geometrySimplifyUnit?.classList.add('hidden');
+};
+
+const updateGeometrySimplifyModeUi = () => {
+    const mode = geometrySimplifyMode?.value || 'percentage';
+    const isSize = mode === 'size';
+    geometrySimplifyUnit?.classList.toggle('hidden', !isSize);
+    if (geometrySimplifyTargetSuffix) {
+        geometrySimplifyTargetSuffix.textContent = mode === 'percentage' ? '%' : mode === 'points' ? 'pts' : '';
+    }
+    if (geometrySimplifyTarget) {
+        geometrySimplifyTarget.min = mode === 'percentage' ? '0' : '1';
+        geometrySimplifyTarget.step = mode === 'points' ? '1' : 'any';
+    }
+};
+
+const currentGeometryEditFeature = () => {
+    const editState = AppState.geometryEdit;
+    const layer = AppState.activeLayers.find(item => item.uniqueKey === editState.layerKey);
+    const feature = layer?.geoJsonData?.features?.[editState.featureIndex];
+    if (!layer || !feature) return null;
+    return {
+        layer,
+        feature: {
+            ...cloneGeometryValue(feature),
+            geometry: cloneGeometryValue(editState.previewGeometry || feature.geometry)
+        }
+    };
+};
+
+const setGeometryEditPreviewFeature = resultFeature => {
+    const editableLayer = { geoJsonData: { type: 'FeatureCollection', features: [resultFeature] } };
+    const editable = editableGeometryFromLayer(editableLayer);
+    if (!editable) return false;
+    const points = editable.points.map(point => L.latLng(point.lat, point.lng));
+    AppState.geometryEdit = {
+        ...AppState.geometryEdit,
+        previewGeometry: cloneGeometryValue(editable.geometry),
+        points,
+        parts: editable.parts.map(part => part.map(point => L.latLng(point.lat, point.lng))),
+        activePartIndex: 0
+    };
+    AppState.drawShape = { ...AppState.drawShape, points, completed: true };
+    return true;
+};
+
+const updateGeometrySimplifyStatus = result => {
+    if (!result) return;
+    if (geometrySimplifyStats) {
+        geometrySimplifyStats.textContent = `${result.originalPoints} → ${result.finalPoints} points · ${formatGeometrySimplifyBytes(result.originalBytes)} → ${formatGeometrySimplifyBytes(result.finalBytes)}`;
+    }
+    if (geometrySimplifyWarning) {
+        geometrySimplifyWarning.textContent = result.warning || '';
+        geometrySimplifyWarning.classList.toggle('hidden', !result.warning);
+    }
+    if (btnGeometrySimplifyApply) btnGeometrySimplifyApply.disabled = !result.changed;
+};
+
+const previewGeometrySimplification = () => {
+    const current = currentGeometryEditFeature();
+    if (!current) return;
+    const target = Number(geometrySimplifyTarget?.value);
+    const mode = geometrySimplifyMode?.value || 'percentage';
+    if (!Number.isFinite(target) || target < 0 || (mode === 'points' && !Number.isInteger(target))) {
+        if (geometrySimplifyWarning) {
+            geometrySimplifyWarning.textContent = mode === 'points' ? 'Enter a whole-number point target.' : 'Enter a valid simplification target.';
+            geometrySimplifyWarning.classList.remove('hidden');
+        }
+        return;
+    }
+    const seedValue = geometrySimplifySeed?.value.trim();
+    if (seedValue !== '' && !Number.isInteger(Number(seedValue))) {
+        if (geometrySimplifyWarning) {
+            geometrySimplifyWarning.textContent = 'Seed must be a whole number.';
+            geometrySimplifyWarning.classList.remove('hidden');
+        }
+        return;
+    }
+    if (!geometrySimplifyBaseGeometry) geometrySimplifyBaseGeometry = cloneGeometryValue(current.feature.geometry);
+    const sourceFeature = {
+        ...current.feature,
+        geometry: cloneGeometryValue(geometrySimplifyBaseGeometry)
+    };
+    const unitMultiplier = Number(geometrySimplifyUnit?.value || 1);
+    const unitLabel = geometrySimplifyUnit?.selectedOptions?.[0]?.textContent || 'bytes';
+    const result = simplifyFeature(sourceFeature, {
+        mode,
+        target,
+        unitMultiplier,
+        unitLabel,
+        seed: seedValue === '' ? 0 : Number(seedValue)
+    });
+    if (!result?.feature || !setGeometryEditPreviewFeature(result.feature)) return;
+    geometrySimplifyPreview = result;
+    updateGeometrySimplifyStatus(result);
+    renderShapePreview();
+};
+
+const resetGeometrySimplification = () => {
+    if (geometrySimplifyBaseGeometry) {
+        const current = currentGeometryEditFeature();
+        if (current) {
+            setGeometryEditPreviewFeature({ ...current.feature, geometry: cloneGeometryValue(geometrySimplifyBaseGeometry) });
+            renderShapePreview();
+        }
+    }
+    geometrySimplifyPreview = null;
+    geometrySimplifyBaseGeometry = null;
+    if (geometrySimplifyStats) geometrySimplifyStats.textContent = '';
+    geometrySimplifyWarning?.classList.add('hidden');
+    if (geometrySimplifyWarning) geometrySimplifyWarning.textContent = '';
+    if (btnGeometrySimplifyApply) btnGeometrySimplifyApply.disabled = true;
+};
+
+const applyGeometrySimplification = () => {
+    const result = geometrySimplifyPreview;
+    const current = currentGeometryEditFeature();
+    if (!result?.changed || !current) return;
+    const newGeoJsonData = cloneGeometryValue(current.layer.geoJsonData);
+    newGeoJsonData.features[AppState.geometryEdit.featureIndex] = cloneGeometryValue(result.feature);
+    const uniqueKey = Math.random().toString(36).slice(2, 11);
+    const style = current.layer.customStyle
+        ? cloneGeometryValue(current.layer.customStyle)
+        : { type: 'single', fillColor: '#2563eb', fillOpacity: 0.5, color: '#2563eb', opacity: 1, pointShape: 'circle', pointSize: 8 };
+    const mapLayer = createCustomGeoJSONLayer(newGeoJsonData, style, `pane-${uniqueKey}`).addTo(map);
+    const derivedLayer = {
+        uniqueKey,
+        id: `${current.layer.id || 'layer'}_simplified_${Date.now()}`,
+        displayName: `[Simplified] ${current.layer.displayName || 'Layer'}`,
+        mapLayer,
+        exportUrl: null,
+        isLocalGeoJSON: true,
+        geoJsonData: newGeoJsonData,
+        customStyle: style,
+        isVisible: true,
+        parentId: current.layer.parentId || null,
+        isFolder: false
+    };
+    if (current.layer.isVisible && current.layer.mapLayer) map.removeLayer(current.layer.mapLayer);
+    current.layer.isVisible = false;
+    AppState.activeLayers = [derivedLayer, ...AppState.activeLayers];
+    if (AppState.currentSoloLayerKey === current.layer.uniqueKey) AppState.currentSoloLayerKey = uniqueKey;
+    updateMapLayerOrder();
+    autoSaveWorkspace();
+    showToast(`Created simplified layer with ${result.finalPoints} points.`);
+    exitGeometryEditing(false);
+    renderAddedLayers();
+    switchTab('added');
 };
 
 const commitGeometryEdit = () => {
@@ -6212,23 +6636,30 @@ const commitGeometryEdit = () => {
     const layer = AppState.activeLayers.find(item => item.uniqueKey === editState.layerKey);
     const feature = layer?.geoJsonData?.features?.[editState.featureIndex];
     if (!layer || !feature) return false;
+    const baseGeometry = editState.previewGeometry || feature.geometry;
 
     if (editState.geometryType === 'MultiPolygon') {
         const parts = editState.parts || [];
         if (!parts.length || parts.some(part => part.length < 3)) return false;
-        const originalPolygons = feature.geometry.coordinates || [];
-        feature.geometry.coordinates = parts.map((part, partIndex) => {
-            const coordinates = part.map(point => [point.lng, point.lat]);
-            const holes = Array.isArray(originalPolygons[partIndex]) ? originalPolygons[partIndex].slice(1) : [];
-            return [[...coordinates, coordinates[0]], ...holes];
-        });
+        const originalPolygons = baseGeometry?.coordinates || [];
+        feature.geometry = {
+            ...baseGeometry,
+            coordinates: parts.map((part, partIndex) => {
+                const coordinates = part.map(point => [point.lng, point.lat]);
+                const holes = Array.isArray(originalPolygons[partIndex]) ? originalPolygons[partIndex].slice(1) : [];
+                return [[...coordinates, coordinates[0]], ...holes];
+            })
+        };
     } else {
         const points = AppState.drawShape.points;
         if (!points.length) return false;
         const coordinates = points.map(point => [point.lng, point.lat]);
-        feature.geometry.coordinates = editState.geometryType === 'Polygon'
-            ? [[...coordinates, coordinates[0]]]
-            : coordinates;
+        feature.geometry = {
+            ...baseGeometry,
+            coordinates: editState.geometryType === 'Polygon'
+                ? [[...coordinates, coordinates[0]], ...(baseGeometry?.coordinates || []).slice(1)]
+                : coordinates
+        };
     }
 
     if (layer.mapLayer) map.removeLayer(layer.mapLayer);
@@ -6250,6 +6681,7 @@ const exitGeometryEditing = (save = false) => {
     shapePreviewGroup.clearLayers();
     shapeLineLayer = null;
     shapeCursorPoint = null;
+    resetGeometrySimplifyUi();
     AppState.geometryEdit = {
         active: false,
         layerKey: null,
@@ -6257,6 +6689,8 @@ const exitGeometryEditing = (save = false) => {
         geometryType: null,
         points: [],
         originalPoints: [],
+        originalGeometry: null,
+        previewGeometry: null,
         parts: [],
         originalParts: [],
         activePartIndex: 0
@@ -6295,11 +6729,14 @@ const enterGeometryEditing = async layerKey => {
         geometryType: editable.geometryType,
         points,
         originalPoints: points.map(point => L.latLng(point.lat, point.lng)),
+        originalGeometry: cloneGeometryValue(editable.geometry),
+        previewGeometry: cloneGeometryValue(editable.geometry),
         parts: editable.parts.map(part => part.map(point => L.latLng(point.lat, point.lng))),
         originalParts: editable.parts.map(part => part.map(point => L.latLng(point.lat, point.lng))),
         activePartIndex: 0
     };
     AppState.drawShape = { ...AppState.drawShape, active: true, points, completed: true };
+    resetGeometrySimplifyUi();
     shapeCursorPoint = null;
     setSavedLayerInteractionForDrawing(false);
     map.getPane(`pane-${layer.uniqueKey}`)?.style.setProperty('opacity', '0');
@@ -6412,6 +6849,15 @@ btnDrawShapeSave?.addEventListener('click', saveDrawnShape);
 btnGeometryEditClose?.addEventListener('click', () => exitGeometryEditing(false));
 btnGeometryEditCancel?.addEventListener('click', () => exitGeometryEditing(false));
 btnGeometryEditSave?.addEventListener('click', () => exitGeometryEditing(true));
+btnGeometrySimplifyToggle?.addEventListener('click', () => {
+    const isHidden = geometrySimplifyControls?.classList.toggle('hidden');
+    if (geometrySimplifyToggleIcon) geometrySimplifyToggleIcon.className = `fa-solid ${isHidden ? 'fa-chevron-down' : 'fa-chevron-up'} text-[9px]`;
+    if (!isHidden) updateGeometrySimplifyModeUi();
+});
+geometrySimplifyMode?.addEventListener('change', updateGeometrySimplifyModeUi);
+btnGeometrySimplifyPreview?.addEventListener('click', previewGeometrySimplification);
+btnGeometrySimplifyReset?.addEventListener('click', resetGeometrySimplification);
+btnGeometrySimplifyApply?.addEventListener('click', applyGeometrySimplification);
 [drawShapePanel, geometryEditPanel, btnDrawShape].forEach(element => { if (element) L.DomEvent.disableClickPropagation(element); });
 document.addEventListener('keydown', event => {
     if (!AppState.drawShape.active) return;
@@ -6440,7 +6886,11 @@ document.addEventListener('keydown', event => {
         if (isMultiPolygonEdit) {
             setGeometryEditPartPoints(activePartIndex, points);
         } else {
-            AppState.drawShape = { ...AppState.drawShape, points, completed: AppState.geometryEdit.active || false };
+            if (AppState.geometryEdit.active) {
+                setGeometryEditPartPoints(0, points);
+            } else {
+                AppState.drawShape = { ...AppState.drawShape, points, completed: false };
+            }
         }
         renderShapePreview();
     }

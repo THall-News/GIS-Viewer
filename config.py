@@ -22,12 +22,12 @@ except ValueError:
 MAX_DOWNLOAD_BYTES = DOWNLOAD_LIMIT_MB * 1024 * 1024
 
 GLOBAL_OVERPASS_ENDPOINTS = [
+    # Keep this list limited to current, global-coverage public instances.
+    # lz4.overpass-api.de and z.overpass-api.de are monitoring hosts, and
+    # overpass.kumi.systems has moved to overpass.private.coffee.
     'https://overpass-api.de/api/interpreter',
-    'https://lz4.overpass-api.de/api/interpreter',
-    'https://z.overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
     'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-    'https://overpass.osm.ch/api/interpreter',
 ]
 
 REQUEST_HEADERS = {

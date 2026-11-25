@@ -1,5 +1,4 @@
-// Utilities for importing axis-aligned PNG + PGW imagery whose coordinates
-// are expressed in Web Mercator (EPSG:3857).
+// Utilities for importing axis-aligned local raster imagery.
 
 export const WEB_MERCATOR_RADIUS = 6378137;
 export const WEB_MERCATOR_LIMIT = WEB_MERCATOR_RADIUS * Math.PI;
@@ -77,3 +76,103 @@ export const pgwToEpsg3857Bounds = (pgw, width, height) => {
     return [[south, west], [north, east]];
 };
 
+const boundsFromPoints = points => {
+    const longitudes = points.map(point => point[0]);
+    const latitudes = points.map(point => point[1]);
+    const west = Math.min(...longitudes);
+    const east = Math.max(...longitudes);
+    const south = Math.min(...latitudes);
+    const north = Math.max(...latitudes);
+
+    if (![west, east, south, north].every(Number.isFinite)
+        || west < -180 || east > 180 || south < -90 || north > 90
+        || !(west < east) || !(south < north)) {
+        throw new Error('The GeoTIFF produced an invalid WGS84 image extent.');
+    }
+
+    return [[south, west], [north, east]];
+};
+
+const projectPointWithProj4 = (projection, point) => {
+    if (typeof projection === 'function') return projection(point);
+    if (projection && typeof projection.forward === 'function') return projection.forward(point);
+    throw new Error('The GeoTIFF projection could not be initialized.');
+};
+
+/**
+ * Convert a GeoTIFF bounding box from the CRS stored in its GeoKeys to the
+ * WGS84 latitude/longitude bounds required by Leaflet. GeoTIFF decoding and
+ * projection are intentionally injected so this module remains easy to test
+ * without loading browser-only third-party libraries.
+ */
+export const geoTiffBoundsToWgs84 = (
+    bbox,
+    geoKeys,
+    {
+        geokeysToProj4 = globalThis.geokeysToProj4?.default || globalThis.geokeysToProj4,
+        proj4 = globalThis.proj4?.default || globalThis.proj4,
+    } = {},
+) => {
+    if (!Array.isArray(bbox) || bbox.length !== 4 || !bbox.every(Number.isFinite)) {
+        throw new Error('The GeoTIFF does not contain a valid image extent.');
+    }
+
+    const [minX, minY, maxX, maxY] = bbox;
+    if (!(minX < maxX) || !(minY < maxY)) {
+        throw new Error('The GeoTIFF produced an empty image extent.');
+    }
+
+    const corners = [
+        [minX, minY],
+        [minX, maxY],
+        [maxX, minY],
+        [maxX, maxY],
+    ];
+    const geographicCode = Number(geoKeys?.GeographicTypeGeoKey);
+    const projectedCode = Number(geoKeys?.ProjectedCSTypeGeoKey);
+    const hasProjectedCode = Number.isFinite(projectedCode) && projectedCode > 0;
+
+    // WGS84 needs no third-party projection library. This fallback also keeps
+    // a basic geographic GeoTIFF useful if the optional CRS scripts fail to
+    // load while offline.
+    if (geographicCode === 4326 && !hasProjectedCode) {
+        return boundsFromPoints(corners);
+    }
+
+    // EPSG:3857 is the CRS used by the existing PNG/PGW importer and can be
+    // handled locally for the same offline fallback reason.
+    if (projectedCode === 3857) {
+        return boundsFromPoints(corners.map(([x, y]) => [
+            mercatorToLongitude(x),
+            mercatorToLatitude(y),
+        ]));
+    }
+
+    if (!geoKeys || !geokeysToProj4 || typeof geokeysToProj4.toProj4 !== 'function'
+        || typeof proj4 !== 'function') {
+        throw new Error('The GeoTIFF CRS is not available. Reload the page and try again.');
+    }
+
+    const projectionInfo = geokeysToProj4.toProj4(geoKeys);
+    const conversionErrors = projectionInfo?.errors || {};
+    if (Object.keys(conversionErrors).length > 0 || !projectionInfo?.proj4) {
+        const unsupportedCode = projectedCode || geographicCode || 'unknown';
+        throw new Error(`The GeoTIFF CRS (EPSG:${unsupportedCode}) is not supported.`);
+    }
+
+    const projection = proj4(projectionInfo.proj4, 'EPSG:4326');
+    const projectedCorners = corners.map(([x, y]) => {
+        const converted = projectionInfo.shouldConvertCoordinates
+            ? geokeysToProj4.convertCoordinates(
+                x,
+                y,
+                0,
+                projectionInfo.coordinatesConversionParameters,
+            )
+            : { x, y };
+        const result = projectPointWithProj4(projection, [converted.x, converted.y]);
+        return Array.isArray(result) ? result : [result.x, result.y];
+    });
+
+    return boundsFromPoints(projectedCorners);
+};

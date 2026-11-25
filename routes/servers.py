@@ -1,50 +1,44 @@
-import json
+"""Compatibility endpoints for the standalone catalog service."""
 
-from flask import Blueprint, Response, request, jsonify
+from flask import Blueprint, jsonify, request
 
-from config import SERVERS_FILE
-from services.gis_scraper import fetch_server_metadata
+from services.catalog_client import CatalogClient, CatalogUnavailableError
+
 
 servers_bp = Blueprint('servers_bp', __name__)
 
 
 @servers_bp.route('/api/servers', methods=['GET', 'POST'])
 def handle_servers():
+    """Keep the previewer's existing UI API backed by the catalog database."""
+    client = CatalogClient()
+
     if request.method == 'GET':
-        if SERVERS_FILE.exists():
-            with open(SERVERS_FILE, 'r', encoding='utf-8') as f:
-                return Response(f.read(), mimetype='application/json')
-        return Response('[]', mimetype='application/json')
-
-    data = request.json or {}
-    url = data.get('url')
-    server_type = data.get('type')
-    user_name = data.get('name') or 'Custom Server'
-    if not url:
-        return jsonify({'error': 'No URL provided'}), 400
-
-    servers = []
-    if SERVERS_FILE.exists():
         try:
-            with open(SERVERS_FILE, 'r', encoding='utf-8') as f:
-                servers = json.load(f)
-        except Exception:
-            servers = []
+            payload = client.sources()
+        except CatalogUnavailableError as exc:
+            return jsonify({'error': str(exc), 'code': 'catalog_unavailable'}), 503
+        # The current dropdown expects an array. Catalog source rows expose
+        # their server kind as `protocol`, which the UI also understands.
+        return jsonify(payload.get('sources') or [])
 
-    print(f"\n[Scraper] Fetching metadata for: {url} ({server_type})")
-    enriched_server_data = fetch_server_metadata(url, server_type, user_name)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'A source object is required'}), 400
+    url = str(data.get('url') or '').strip()
+    if not url.startswith(('http://', 'https://')):
+        return jsonify({'error': 'A source HTTP(S) URL is required'}), 400
 
-    existing_index = None
-    for idx, server in enumerate(servers):
-        if server.get('url') == url:
-            existing_index = idx
-            break
-
-    if existing_index is not None:
-        enriched_server_data['id'] = servers[existing_index].get('id', enriched_server_data['id'])
-        servers[existing_index] = enriched_server_data
-        msg = 'Existing server metadata updated successfully'
-    else:
-        servers.append(enriched_server_data)
-        msg = 'New server scraped and saved'
- 
+    name = str(data.get('name') or data.get('display_name') or 'Custom Server').strip()
+    source = {
+        'display_name': name,
+        'name': name,
+        'type': data.get('type') or data.get('protocol') or 'ESRI',
+        'url': url,
+        'autoRefresh': True,
+    }
+    try:
+        payload = client.add_source(source)
+    except CatalogUnavailableError as exc:
+        return jsonify({'error': str(exc), 'code': 'catalog_unavailable'}), 503
+    return jsonify(payload), 201
